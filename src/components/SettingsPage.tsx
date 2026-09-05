@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { api, clearSessionToken } from '../apiClient';
 import { ArrowLeft, Shield, Palette, Eye, EyeOff, Copy, Check, KeyRound, Lock, Unlock, Github, ArrowUpCircle, Info, Coffee } from 'lucide-react';
@@ -12,13 +13,13 @@ const ACCENT_PRESETS = [
 ];
 
 export default function SettingsPage() {
+  const navigate = useNavigate();
   const {
     isDarkMode, setDarkMode,
     isAmoledMode, setAmoledMode,
     logoBgColor, setLogoBgColor,
     accentColor, setAccentColor,
     is24Hour, set24Hour,
-    setShowSettings,
   } = useStore();
 
   // Security state
@@ -126,7 +127,7 @@ export default function SettingsPage() {
       {/* Top bar */}
       <nav className="h-16 shrink-0 z-30 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] elev-4 flex items-center px-2 gap-2">
         <button
-          onClick={() => setShowSettings(false)}
+          onClick={() => navigate(-1)}
           className="md-btn p-2 rounded-full text-gray-600 dark:text-gray-300"
           aria-label="Back to dashboard"
         >

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import Dashboard from './components/Dashboard';
 import LockScreen from './components/LockScreen';
@@ -8,7 +9,7 @@ import { api, getSessionToken } from './apiClient';
 import { updateFavicon } from './utils/favicon';
 
 function AppContent() {
-  const { isDarkMode, isAmoledMode, showSettings, accentColor } = useStore();
+  const { isDarkMode, isAmoledMode, accentColor } = useStore();
   const [authChecked, setAuthChecked] = useState(false);
   const [locked, setLocked] = useState(false);
 
@@ -58,11 +59,15 @@ function AppContent() {
     return <LockScreen onUnlock={() => setLocked(false)} />;
   }
 
-  if (showSettings) {
-    return <SettingsPage />;
-  }
-
-  return <Dashboard />;
+  return (
+    <Routes>
+      <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/playlists" element={<Dashboard activeView="playlists" />} />
+      <Route path="/sources" element={<Dashboard activeView="channels" />} />
+      <Route path="/epg" element={<Dashboard activeView="epg" />} />
+      <Route path="*" element={<Navigate to="/playlists" replace />} />
+    </Routes>
+  );
 }
 
 export default function App() {

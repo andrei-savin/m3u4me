@@ -2,8 +2,6 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 interface AppState {
-  activeView: 'playlists' | 'channels' | 'epg';
-  setActiveView: (view: 'playlists' | 'channels' | 'epg') => void;
   activePlaylistId: string | null;
   setActivePlaylistId: (id: string | null) => void;
   activeCategory: string | null;
@@ -38,8 +36,6 @@ interface AppState {
   setAmoledMode: (isAmoled: boolean) => void;
   hideUrls: boolean;
   setHideUrls: (hide: boolean) => void;
-  showSettings: boolean;
-  setShowSettings: (show: boolean) => void;
   is24Hour: boolean;
   set24Hour: (is24Hour: boolean) => void;
   undoEntry: { description: string; restore: () => Promise<void> } | null;
@@ -57,8 +53,6 @@ interface AppState {
 export const useStore = create<AppState>()(
   persist(
     (set) => ({
-      activeView: 'playlists' as const,
-      setActiveView: (view) => set({ activeView: view }),
       activePlaylistId: null,
       setActivePlaylistId: (id) => set({ activePlaylistId: id, activeCategory: null }),
       activeCategory: null,
@@ -83,8 +77,6 @@ export const useStore = create<AppState>()(
       setAmoledMode: (isAmoled) => set({ isAmoledMode: isAmoled }),
       hideUrls: false,
       setHideUrls: (hide) => set({ hideUrls: hide }),
-      showSettings: false,
-      setShowSettings: (show) => set({ showSettings: show }),
       is24Hour: false,
       set24Hour: (is24Hour) => set({ is24Hour }),
       undoEntry: null,

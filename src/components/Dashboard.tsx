@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { usePlaylists, useEpgSources, useChannelPoolSources, api, triggerRefresh, triggerEpgRefresh, triggerChannelPoolRefresh, SearchResult } from '../apiClient';
 import { useStore, accentAlpha, notifyError, notifyInfo } from '../store';
 import { Plus, Settings, FileAudio, Menu, Trash2, Eye, EyeOff, Keyboard, Search, ArrowUpCircle, Radio, RefreshCw, Clock, Layers, Pencil, AlertTriangle } from 'lucide-react';
@@ -16,12 +17,12 @@ import ChannelPoolViewer from './ChannelPoolViewer';
 import ChannelPoolUpdateLog from './ChannelPoolUpdateLog';
 import Toast from './Toast';
 
-export default function Dashboard() {
+export default function Dashboard({ activeView }: { activeView: 'playlists' | 'channels' | 'epg' }) {
+  const navigate = useNavigate();
   const { playlists, loading, error: playlistsError, refetch: refetchPlaylists } = usePlaylists();
   const { sources: epgSources, loading: epgLoading, error: epgSourcesError, refetch: refetchEpgSources } = useEpgSources();
   const { sources: channelPoolSources, loading: channelPoolLoading, error: channelPoolSourcesError, refetch: refetchChannelPoolSources } = useChannelPoolSources();
   const {
-    activeView, setActiveView,
     activePlaylistId, setActivePlaylistId,
     activeEpgSourceId, setActiveEpgSourceId,
     activeChannelPoolSourceId, setActiveChannelPoolSourceId,
@@ -30,7 +31,6 @@ export default function Dashboard() {
     hideUrls, setHideUrls,
     setUndoEntry,
     setActiveCategory,
-    setShowSettings,
     setScrollTarget,
   } = useStore();
   const [isCreating, setIsCreating] = useState(false);
@@ -75,14 +75,14 @@ export default function Dashboard() {
 
   const handleSpotlightNavigate = (result: SearchResult) => {
     if (result.kind === 'playlist') {
-      setActiveView('playlists');
+      navigate('/playlists');
       setActivePlaylistId(result.containerId);
       setActiveCategory(result.category);
     } else if (result.kind === 'channelPool') {
-      setActiveView('channels');
+      navigate('/sources');
       setActiveChannelPoolSourceId(result.containerId);
     } else {
-      setActiveView('epg');
+      navigate('/epg');
       setActiveEpgSourceId(result.containerId);
     }
     // The matching view (PlaylistEditor / ChannelPoolViewer / EpgViewer) picks this up
@@ -228,7 +228,7 @@ export default function Dashboard() {
         <div className="relative flex items-center gap-1 justify-self-center">
           <button
             ref={el => { tabRefs.current.playlists = el; }}
-            onClick={() => setActiveView('playlists')}
+            onClick={() => navigate('/playlists')}
             className={`md-btn relative h-10 px-5 rounded-lg text-sm font-medium transition-colors ${
               activeView === 'playlists'
                 ? 'text-gray-900 dark:text-white'
@@ -239,7 +239,7 @@ export default function Dashboard() {
           </button>
           <button
             ref={el => { tabRefs.current.channels = el; }}
-            onClick={() => setActiveView('channels')}
+            onClick={() => navigate('/sources')}
             className={`md-btn relative h-10 px-5 rounded-lg text-sm font-medium transition-colors ${
               activeView === 'channels'
                 ? 'text-gray-900 dark:text-white'
@@ -250,7 +250,7 @@ export default function Dashboard() {
           </button>
           <button
             ref={el => { tabRefs.current.epg = el; }}
-            onClick={() => setActiveView('epg')}
+            onClick={() => navigate('/epg')}
             className={`md-btn relative h-10 px-5 rounded-lg text-sm font-medium transition-colors ${
               activeView === 'epg'
                 ? 'text-gray-900 dark:text-white'
@@ -307,7 +307,7 @@ export default function Dashboard() {
 
         {/* Settings */}
         <button
-          onClick={() => setShowSettings(true)}
+          onClick={() => navigate('/settings')}
           className="md-btn p-2 rounded-full text-gray-600 dark:text-gray-400 ml-1"
           aria-label="Settings"
         >
