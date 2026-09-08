@@ -59,6 +59,7 @@ export interface Playlist {
   categories: string[];
   exportId: string;
   shortId: number;
+  lastDownloadedAt: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -167,6 +168,21 @@ export interface SearchResult {
   isHidden?: boolean;
 }
 
+/** Response shape of GET /api/stats — powers the homescreen's stat tiles. */
+export interface Stats {
+  playlistCount: number;
+  playlistChannelCount: number;
+  channelPoolSourceCount: number;
+  channelPoolChannelCount: number;
+  epgSourceCount: number;
+  epgChannelCount: number;
+  lastPlaylistDownload: number | null;
+  latestChannelPoolAdditions: ChannelPoolChangeLog | null;
+  /** Small, purely decorative sample of distinct channel logo URLs from the user's own
+   * playlists — powers the homescreen's scrolling background wall. */
+  sampleLogos: string[];
+}
+
 // Custom event target for triggering refetches across components
 export const dbEvents = new EventTarget();
 export const triggerRefresh = () => dbEvents.dispatchEvent(new Event('refresh'));
@@ -249,6 +265,9 @@ export const api = {
     authFetch(`/api/channel-pool/changelog${page ? '?page=' + page : ''}`).then(r => r.json()) as Promise<{ logs: ChannelPoolChangeLog[]; hasMore: boolean }>,
   uploadChannelPoolSource: (data: { name: string; content: string; filename: string }) =>
     authFetch('/api/channel-pool/sources/upload', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(r => r.json()) as Promise<ChannelPoolSource>,
+
+  // Homescreen
+  getStats: () => authFetch('/api/stats').then(r => r.json()) as Promise<Stats>,
 };
 
 export function usePlaylists() {
@@ -390,4 +409,40 @@ export function useChannelPoolSources() {
   }, [fetchSources]);
 
   return { sources, loading, error, refetch: fetchSources };
+}
+
+/** Powers the homescreen — refetches on any of the three refresh buses, since a playlist,
+ * channel-pool, or EPG mutation anywhere in the app can change what it shows. */
+export function useStats() {
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const data = await api.getStats();
+      setStats(data);
+      setError(null);
+    } catch (e) {
+      console.error(e);
+      setError('Failed to load stats.');
+      notifyError(e, 'Failed to load stats.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStats();
+    dbEvents.addEventListener('refresh', fetchStats);
+    epgEvents.addEventListener('refresh', fetchStats);
+    channelPoolEvents.addEventListener('refresh', fetchStats);
+    return () => {
+      dbEvents.removeEventListener('refresh', fetchStats);
+      epgEvents.removeEventListener('refresh', fetchStats);
+      channelPoolEvents.removeEventListener('refresh', fetchStats);
+    };
+  }, [fetchStats]);
+
+  return { stats, loading, error, refetch: fetchStats };
 }

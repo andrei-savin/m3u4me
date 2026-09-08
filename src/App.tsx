@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import Dashboard from './components/Dashboard';
+import Home from './components/Home';
 import LockScreen from './components/LockScreen';
 import SettingsPage from './components/SettingsPage';
 import { useStore, notifyError } from './store';
@@ -61,11 +62,12 @@ function AppContent() {
 
   return (
     <Routes>
+      <Route path="/" element={<Home />} />
       <Route path="/settings" element={<SettingsPage />} />
       <Route path="/playlists" element={<Dashboard activeView="playlists" />} />
       <Route path="/sources" element={<Dashboard activeView="channels" />} />
       <Route path="/epg" element={<Dashboard activeView="epg" />} />
-      <Route path="*" element={<Navigate to="/playlists" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

@@ -169,11 +169,37 @@ html {
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* ── Homescreen background decoration ────────────────────────────────────
+   The scrolling wall of channel logos (Home.tsx) and the soft accent-colored
+   "aurora" blobs behind it. Namespaced `home-` since these are specific to
+   that one screen, not general MD2 chrome like everything above. */
+.home-logo-row {
+  animation-play-state: running;
+}
+@keyframes home-scroll-l {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@keyframes home-scroll-r {
+  from { transform: translateX(-50%); }
+  to   { transform: translateX(0); }
+}
+.home-aurora {
+  animation: home-drift 24s ease-in-out infinite alternate;
+}
+@keyframes home-drift {
+  from { transform: translate(-8%, -6%) scale(1); }
+  to   { transform: translate(8%, 6%) scale(1.15); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .md-ripple, .md-scrim, .md-dialog, .md-dialog-top, .md-list-in, .md-snackbar-in, .md-page-in, .md-menu {
     animation: none !important;
   }
   .elev-1, .elev-2, .elev-4, .elev-8, .elev-16, .elev-24, .md-btn, .md-btn::after {
     transition: none !important;
+  }
+  .home-logo-row, .home-aurora {
+    animation: none !important;
   }
 }

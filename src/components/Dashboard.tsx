@@ -219,9 +219,14 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
             <Menu className="h-6 w-6" />
           </button>
 
-          <div className="flex items-center ml-2 shrink-0">
+          <button
+            onClick={() => navigate('/')}
+            className="md-btn flex items-center ml-2 shrink-0 p-1 -m-1 rounded"
+            aria-label="Home"
+            title="Home"
+          >
             <Logo className="h-6 w-auto text-gray-900 dark:text-white shrink-0" />
-          </div>
+          </button>
         </div>
 
         {/* ── Centered navigation tabs ──────────────────────────────── */}

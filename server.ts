@@ -21,6 +21,10 @@ interface Playlist {
   categories: string[];
   exportId: string;
   shortId: number;
+  // Set whenever this playlist's M3U is served (short URL or legacy export URL) — i.e. the
+  // last time some IPTV player/client actually pulled it, not the last edit. Null until the
+  // first such request. Absent entirely on playlists that predate this field (treated as null).
+  lastDownloadedAt: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -632,6 +636,11 @@ function escapeCData(value: string): string {
 }
 
 function serveM3U(playlist: Playlist, db: Database, res: any) {
+  // `playlist` is the same object reference held in db.playlists (both callers get it via
+  // .find()), so mutating it here mutates the array entry too — writeDb() below persists it.
+  playlist.lastDownloadedAt = Date.now();
+  writeDb(db);
+
   const catIndex = new Map(playlist.categories.map((cat, i) => [cat, i]));
   const channels = db.channels
     .filter(c => c.playlistId === playlist.id && !c.isHidden)
@@ -653,6 +662,35 @@ function serveM3U(playlist: Playlist, db: Database, res: any) {
     m3u += extinf;
   });
   res.send(m3u);
+}
+
+// A small, randomized sample of distinct channel logo URLs from the user's own playlists —
+// purely decorative, used to texture the homescreen's background. Genuinely shuffled (Fisher-
+// Yates) rather than strided across the array: channels are grouped by playlist/category, and
+// a fixed stride only spreads out reads when the array is much bigger than what's needed — for
+// a single modest-sized playlist the computed stride rounds down to 1, degenerating right back
+// into a plain prefix scan that only ever samples the first category. Re-shuffled on every
+// call, so reloading the homescreen also reshuffles which channels show up.
+function collectSampleLogos(db: Database): string[] {
+  const CAP = 30;
+  const logos: string[] = [];
+  const seen = new Set<string>();
+  const add = (url: string | null | undefined) => {
+    if (url && !seen.has(url)) { seen.add(url); logos.push(url); }
+  };
+
+  const indices = db.channels.map((_, i) => i);
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+
+  for (const idx of indices) {
+    if (logos.length >= CAP) break;
+    add(db.channels[idx].logo);
+  }
+
+  return logos;
 }
 
 async function startServer() {
@@ -1186,6 +1224,39 @@ async function startServer() {
     }
   });
 
+  // Homescreen stats. Channel counts prefer the in-memory cache (this session's freshest
+  // data) and fall back to each source's persisted `channelCount` for one not yet (re)loaded
+  // this session — e.g. right after boot, before its startup refresh has completed.
+  app.get("/api/stats", (_req, res) => {
+    const db = readDb();
+
+    const epgChannelCount = db.epgSources.reduce((sum, source) => {
+      const cached = epgCache.get(source.id);
+      return sum + (cached ? cached.channels.length : source.channelCount || 0);
+    }, 0);
+
+    const lastPlaylistDownload = db.playlists.reduce<number | null>((latest, p) => {
+      if (!p.lastDownloadedAt) return latest;
+      return latest === null || p.lastDownloadedAt > latest ? p.lastDownloadedAt : latest;
+    }, null);
+
+    const latestChannelPoolAdditions = db.channelPoolChangeLogs
+      .filter(log => log.added.length > 0)
+      .sort((a, b) => b.timestamp - a.timestamp)[0] || null;
+
+    res.json({
+      playlistCount: db.playlists.length,
+      playlistChannelCount: db.channels.length,
+      channelPoolSourceCount: db.channelPoolSources.length,
+      channelPoolChannelCount: db.channelPoolEntries.length,
+      epgSourceCount: db.epgSources.length,
+      epgChannelCount,
+      lastPlaylistDownload,
+      latestChannelPoolAdditions,
+      sampleLogos: collectSampleLogos(db),
+    });
+  });
+
   app.get("/api/playlists", (req, res) => {
     const db = readDb();
     res.json(db.playlists);
@@ -1202,6 +1273,7 @@ async function startServer() {
       categories: ["General"],
       exportId: uuidv4(),
       shortId: nextShortId,
+      lastDownloadedAt: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -1278,6 +1350,7 @@ async function startServer() {
       categories: categories.length > 0 ? categories : ["General"],
       exportId: uuidv4(),
       shortId: nextShortId,
+      lastDownloadedAt: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
