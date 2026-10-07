@@ -31,7 +31,7 @@ m3u4me is your IPTV playlists' new home. Your streams don't leave your local net
 - <b>Auto-saving:</b> You don't need to remember to save your changes or push your playlist. Everything happens instantly, automatically.
 - <b>Undo delete:</b> Deleted a channel by mistake? Hit the "Undo" button which appears on the bottom of your screen and bring it back without a hassle.
 - <b>Simple playlist link structure:</b> No more typing huge links on your TV. Playlists get assigned a numerical ID, which means that your download links look like this: http://IP:port/1 for your first playlist, http://IP:port/2 for the second one, and so on. Each playlist also gets its own EPG feed at http://IP:port/{number_ID}/epg.
-- <b>Global search:</b> Search across every playlist, channel pool source, and EPG source at once.
+- <b>Global search:</b> Search across every playlist, channel pool source, and EPG source at once. All searches ignore accents, so typing "stiri" also finds "Știri".
 - <b>Keyboard shortcuts</b>: Delete your channels with `DEL`, select everything with `Cmd+A`, make your work easier overall. Full list of commands is available inside the app.
 
 ### Cosmetic UI features:

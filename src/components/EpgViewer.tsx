@@ -5,6 +5,7 @@ import { Search, Loader2, Link as LinkIcon, Crosshair, ZoomIn, ZoomOut } from 'l
 import EpgProgramDialog, { parseXmltvTime } from './EpgProgramDialog';
 import ChannelLogo from './ChannelLogo';
 import { formatTime } from '../utils/formatTime';
+import { foldText } from '../utils/foldText';
 
 export interface EpgViewerProps {
   sourceId: string;
@@ -135,8 +136,9 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
   const filteredChannels = useMemo(() => {
     if (!data) return [];
     if (!search.trim()) return data.channels;
-    const lowerSearch = search.toLowerCase();
-    return data.channels.filter(c => c.displayName.toLowerCase().includes(lowerSearch));
+    // Accent-insensitive, so "T"/"S" also find "Ț"/"Ș".
+    const foldedSearch = foldText(search);
+    return data.channels.filter(c => foldText(c.displayName).includes(foldedSearch));
   }, [data, search]);
 
   // Jump to a specific channel requested externally (e.g. Spotlight search). Clear the

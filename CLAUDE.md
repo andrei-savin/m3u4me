@@ -197,6 +197,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 - **Programmatic "jump to row" scrolling uses `behavior: 'instant'`**, not `'smooth'`. Smooth scrolling was observed not to animate reliably, and the virtualized lists need `scrollTop` to actually change before the target row renders.
 - **Clipboard copy needs a fallback.** The app is usually opened over plain `http://<LAN-IP>`, which is not a secure context, so `navigator.clipboard` is undefined there. Follow the `execCommand('copy')` fallback pattern in `PlaylistEditor.tsx`/`Home.tsx`.
 - XMLTV timestamp parsing exists twice: `parseXmltvDate` inside the `/now` route in `server.ts` and `parseXmltvTime` in `EpgProgramDialog.tsx`.
+- Text search is accent-insensitive everywhere (EPG view, TVG-ID autocomplete, Sources, Link to Source, Spotlight): both sides go through `foldText()`, which exists twice (`server.ts` and `src/utils/foldText.ts`). Use it for any new search. Spotlight's `highlight()` folds per character so the bold range maps back onto the original text.
 - Use relative imports. The `@/*` path alias is configured in `tsconfig.json`/`vite.config.ts`, but nothing uses it.
 
 ### Styling

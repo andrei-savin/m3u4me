@@ -282,6 +282,13 @@ interface ParsedEpgProgramme {
 
 const epgCache = new Map<string, { channels: ParsedEpgChannel[]; programmes: ParsedEpgProgramme[]; fetchedAt: number }>();
 
+// Lowercases text and strips accents, for search matching: NFD splits Ș, Ț, Ă, Â, Î into the
+// base letter plus a combining mark, which the regex drops, so "stiri" finds "Știri".
+// Mirrors src/utils/foldText.ts (the frontend shares no code with this file).
+function foldText(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -1476,18 +1483,19 @@ async function startServer() {
   });
 
   app.get("/api/epg/tvg-ids", (req, res) => {
-    const q = String(req.query.q || '').trim().toLowerCase();
+    // Accent-insensitive, so "T"/"S" also find "Ț"/"Ș".
+    const q = foldText(String(req.query.q || '').trim());
     if (!q) return res.json([]);
-    
+
     const results = [];
     const dbSources = readDb().epgSources;
-    
+
     for (const [sourceId, cache] of epgCache.entries()) {
       const source = dbSources.find(s => s.id === sourceId);
       if (!source) continue;
-      
+
       for (const ch of cache.channels) {
-        if (ch.id.toLowerCase().includes(q) || ch.displayName.toLowerCase().includes(q)) {
+        if (foldText(ch.id).includes(q) || foldText(ch.displayName).includes(q)) {
           results.push({ ...ch, sourceId: source.id, sourceName: source.name });
           if (results.length >= 50) return res.json(results);
         }
@@ -1658,7 +1666,8 @@ async function startServer() {
     
     let entries = channelPoolCache.get(req.params.id) || db.channelPoolEntries.filter(e => e.sourceId === req.params.id);
     
-    const q = String(req.query.q || '').trim().toLowerCase();
+    // Accent-insensitive, so "T"/"S" also find "Ț"/"Ș".
+    const q = foldText(String(req.query.q || '').trim());
     const cat = String(req.query.category || '').trim();
     const sort = String(req.query.sort || 'name');
 
@@ -1666,7 +1675,7 @@ async function startServer() {
       entries = entries.filter(e => e.category === cat);
     }
     if (q) {
-      entries = entries.filter(e => e.name.toLowerCase().includes(q) || e.url.toLowerCase().includes(q));
+      entries = entries.filter(e => foldText(e.name).includes(q) || foldText(e.url).includes(q));
     }
 
     // 'original' preserves the order entries were parsed from the source (M3U/Xtream
@@ -2235,9 +2244,10 @@ async function startServer() {
     const eligible = db.channelPoolEntries.filter(e => sources.has(e.sourceId));
     const withSource = (e: ChannelPoolEntry, match: 'url' | 'name' | 'search') => ({ ...e, sourceName: sources.get(e.sourceId)!.name, match });
 
-    const q = String(req.query.q || '').trim().toLowerCase();
+    // Accent-insensitive, like the Sources search.
+    const q = foldText(String(req.query.q || '').trim());
     if (q) {
-      const results = eligible.filter(e => e.name.toLowerCase().includes(q) || e.url.toLowerCase().includes(q));
+      const results = eligible.filter(e => foldText(e.name).includes(q) || foldText(e.url).includes(q));
       return res.json(results.slice(0, LIMIT).map(e => withSource(e, 'search')));
     }
 
@@ -2470,10 +2480,11 @@ async function startServer() {
   // null` since EPG channels aren't categorized). Results are capped at 50 per kind,
   // matching the cap the single-surface search and /api/epg/tvg-ids already used.
   app.get("/api/search", (req, res) => {
-    const q = String(req.query.q || '').trim().toLowerCase();
+    // Accent-insensitive, so "T"/"S" also find "Ț"/"Ș".
+    const q = foldText(String(req.query.q || '').trim());
     if (!q) return res.json([]);
     const db = readDb();
-    const matches = (...fields: (string | null | undefined)[]) => fields.some(f => f?.toLowerCase().includes(q));
+    const matches = (...fields: (string | null | undefined)[]) => fields.some(f => f != null && foldText(f).includes(q));
 
     const playlistResults = db.channels
       .filter(c => matches(c.name, c.url, c.tvgId))

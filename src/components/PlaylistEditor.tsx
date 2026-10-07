@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { usePlaylists, useChannels, useChannelPoolSources, Channel, EpgChannel, api, triggerRefresh, triggerChannelPoolRefresh } from '../apiClient';
 import { useStore, contrastText, accentAlpha, notifyError, notifyInfo } from '../store';
 
@@ -31,14 +32,18 @@ const restrictToVerticalAxis = ({ transform }: any) => ({ ...transform, x: 0 });
 function TvgIdAutocomplete({ value, onChange, onSave, onCancel }: {
   value: string;
   onChange: (v: string) => void;
-  onSave: () => void;
+  onSave: (value: string) => void;
   onCancel: () => void;
 }) {
   const { accentColor } = useStore();
   const [suggestions, setSuggestions] = useState<EpgChannel[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
   const [showDropdown, setShowDropdown] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // Set once the edit has been saved or cancelled, so the blur that follows (the field unmounts
+  // or loses focus) doesn't save a second time with the typed text.
+  const finishedRef = useRef(false);
   const debouncedValue = useDebouncedValue(value, 200);
 
   // Clears suggestions immediately when the field is emptied, rather than waiting out
@@ -51,7 +56,8 @@ function TvgIdAutocomplete({ value, onChange, onSave, onCancel }: {
     if (!debouncedValue.trim()) return;
     api.searchTvgIds(debouncedValue).then(data => {
       setSuggestions(data);
-      setShowDropdown(data.length > 0);
+      // Shown even with no results, so a "No matching EPG channels" line confirms the search ran.
+      setShowDropdown(true);
       setActiveIdx(-1);
     }).catch(e => {
       console.error(e);
@@ -60,21 +66,55 @@ function TvgIdAutocomplete({ value, onChange, onSave, onCancel }: {
     });
   }, [debouncedValue]);
 
+  // The dropdown is portalled to <body> with fixed positioning because the TVG-ID cell clips
+  // its overflow, which used to hide the dropdown entirely. Placed below the field when there's
+  // room, otherwise above it, and re-placed on scroll/resize so it stays attached to the row.
+  useLayoutEffect(() => {
+    if (!showDropdown) return;
+    const place = () => {
+      const input = inputRef.current;
+      const menu = dropdownRef.current;
+      if (!input || !menu) return;
+      const margin = 8;
+      const anchor = input.getBoundingClientRect();
+      const width = Math.min(Math.max(anchor.width, 280), window.innerWidth - margin * 2);
+      const height = menu.offsetHeight;
+      let top = anchor.bottom + 4;
+      if (top + height > window.innerHeight - margin) top = Math.max(margin, anchor.top - height - 4);
+      const left = Math.max(margin, Math.min(anchor.left, window.innerWidth - width - margin));
+      menu.style.top = `${top}px`;
+      menu.style.left = `${left}px`;
+      menu.style.width = `${width}px`;
+    };
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [showDropdown, suggestions]);
+
+  const finish = (save: boolean, saveValue = value) => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    setShowDropdown(false);
+    if (save) onSave(saveValue); else onCancel();
+  };
+
   const selectSuggestion = (id: string) => {
     onChange(id);
-    setShowDropdown(false);
-    // Save immediately after a micro-task so the onChange settles
-    setTimeout(onSave, 0);
+    finish(true, id);
   };
 
   const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { onCancel(); return; }
+    if (e.key === 'Escape') { finish(false); return; }
     if (e.key === 'Enter') {
       if (activeIdx >= 0 && suggestions[activeIdx]) {
         e.preventDefault();
         selectSuggestion(suggestions[activeIdx].id);
       } else {
-        onSave();
+        finish(true);
       }
       return;
     }
@@ -96,20 +136,27 @@ function TvgIdAutocomplete({ value, onChange, onSave, onCancel }: {
   return (
     <div className="w-full relative" onClick={e => e.stopPropagation()}>
       <input
+        ref={inputRef}
         autoFocus
         value={value}
         onChange={e => onChange(e.target.value)}
-        onBlur={() => { setTimeout(() => setShowDropdown(false), 150); onSave(); }}
+        onBlur={() => finish(true)}
         onKeyDown={handleKey}
         className={`${inlineInputCls} font-mono text-[11px]`}
         style={{ borderColor: accentColor }}
         placeholder="Type to search EPG pool…"
       />
-      {showDropdown && (
+      {showDropdown && createPortal(
         <div
           ref={dropdownRef}
-          className="md-menu absolute z-50 top-full left-0 right-0 mt-1 bg-white dark:bg-[#2a2a2a] amoled:dark:bg-[#1a1a1a] rounded elev-8 max-h-48 overflow-y-auto border border-gray-200 dark:border-white/10"
+          // Keeps focus in the field when clicking the dropdown (e.g. its scrollbar), since
+          // blurring the field saves and closes the edit.
+          onMouseDown={e => e.preventDefault()}
+          className="md-menu fixed z-50 bg-white dark:bg-[#2a2a2a] amoled:dark:bg-[#1a1a1a] rounded elev-8 max-h-48 overflow-y-auto border border-gray-200 dark:border-white/10"
         >
+          {suggestions.length === 0 && (
+            <p className="px-3 py-2 text-[11px] text-gray-400 dark:text-gray-500">No matching EPG channels</p>
+          )}
           {suggestions.map((s, i) => (
             <button
               key={`${s.sourceId}-${s.id}`}
@@ -126,7 +173,8 @@ function TvgIdAutocomplete({ value, onChange, onSave, onCancel }: {
               <span className="shrink-0 text-gray-300 dark:text-gray-600 text-[9px]">{s.sourceName}</span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -202,13 +250,16 @@ function SortableChannelItem({
     setActiveEditId(channel.id);
   };
 
-  const saveEdit = () => {
-    if (editingField && editValue !== (channel[editingField as keyof Channel] || '')) {
-      onUpdate(channel.id, editingField, editValue);
+  // Takes the value to save instead of reading editValue, so the TVG-ID dropdown can save the
+  // channel it just picked; editValue would still hold the typed text until the next render.
+  const commitEdit = (value: string) => {
+    if (editingField && value !== (channel[editingField as keyof Channel] || '')) {
+      onUpdate(channel.id, editingField, value);
     }
     setEditingField(null);
     if (activeEditId === channel.id) setActiveEditId(null);
   };
+  const saveEdit = () => commitEdit(editValue);
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') saveEdit();
@@ -341,7 +392,7 @@ function SortableChannelItem({
           ? <TvgIdAutocomplete
               value={editValue}
               onChange={setEditValue}
-              onSave={saveEdit}
+              onSave={commitEdit}
               onCancel={() => { setEditingField(null); if (activeEditId === channel.id) setActiveEditId(null); }}
             />
           : channel.tvgId && tvgIdLabel

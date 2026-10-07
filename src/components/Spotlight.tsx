@@ -4,6 +4,7 @@ import { useStore, notifyError } from '../store';
 import { Search, EyeOff, FileAudio, Layers, Radio } from 'lucide-react';
 import ChannelLogo from './ChannelLogo';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
+import { foldText } from '../utils/foldText';
 
 // Level-1 grouping metadata, in the fixed display order the hierarchy always uses —
 // My Playlists, then Sources, then EPG — regardless of which kind has the most hits.
@@ -30,17 +31,31 @@ interface KindGroup {
   containers: ContainerGroup[];
 }
 
+// The search is accent-insensitive ("stiri" finds "Știri"), so the match is looked up in a
+// folded copy of the text. Each character is folded on its own and `origin` remembers which
+// original character every folded one came from, so the bold part lands on the right letters
+// even when folding changes the length.
 function highlight(text: string, query: string) {
-  if (!query) return <>{text}</>;
-  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  const foldedQuery = foldText(query);
+  if (!foldedQuery) return <>{text}</>;
+  let folded = '';
+  const origin: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const f = foldText(text[i]);
+    folded += f;
+    for (let j = 0; j < f.length; j++) origin.push(i);
+  }
+  const idx = folded.indexOf(foldedQuery);
   if (idx === -1) return <>{text}</>;
+  const start = origin[idx];
+  const end = origin[idx + foldedQuery.length - 1] + 1;
   return (
     <>
-      {text.slice(0, idx)}
+      {text.slice(0, start)}
       <mark className="bg-transparent font-semibold" style={{ color: 'inherit' }}>
-        {text.slice(idx, idx + query.length)}
+        {text.slice(start, end)}
       </mark>
-      {text.slice(idx + query.length)}
+      {text.slice(end)}
     </>
   );
 }
