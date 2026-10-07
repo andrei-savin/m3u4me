@@ -7,7 +7,7 @@ import { Logo } from './Logo';
 import Spotlight from './Spotlight';
 import Toast from './Toast';
 import { formatTime } from '../utils/formatTime';
-import { FileAudio, Layers, Radio, Download, Sparkles, Settings, ArrowUpCircle, Search, Keyboard, Copy, Check } from 'lucide-react';
+import { FileAudio, Layers, Radio, Download, Sparkles, Settings, ArrowUpCircle, Search, Keyboard, Copy, Check, Link2 } from 'lucide-react';
 
 const NAV_TABS: { key: string; label: string; path: string }[] = [
   { key: 'playlists', label: 'My Playlists', path: '/playlists' },
@@ -251,7 +251,7 @@ export default function Home() {
     accentColor, is24Hour,
     setActivePlaylistId, setActiveCategory,
     setActiveEpgSourceId, setActiveChannelPoolSourceId,
-    setScrollTarget,
+    setScrollTarget, setSyncLogOpenFor,
   } = useStore();
   const { stats, loading, error, refetch } = useStats();
   const versionInfo = useVersionInfo();
@@ -338,6 +338,14 @@ export default function Home() {
                 className="md-btn relative h-10 px-5 rounded-lg text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
               >
                 {tab.label}
+                {/* Same dot as Dashboard's My Playlists tab. */}
+                {tab.key === 'playlists' && (stats?.pendingSyncCount || 0) > 0 && (
+                  <span
+                    className="absolute top-2 right-2 w-2 h-2 rounded-full"
+                    style={{ backgroundColor: accentColor }}
+                    title={`${stats!.pendingSyncCount} channel${stats!.pendingSyncCount !== 1 ? 's have' : ' has'} changes from a source waiting for you`}
+                  />
+                )}
               </button>
             ))}
           </div>
@@ -482,6 +490,35 @@ export default function Home() {
                       )}
                     </button>
                   </div>
+
+                  {/* ── Sync updates waiting ─────────────────────────────────────── */}
+                  {/* Only shown when there's something to review. Each row opens that
+                      playlist with its sync log already open. */}
+                  {stats.pendingSyncCount > 0 && (
+                    <div className={`rounded-2xl px-5 py-4 ${GLASS}`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <Link2 className="h-4 w-4" style={{ color: accentColor }} />
+                        <h2 className="text-sm font-medium text-gray-900 dark:text-white">Sync Updates Waiting</h2>
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                        Sources changed channels you had edited yourself. Review them and pick what to keep.
+                      </p>
+                      <div className="space-y-1">
+                        {stats.pendingSyncPlaylists.map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => { setActivePlaylistId(p.id); setSyncLogOpenFor(p.id); navigate('/playlists'); }}
+                            className="md-btn w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-black/[0.03] dark:hover:bg-white/[0.04] transition-colors"
+                          >
+                            <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-300 truncate">{p.name}</span>
+                            <span className="shrink-0 text-xs font-medium" style={{ color: accentColor }}>
+                              {p.count} channel{p.count !== 1 ? 's' : ''}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* ── Quick downloads ──────────────────────────────────────────── */}
                   <PlaylistDownloadsCard accentColor={accentColor} />

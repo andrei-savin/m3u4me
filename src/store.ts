@@ -24,6 +24,12 @@ interface AppState {
   setActiveChannelPoolSourceId: (id: string | null) => void;
   channelPoolLogOpen: boolean;
   setChannelPoolLogOpen: (open: boolean) => void;
+  /**
+   * Set by Home's "Sync updates waiting" card to a playlist id. PlaylistEditor opens that
+   * playlist's sync log once it's showing, then clears this back to null.
+   */
+  syncLogOpenFor: string | null;
+  setSyncLogOpenFor: (playlistId: string | null) => void;
   isSidebarOpen: boolean;
   setSidebarOpen: (isOpen: boolean) => void;
   logoBgColor: string;
@@ -65,6 +71,8 @@ export const useStore = create<AppState>()(
       setActiveChannelPoolSourceId: (id) => set({ activeChannelPoolSourceId: id }),
       channelPoolLogOpen: false,
       setChannelPoolLogOpen: (open) => set({ channelPoolLogOpen: open }),
+      syncLogOpenFor: null,
+      setSyncLogOpenFor: (playlistId) => set({ syncLogOpenFor: playlistId }),
       isSidebarOpen: true,
       setSidebarOpen: (isOpen) => set({ isSidebarOpen: isOpen }),
       logoBgColor: '#f1f5f9',

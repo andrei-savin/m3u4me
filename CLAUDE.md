@@ -21,7 +21,7 @@ The maintainer is a graphic designer, not a developer. The code is AI-generated,
 All backend code lives in `server.ts`: no router modules, no ORM, no shared code with `src/`. Top-to-bottom layout:
 
 1. Type declarations, then `readDb()`/`writeDb()`.
-2. EPG fetch/parse, then channel-pool fetch/parse/diff.
+2. EPG fetch/parse, then channel-pool fetch/parse/diff, then channel sync (stable pool ids, `syncLinkedChannels()`).
 3. Auth helpers, then the boot migration `migrateShortIds()`.
 4. M3U/XML escaping helpers and `serveM3U()`.
 5. `startServer()`, in this order:
@@ -50,6 +50,7 @@ All backend code lives in `server.ts`: no router modules, no ORM, no shared code
 - Refreshes run **sequentially** (`refresh*SourcesSequentially`), not in parallel. This is deliberate: parallel large fetches made healthy sources fail at boot.
 - EPG data is cached **in memory only** (`epgCache`), never persisted. After a restart it's empty until each source re-fetches. `channelCount` in `db.json` is the fallback used by `/api/stats`.
 - Channel-pool entries **are** persisted (`channelPoolEntries`) and mirrored in `channelPoolCache`. Each refresh diffs old vs new entries by URL + occurrence index and appends an added/removed/renamed changelog entry. Changelog entries older than 90 days are pruned.
+- Pool source fetches go through `fetchWithRetry()`: a 502/503/504 is retried up to 5 attempts in total, with growing pauses (3s, 6s, 9s, 12s). Some providers run several servers behind one address and randomly fail requests this way. EPG fetches don't retry.
 - Xtream panels return HTTP 200 with an error object for bad logins. `fetchXtreamChannels` treats a non-array response as a failure, so a login hiccup doesn't wipe the cached entries.
 - The EPG parser folds `<sub-title>` into `desc` as `"sub-title / desc"`. No separate `subTitle` field exists.
 
@@ -60,6 +61,19 @@ All backend code lives in `server.ts`: no router modules, no ORM, no shared code
 - `serveM3U` also writes `lastDownloadedAt` to the DB, so a GET that serves a playlist is also a DB write.
 
 **Pass provider data through faithfully.** Don't add filtering or special cases for junk in upstream EPG/playlist feeds (placeholder descriptions, odd names, and so on) unless the maintainer asks.
+
+### Channel sync (linking)
+
+A playlist channel can carry a `link` to one channel pool entry and then follow that entry's changes to the fields it syncs (stream link, name, logo, TVG-ID; never category). Uploaded-file sources can't be linked, because they never refresh.
+
+- **Stable pool entry ids.** At the start of every pool refresh, `carryOverPoolEntryIds()` gives each fetched entry its previous id when it's recognisably the same channel. It tries the same Xtream `stream_id` (read back out of the URL, not stored), then the same URL, then the same name + category when that pair is unique on both sides. Ambiguous matches are never guessed, and an entry whose name and URL both changed is a new channel. The changelog diff is separate and still keyed by URL, so a URL-only change shows there as removed + added.
+- **Applying changes.** `syncLinkedChannels()` runs in the same DB write. `link.lastPool` is the pool entry as of the last sync. For each synced field the provider changed, the new value is applied if the channel still equals `lastPool`. Otherwise it goes into `link.pending` as a suggestion. There's no "edited" flag: differing from `lastPool` *is* the edit.
+- **Lost channels.** When a linked entry can't be found (by id, then by the same identity rules against `lastPool`), `link.missingRefreshes` counts up. Only after 2 refreshes in a row (`LOST_AFTER_MISSING_REFRESHES`) is the link marked `lost` and the channel hidden with `hiddenBySync: true`. This exists because some providers' servers return different channel lists on back-to-back requests. Only sync-hidden channels get unhidden when they return. Any manual hide/unhide clears `hiddenBySync` (`afterManualChannelEdit`).
+- **Safeguard.** If one refresh loses more than 30% (and more than 10) of a source's entries, nothing is marked lost and missing counts aren't increased. A `held` log entry is written instead, and the following refreshes decide.
+- **Sync log.** `db.syncLogs`, per playlist, pruned to 90 days and 5000 entries per playlist. Unread counts use `Playlist.syncLogReadAt` and only count sync-originated types (`updated`, `suggested`, `lost`, `returned`, `held`). The user's own actions (`applied`, `dismissed`, `linked`, `unlinked`) never badge. The rule is mirrored in `SyncLogPanel.tsx`.
+- **Guards.** Generic channel edit routes strip `link`/`hiddenBySync` (`withoutSyncState`), so only the sync routes change them. `bulk` add accepts either `{ sourceId, poolEntryId, fields }` or a complete link (so undo restores keep their link).
+- **Deleting a source** unlinks its channels. They stay in their playlists, and stay hidden if sync had hidden them. Re-adding the source does *not* relink them; that was a deliberate decision.
+- Default fields for new links live in `db.settings.defaultSyncFields` (in db.json, not localStorage, so they're the same on every device).
 
 ### Routes
 
@@ -76,6 +90,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 | Channels (under `/playlists/:id/channels`) | single PUT/DELETE, `bulk` (add, returns new ids), `bulk-update` (same changes → many ids), `bulk-update-many` (per-id changes), `bulk-replace` (find/replace), `bulk-delete`, `reorder` |
 | EPG | `/epg-sources` CRUD, `/:id/refresh`, `/:id/channels`, `/:id/now` (programmes from −3h to +6h), `/epg/tvg-ids?q=` (autocomplete), `/epg/resolve-tvg-ids` |
 | Channel pool | `/channel-pool/sources` CRUD, `/upload`, `/:id/refresh`, `/:id/channels?q=&category=&sort=name\|original`, `/:id/categories`, `/validate-url`, `/changelog?page=` |
+| Channel sync | `/settings` GET/PUT (default sync fields). Under `/playlists/:id/channels`: `:channelId/link` POST (link, with `useSourceValues`)/PUT (fields)/DELETE, `:channelId/link/candidates?q=`, `:channelId/link/apply` and `/dismiss` (one pending field), `bulk-link-settings`, `bulk-unlink`. Plus `/playlists/:id/sync-log?page=` and `/sync-log/read` |
 | Other | `/search?q=` (all three surfaces, capped at 50 per kind), `/stats` (homescreen), `/health-check` (HEAD, then GET fallback, 8s timeout), `/version` (reads `package.json`) |
 
 `/api/proxy`, `/api/epg-sources/:id/programs/:channelId` (`api.getEpgPrograms`) and `api.logout` exist, but nothing in the frontend currently calls them.
@@ -89,14 +104,14 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 
 ## Data model: duplicated by hand
 
-`server.ts` and `src/apiClient.ts` each declare `Playlist`, `Channel`, `EpgSource`, `ChannelPoolSource`, `ChannelPoolEntry`, `ChannelPoolChangeLog`, and the EPG programme shape. **When changing a shape, update both files.** Response-only types (`SearchResult`, `Stats`, `EpgChannel`) exist only in `apiClient.ts` and must match what the route actually returns.
+`server.ts` and `src/apiClient.ts` each declare `Playlist`, `Channel`, `EpgSource`, `ChannelPoolSource`, `ChannelPoolEntry`, `ChannelPoolChangeLog`, the EPG programme shape, and the sync types (`SyncField`, `ChannelLink`, `PoolSnapshot`, `SyncLogEntry`, `AppSettings`). **When changing a shape, update both files.** Response-only types (`SearchResult`, `Stats`, `EpgChannel`, `LinkCandidate`) exist only in `apiClient.ts` and must match what the route actually returns. Some routes also add response-only fields: `GET /playlists` adds `pendingSyncCount`/`unreadSyncLogCount`, `GET /channel-pool/sources` adds `linkedChannelCount`, and the pool channel list adds `linkedPlaylistIds`. The matching `PUT` routes drop these if a caller echoes them back.
 
 - **Playlist**
   - `shortId`: incrementing integer used in the public URLs.
   - `exportId`: UUID for the legacy URL.
   - `categories: string[]`: this array *is* the category display order. `PUT` rejects duplicate names, and bulk add/update endpoints auto-append unknown categories.
   - `lastDownloadedAt`: last time a player pulled the M3U; absent on old records.
-- **Channel**: belongs to one playlist and one category string. `order` drives drag-reordering within the playlist. `isHidden` channels are excluded from M3U and EPG output.
+- **Channel**: belongs to one playlist and one category string. `order` drives drag-reordering within the playlist. `isHidden` channels are excluded from M3U and EPG output. The optional `link` and `hiddenBySync` fields belong to channel sync (see above). Sync state is per playlist channel, so the same pool channel can be synced in one playlist and not in another.
 - **EpgSource / ChannelPoolSource**: `type` is `'xml' | 'xtream'` for EPG and `'xtream' | 'playlist-url' | 'playlist-file'` for pool sources. File sources never refresh. Both carry `lastFetched`, `lastFetchError` and `channelCount`, which the sidebars display.
 
 ## Frontend
@@ -105,9 +120,9 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 
 | Path | Component |
 | --- | --- |
-| `/` | `Home.tsx`: homescreen with stats tiles, last download, newest pool channels, per-playlist copy/download links |
+| `/` | `Home.tsx`: homescreen with stats tiles, last download, newest pool channels, a "Sync updates waiting" card (only when suggestions are pending), per-playlist copy/download links |
 | `/playlists`, `/sources`, `/epg` | `Dashboard.tsx` with `activeView` prop `'playlists' \| 'channels' \| 'epg'` (note: **`'channels'` means the Sources tab**) |
-| `/settings` | `SettingsPage.tsx`: appearance, password/recovery key, about + version |
+| `/settings` | `SettingsPage.tsx`: appearance, channel sync defaults, password/recovery key, about + version |
 | `*` | redirect to `/` |
 
 **Data fetching (no query library):**
@@ -117,11 +132,11 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 - `useChannels` returns a stable `EMPTY_CHANNELS` array while a fetch is in flight. Returning a fresh `[]` there once caused an infinite render loop, so keep hook return values referentially stable.
 
 **UI state: one Zustand store (`src/store.ts`):**
-- It holds active playlist/category/EPG source/pool source, `scrollTarget`, `isSidebarOpen`, `channelPoolLogOpen`, `hideUrls`, `undoEntry`, `toast`, and the cosmetic settings.
+- It holds active playlist/category/EPG source/pool source, `scrollTarget`, `isSidebarOpen`, `channelPoolLogOpen`, `syncLogOpenFor` (Home asks PlaylistEditor to open a sync log), `hideUrls`, `undoEntry`, `toast`, and the cosmetic settings.
 - Only `logoBgColor`, `accentColor`, `isDarkMode`, `isAmoledMode` and `is24Hour` are persisted to localStorage. Everything else resets on reload.
 - The sidebar *width* is local state in `Dashboard.tsx`, not in the store.
 - **Errors and notifications:** in a mutation's catch block, call `console.error(e)` plus `notifyError(e, 'fallback message')`. For non-error feedback, use `notifyWarning` or `notifyInfo`. `AuthExpiredError` is ignored on purpose (the lock screen covers it). One toast shows at a time.
-- **Undo:** `setUndoEntry({ description, restore })`. Existing restores re-create data via `bulkAddChannels`, so restored channels get new ids.
+- **Undo:** `setUndoEntry({ description, restore })`. Existing restores re-create data via `bulkAddChannels`, so restored channels get new ids. `bulk` add keeps `isHidden` (only restores send it), so hidden channels come back hidden.
 - `<Toast />` renders both the toast and the undo snackbar (Cmd/Ctrl+Z triggers undo). It's mounted in `Dashboard`, `Home` and `SettingsPage`, but not in LockScreen. Error messages users see (toasts, inline form errors, server `{ error }` text) should be plain language that says what to do next.
 
 **Cross-surface search:**
@@ -144,9 +159,16 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
     - client-side pagination of 100 channels per page
     - keyboard shortcuts: Cmd/Ctrl+A, Del, Space, Esc
   - `NewPlaylistDialog.tsx` creates an empty playlist or imports from a URL/file.
+  - Channel sync in PlaylistEditor:
+    - Each row has a link button, a quiet accent dot when suggestions are pending, and a "Source lost" chip.
+    - `ChannelSyncPopover.tsx` (portal, anchored to the clicked element) handles suggestions, sync toggles and Unlink. It also exports `BulkSyncSettingsDialog` for the selection bar.
+    - `LinkChannelDialog.tsx` links an existing channel: server-ranked candidates, then a per-field "Keep mine / Use source value" comparison.
+    - `SyncLogPanel.tsx` is the per-playlist log drawer. Opening it marks the log read, and it offers Apply/Dismiss for suggestions still waiting.
+    - `SyncFieldToggles.tsx` is the shared four-checkbox control (also used by Settings and Add to Playlist).
+    - The My Playlists tab shows a dot (mirrored in Home) when any suggestion is pending, and the sidebar shows unread log counts.
   - `BulkEpgAssignDialog.tsx` is opened from PlaylistEditor. It fuzzy-matches channel names to EPG channel names client-side (trigram + word overlap, precomputed index, chunked with yields) and applies matches in chunks via `bulk-update-many`, with cancel & revert.
 - **Sources**
-  - `ChannelPoolViewer.tsx` is a virtualized list (56px rows). Search, category filter and sort run server-side. The selection persists across searches, and an `AddToPlaylistModal` bulk-adds the selection with an optional category override.
+  - `ChannelPoolViewer.tsx` is a virtualized list (56px rows). Search, category filter and sort run server-side. The selection persists across searches, and an `AddToPlaylistModal` bulk-adds the selection with an optional category override and an optional "Keep in sync with source" (default or custom fields, per selection; not offered for file sources). Linked pool rows show a link icon.
   - `ChannelPoolUpdateLog.tsx` is a collapsible changelog drawer.
   - `AddChannelPoolSourceDialog.tsx` adds or edits sources (Xtream, URL, or file upload).
 - **EPG**

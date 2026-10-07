@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
-import { api, clearSessionToken } from '../apiClient';
-import { ArrowLeft, Shield, Palette, Eye, EyeOff, Copy, Check, KeyRound, Lock, Unlock, Github, ArrowUpCircle, Info, Coffee } from 'lucide-react';
+import { api, clearSessionToken, SyncFieldToggles as SyncFieldTogglesValue } from '../apiClient';
+import { ArrowLeft, Shield, Palette, Eye, EyeOff, Copy, Check, KeyRound, Lock, Unlock, Github, ArrowUpCircle, Info, Coffee, Link2 } from 'lucide-react';
 import { Logo } from './Logo';
 import { useVersionInfo } from './AppInfo';
 import { contrastText, notifyError } from '../store';
 import Toast from './Toast';
+import SyncFieldToggles from './SyncFieldToggles';
 
 const ACCENT_PRESETS = [
   '#FF2960', '#FF5D29', '#22D5A7', '#29CBFF',
@@ -59,6 +60,27 @@ export default function SettingsPage() {
   useEffect(() => {
     checkAuthStatus();
   }, []);
+
+  // Channel sync defaults live in db.json (not localStorage like the appearance settings), so
+  // they're the same on every device the app is opened from.
+  const [syncDefaults, setSyncDefaults] = useState<SyncFieldTogglesValue | null>(null);
+  useEffect(() => {
+    api.getSettings()
+      .then(s => setSyncDefaults(s.defaultSyncFields))
+      .catch(e => { console.error(e); notifyError(e, "Couldn't load your channel sync settings. Reload the page to try again."); });
+  }, []);
+
+  const handleSyncDefaultsChange = async (next: SyncFieldTogglesValue) => {
+    const previous = syncDefaults;
+    setSyncDefaults(next);
+    try {
+      await api.updateSettings({ defaultSyncFields: next });
+    } catch (e) {
+      console.error(e);
+      setSyncDefaults(previous);
+      notifyError(e, "Couldn't save your channel sync settings. Try again.");
+    }
+  };
 
   const resetSecurityForm = () => {
     setPassword('');
@@ -273,6 +295,27 @@ export default function SettingsPage() {
                 </button>
               </div>
 
+            </div>
+          </section>
+
+          {/* ── Channel sync ──────────────────────────────────────────────── */}
+          <section className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] rounded-lg elev-1 overflow-hidden">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 dark:border-white/8">
+              <Link2 className="h-5 w-5" style={{ color: accentColor }} />
+              <h2 className="text-base font-medium text-gray-900 dark:text-white">Channel Sync</h2>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div>
+                <label className="text-sm text-gray-800 dark:text-gray-200">Default sync settings</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  What gets updated in your playlists when you add channels from a source with "Keep in sync with source" turned on, unless you pick custom settings. Changing this doesn't affect channels you've already linked.
+                </p>
+              </div>
+              {syncDefaults ? (
+                <SyncFieldToggles value={syncDefaults} onChange={handleSyncDefaultsChange} accentColor={accentColor} />
+              ) : (
+                <p className="text-sm text-gray-400">Loading…</p>
+              )}
             </div>
           </section>
 

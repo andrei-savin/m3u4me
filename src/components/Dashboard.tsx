@@ -131,11 +131,19 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
     } catch (e) { console.error(e); notifyError(e); }
   };
 
+  // Channels with a sync suggestion waiting, across all playlists, for the dot on the My Playlists tab.
+  const pendingSyncTotal = playlists.reduce((sum, p) => sum + (p.pendingSyncCount || 0), 0);
+
+  // Shown as a warning in the delete dialog: those channels lose their link.
+  const deletingPoolSourceLinkedCount = channelPoolSources.find(s => s.id === deleteChannelPoolSourceId)?.linkedChannelCount || 0;
+
   const handleRefreshChannelPoolSource = async (id: string) => {
     setRefreshingChannelPoolId(id);
     try {
       const result = await api.refreshChannelPoolSource(id);
       triggerChannelPoolRefresh();
+      // A refresh can also update channels linked to this source, in any playlist.
+      triggerRefresh();
       if (!result.changed) notifyInfo('No changes found — channel list is already up to date.');
     } catch (e) { console.error(e); notifyError(e); }
     finally { setRefreshingChannelPoolId(null); }
@@ -241,6 +249,14 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
             }`}
           >
             My Playlists
+            {/* Absolutely positioned so it never shifts the tabs (mirrored in Home.tsx). */}
+            {pendingSyncTotal > 0 && (
+              <span
+                className="absolute top-2 right-2 w-2 h-2 rounded-full"
+                style={{ backgroundColor: accentColor }}
+                title={`${pendingSyncTotal} channel${pendingSyncTotal !== 1 ? 's have' : ' has'} changes from a source waiting for you`}
+              />
+            )}
           </button>
           <button
             ref={el => { tabRefs.current.channels = el; }}
@@ -396,6 +412,15 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                             </svg>
                             <span className="truncate">{pl.name}</span>
+                            {(pl.unreadSyncLogCount || 0) > 0 && (
+                              <span
+                                className="ml-auto shrink-0 min-w-5 h-5 px-1.5 rounded-full text-[10px] font-semibold leading-5 text-center"
+                                style={{ backgroundColor: accentAlpha(accentColor, '20'), color: accentColor }}
+                                title="New entries in this playlist's sync log"
+                              >
+                                {pl.unreadSyncLogCount! > 99 ? '99+' : pl.unreadSyncLogCount}
+                              </span>
+                            )}
                           </button>
                         )}
                         <button
@@ -715,7 +740,10 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
             <div className="flex-1 flex overflow-hidden">
               <div className="flex-1 flex flex-col min-w-0">
                 {activeChannelPoolSourceId ? (
-                  <ChannelPoolViewer sourceId={activeChannelPoolSourceId} />
+                  <ChannelPoolViewer
+                    sourceId={activeChannelPoolSourceId}
+                    sourceType={channelPoolSources.find(s => s.id === activeChannelPoolSourceId)?.type}
+                  />
                 ) : (
                   <div className="flex-1 flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black">
                     <div className="text-center">
@@ -828,6 +856,14 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
             <p className="text-sm text-gray-600 dark:text-gray-400 px-6 pb-6">
               Are you sure? All cached channel data and logs for this source will be removed.
             </p>
+            {deletingPoolSourceLinkedCount > 0 && (
+              <div className="mx-6 mb-6 -mt-2 flex gap-2.5 rounded border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                <p className="text-sm text-amber-800 dark:text-amber-200">
+                  {deletingPoolSourceLinkedCount} channel{deletingPoolSourceLinkedCount !== 1 ? 's' : ''} in your playlists {deletingPoolSourceLinkedCount !== 1 ? 'are' : 'is'} kept in sync with this source. {deletingPoolSourceLinkedCount !== 1 ? "They'll" : "It'll"} stay in your playlists but stop syncing. Adding this source again later won't reconnect {deletingPoolSourceLinkedCount !== 1 ? 'them' : 'it'}.
+                </p>
+              </div>
+            )}
             <div className="flex justify-end gap-1 px-4 pb-4">
               <button
                 onClick={() => setDeleteChannelPoolSourceId(null)}
@@ -843,6 +879,8 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                     await api.deleteChannelPoolSource(id);
                     if (activeChannelPoolSourceId === id) setActiveChannelPoolSourceId(null);
                     triggerChannelPoolRefresh();
+                    // Channels linked to the source were unlinked, so playlists need to refetch.
+                    triggerRefresh();
                   } catch (e) { console.error(e); notifyError(e, 'Failed to delete channel source.'); }
                 }}
                 className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-red-600 dark:text-red-400"

@@ -23,6 +23,7 @@ m3u4me is your IPTV playlists' new home. Your streams don't leave your local net
 ## Features
 - <b>Multiple playlist support:</b> Add as many playlists as you like. Start empty or import an M3U or XSPF playlist from a URL or an uploaded file.
 - <b>Channel pool sources:</b> Connect your Xtream Codes account, a playlist URL, or an M3U/XSPF file; then browse, search and add channels into any playlist. Each source refreshes on its own schedule and keeps a changelog of what got added, removed or renamed.
+- <b>Channel sync:</b> When you add channels from an Xtream Codes or playlist URL source, you can keep them in sync with that source. Choose what updates automatically (stream link, name, logo, TVG ID), per selection or per channel, and set your defaults in Settings. If you changed something yourself, the provider's update waits for you to accept or skip it. Channels that disappear from their source are hidden and marked, and every playlist has a sync log. Channels already in a playlist can be linked too.
 - <b>EPG guide:</b> Add EPG sources from an XMLTV URL or an Xtream Codes account, each on its own refresh interval. Browse a live programme timeline and assign TVG IDs to your channels by hand, in bulk via automatic fuzzy name-matching, or one by one.
 - <b>Logo editing:</b> Add/edit/remove your channels' logos.
 - <b>Stream checker</b> (Not recommended): Basic stream checking functionality, not recommended due to some IPTV providers not reacting nicely to any sort of bulk checking. Use at your own risk!

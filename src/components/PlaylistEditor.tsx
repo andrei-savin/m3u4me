@@ -1,13 +1,16 @@
 import React, { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
-import { usePlaylists, useChannels, Channel, EpgChannel, api, triggerRefresh } from '../apiClient';
-import { useStore, contrastText, accentAlpha, notifyError } from '../store';
+import { usePlaylists, useChannels, useChannelPoolSources, Channel, EpgChannel, api, triggerRefresh, triggerChannelPoolRefresh } from '../apiClient';
+import { useStore, contrastText, accentAlpha, notifyError, notifyInfo } from '../store';
 
 import {
   Download, Check, Copy,
   GripVertical, CheckSquare, Square, Trash2, Eye, EyeOff, Plus, ArrowUp, ArrowDown, Activity, X,
-  Replace, Search, Wand2, ChevronLeft, ChevronRight, Layers,
+  Replace, Search, Wand2, ChevronLeft, ChevronRight, Layers, Link2, History, Unlink,
 } from 'lucide-react';
 import BulkEpgAssignDialog from './BulkEpgAssignDialog';
+import { ChannelSyncPopover, BulkSyncSettingsDialog } from './ChannelSyncPopover';
+import LinkChannelDialog from './LinkChannelDialog';
+import SyncLogPanel from './SyncLogPanel';
 import ChannelLogo from './ChannelLogo';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { formatTime } from '../utils/formatTime';
@@ -153,6 +156,7 @@ function SortableChannelItem({
   channel, isSelected, toggleSelection,
   onUpdate, onDelete, onToggleHide,
   activeEditId, setActiveEditId, colWidths, isHighlighted, rowIndex, onRightClick, healthSt, tvgIdLabel, isSaving,
+  onOpenSync,
 }: {
   key?: string | number;
   channel: Channel;
@@ -170,8 +174,18 @@ function SortableChannelItem({
   healthSt?: HealthEntry;
   tvgIdLabel?: { displayName: string; sourceName: string };
   isSaving?: boolean;
+  // Opens the sync popover (linked channel) or the Link to Source dialog (unlinked channel),
+  // anchored to the element that was clicked.
+  onOpenSync: (channelId: string, anchor: DOMRect) => void;
 }) {
   const { logoBgColor, hideUrls, accentColor, is24Hour } = useStore();
+  const hasPendingSync = !!channel.link && Object.keys(channel.link.pending).length > 0;
+  // stopPropagation on mousedown keeps the popover's "click outside closes it" listener from
+  // firing for its own trigger, so clicking the trigger again toggles it closed.
+  const syncTriggerProps = {
+    onMouseDown: (e: React.MouseEvent) => e.stopPropagation(),
+    onClick: (e: React.MouseEvent<HTMLButtonElement>) => onOpenSync(channel.id, e.currentTarget.getBoundingClientRect()),
+  };
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: channel.id });
   const style = { transform: CSS.Transform.toString(transform), transition };
 
@@ -291,7 +305,29 @@ function SortableChannelItem({
       <div className="shrink-0 pr-4 flex flex-col justify-center gap-0.5 overflow-hidden" style={{ width: colWidths.name }}>
         {editingField === 'name'
           ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={handleKey} className={inlineInputCls} style={{ borderColor: accentColor }} onClick={e => e.stopPropagation()} placeholder="Channel name" />
-          : <p onClick={() => startEdit('name', channel.name)} className={`text-sm font-medium truncate cursor-text hover:underline decoration-dashed underline-offset-2 ${isSelected ? '' : 'text-gray-900 dark:text-white'}`} style={isSelected ? { color: accentColor } : undefined} title="Click to edit">{channel.name || 'Unnamed'}</p>
+          : <div className="flex items-center gap-1.5 min-w-0">
+              <p onClick={() => startEdit('name', channel.name)} className={`min-w-0 text-sm font-medium truncate cursor-text hover:underline decoration-dashed underline-offset-2 ${isSelected ? '' : 'text-gray-900 dark:text-white'}`} style={isSelected ? { color: accentColor } : undefined} title="Click to edit">{channel.name || 'Unnamed'}</p>
+              {channel.link?.lost && (
+                <button
+                  {...syncTriggerProps}
+                  className="md-btn shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 text-gray-600 dark:bg-white/10 dark:text-gray-300"
+                  title="This channel disappeared from its source. Click for details."
+                >
+                  Source lost
+                </button>
+              )}
+              {/* Deliberately small and quiet: a suggestion is the user's call, not an alarm. */}
+              {hasPendingSync && (
+                <button
+                  {...syncTriggerProps}
+                  className="shrink-0 p-1 rounded-full"
+                  title="The source changed this channel. Click to review."
+                  aria-label="Review changes from source"
+                >
+                  <span className="block w-2 h-2 rounded-full" style={{ backgroundColor: accentColor }} />
+                </button>
+              )}
+            </div>
         }
         {!hideUrls && (editingField === 'url'
           ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={handleKey} className={`${inlineInputCls} font-mono text-[11px]`} style={{ borderColor: accentColor }} onClick={e => e.stopPropagation()} placeholder="https://…" />
@@ -358,7 +394,15 @@ function SortableChannelItem({
       )}
 
       {/* Row actions */}
-      <div className="w-16 shrink-0 flex items-center justify-end gap-0.5 pr-2">
+      <div className="w-24 shrink-0 flex items-center justify-end gap-0.5 pr-2">
+        <button
+          {...syncTriggerProps}
+          className={`md-btn p-1.5 rounded-full ${channel.link ? '' : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
+          style={channel.link ? { color: accentColor } : undefined}
+          title={channel.link ? 'Sync settings' : 'Link to source'}
+        >
+          <Link2 className="h-3.5 w-3.5" />
+        </button>
         <button
           onClick={() => onToggleHide(channel.id, !!channel.isHidden)}
           className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
@@ -404,8 +448,8 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
   const [activeEditId, setActiveEditId] = useState<string | null>(null);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const [colWidths, setColWidths] = useState(() => {
-    // Fixed columns: drag(32) + checkbox(32) + logo+margin(80) + actions(64) + sidebar(256) ≈ 464px
-    const available = Math.max(200, window.innerWidth - 464);
+    // Fixed columns: drag(32) + checkbox(32) + logo+margin(80) + actions(96) + sidebar(256) ≈ 496px
+    const available = Math.max(200, window.innerWidth - 496);
     return { name: Math.round(available * 0.7) };
   });
   const resizing = useRef<{ startX: number; startW: number } | null>(null);
@@ -432,6 +476,13 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
   const [frRunning, setFrRunning] = useState(false);
   const [showBulkEpg, setShowBulkEpg] = useState(false);
 
+  // Channel sync UI
+  const { sources: poolSources } = useChannelPoolSources();
+  const [syncPopover, setSyncPopover] = useState<{ channelId: string; anchor: DOMRect } | null>(null);
+  const [linkDialogChannelId, setLinkDialogChannelId] = useState<string | null>(null);
+  const [showSyncLog, setShowSyncLog] = useState(false);
+  const [showBulkSyncSettings, setShowBulkSyncSettings] = useState(false);
+
   // Resolved tvg-id labels: maps tvgId -> { displayName, sourceName }
   const [tvgIdLabels, setTvgIdLabels] = useState<Record<string, { displayName: string; sourceName: string }>>({});
 
@@ -451,7 +502,22 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     api.resolveTvgIds(unique).then(setTvgIdLabels).catch(e => { console.error(e); notifyError(e, 'Failed to resolve EPG channel names.'); });
   }, [channels]);
 
-  const { activeCategory, accentColor, setUndoEntry, scrollTarget, setScrollTarget } = useStore();
+  const { activeCategory, setActiveCategory, accentColor, setUndoEntry, scrollTarget, setScrollTarget, syncLogOpenFor, setSyncLogOpenFor } = useStore();
+
+  // Sync panels belong to one playlist, so switching playlists closes them. This runs before the
+  // effect below, so a sync log requested for the playlist being opened still opens.
+  useEffect(() => {
+    setShowSyncLog(false);
+    setSyncPopover(null);
+    setLinkDialogChannelId(null);
+  }, [playlistId]);
+
+  // Home's "Sync updates waiting" card asks for this playlist's sync log.
+  useEffect(() => {
+    if (syncLogOpenFor !== playlistId) return;
+    setShowSyncLog(true);
+    setSyncLogOpenFor(null);
+  }, [syncLogOpenFor, playlistId, setSyncLogOpenFor]);
   const scrollToChannelId = scrollTarget?.kind === 'playlist' ? scrollTarget.id : null;
   const onAccent = contrastText(accentColor); // '#fff' or '#000' depending on luminance
   const onAccentMuted = onAccent === '#ffffff' ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.60)';
@@ -524,7 +590,9 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     const handler = (e: KeyboardEvent) => {
       const typing = document.activeElement instanceof HTMLInputElement
         || document.activeElement instanceof HTMLTextAreaElement;
-      if (typing || contextMenu) return;
+      // While a sync dialog or popover is open, Space/Delete/Escape belong to it (e.g. Space toggles a
+      // focused checkbox there), not to the selected channels behind it.
+      if (typing || contextMenu || syncPopover || linkDialogChannelId || showBulkSyncSettings) return;
       if (e.key === 'Escape' && selectedIds.size > 0) {
         setSelectedIds(new Set()); setLastSelectedId(null);
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
@@ -541,7 +609,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [selectedIds, displayedChannels, playlistId, contextMenu]);
+  }, [selectedIds, displayedChannels, playlistId, contextMenu, syncPopover, linkDialogChannelId, showBulkSyncSettings]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -684,6 +752,40 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
       });
     } catch (e) { console.error(e); notifyError(e, 'Failed to delete channel.'); }
   };
+
+  const openSync = (channelId: string, anchor: DOMRect) => {
+    setContextMenu(null);
+    const channel = channels.find(c => c.id === channelId);
+    if (!channel) return;
+    if (!channel.link) {
+      setSyncPopover(null);
+      setLinkDialogChannelId(channelId);
+      return;
+    }
+    setSyncPopover(prev => prev?.channelId === channelId ? null : { channelId, anchor });
+  };
+
+  const selectedLinkedChannels = channels.filter(c => c.link && selectedIds.has(c.id));
+
+  const handleBulkUnlink = async () => {
+    try {
+      const result = await api.bulkUnlinkChannels(playlistId, selectedLinkedChannels.map(c => c.id));
+      triggerRefresh();
+      triggerChannelPoolRefresh();
+      notifyInfo(`Unlinked ${result.unlinked} channel${result.unlinked !== 1 ? 's' : ''}. ${result.unlinked !== 1 ? 'They stay' : 'It stays'} in your playlist but won't sync anymore.`);
+    } catch (e) { console.error(e); notifyError(e, "Couldn't unlink the channels. Try again."); }
+  };
+
+  // From the sync log: show the channel's category and let the existing scroll-to-row flow
+  // (the same one Spotlight uses) find its page, scroll to it and highlight it.
+  const jumpToChannel = (channel: Channel) => {
+    setActiveCategory(channel.category);
+    setScrollTarget({ kind: 'playlist', id: channel.id });
+  };
+
+  const syncPopoverChannel = syncPopover ? channels.find(c => c.id === syncPopover.channelId && c.link) : undefined;
+  const linkDialogChannel = linkDialogChannelId ? channels.find(c => c.id === linkDialogChannelId) : undefined;
+  const unreadSyncLogCount = playlist.unreadSyncLogCount || 0;
 
   const executeBulkMove = async (targetCategory: string) => {
     if (!targetCategory) return;
@@ -866,6 +968,24 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
           <div className="flex items-center gap-1 relative">
 
             <button
+              onClick={() => setShowSyncLog(s => !s)}
+              className={`${toolbarBtn} relative`}
+              style={{ color: onAccent, ...(showSyncLog ? { backgroundColor: 'rgba(0,0,0,0.15)' } : {}) }}
+              title={unreadSyncLogCount > 0 ? `Sync log (${unreadSyncLogCount} new)` : 'Sync log'}
+            >
+              <History className="h-3.5 w-3.5" />
+              <span className="hidden lg:inline">Sync log</span>
+              {unreadSyncLogCount > 0 && (
+                <span
+                  className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold leading-4 text-center"
+                  style={{ backgroundColor: onAccent, color: accentColor }}
+                >
+                  {unreadSyncLogCount > 99 ? '99+' : unreadSyncLogCount}
+                </span>
+              )}
+            </button>
+
+            <button
               onClick={() => { setShowFindReplace(true); setFrSearch(''); setFrReplace(''); setFrResult(null); if (selectedIds.size > 0) setFrScope('selected'); else setFrScope('category'); }}
               disabled={channels.length === 0}
               className={`${toolbarBtn} disabled:opacity-40`}
@@ -992,6 +1112,24 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
               <option value="NEW_CATEGORY">+ New category…</option>
             </select>
+            {selectedLinkedChannels.length > 0 && (
+              <>
+                <button
+                  onClick={() => setShowBulkSyncSettings(true)}
+                  className="md-btn h-8 px-3 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 flex items-center gap-1"
+                  title={`Sync settings for ${selectedLinkedChannels.length} linked channel${selectedLinkedChannels.length !== 1 ? 's' : ''}`}
+                >
+                  <Link2 className="h-3.5 w-3.5" /> Sync
+                </button>
+                <button
+                  onClick={handleBulkUnlink}
+                  className="md-btn h-8 px-3 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 flex items-center gap-1"
+                  title={`Stop syncing ${selectedLinkedChannels.length} linked channel${selectedLinkedChannels.length !== 1 ? 's' : ''}`}
+                >
+                  <Unlink className="h-3.5 w-3.5" /> Unlink
+                </button>
+              </>
+            )}
             <button
               onClick={() => runHealthCheck(channels.filter(c => selectedIds.has(c.id)))}
               disabled={!!healthProgress}
@@ -1071,7 +1209,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
               <div className="flex-1 pr-4 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 hidden md:block">
                 TVG / EPG ID
               </div>
-              <div className="w-16 shrink-0 flex justify-end">
+              <div className="w-24 shrink-0 flex justify-end">
                 <button onClick={handleAddChannel} className="md-btn flex items-center gap-1 h-7 px-3 text-white rounded text-[11px] font-medium uppercase tracking-wider elev-1" style={{ backgroundColor: accentColor }}>
                   <Plus className="h-3 w-3" />
                   <span>Add</span>
@@ -1100,6 +1238,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
                     healthSt={healthStatus.get(channel.id)}
                     tvgIdLabel={channel.tvgId ? tvgIdLabels[channel.tvgId] : undefined}
                     isSaving={savingIds.has(channel.id)}
+                    onOpenSync={openSync}
                   />
                 ))}
               </SortableContext>
@@ -1182,6 +1321,14 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
           >
             <ArrowDown className="h-4 w-4 shrink-0 text-gray-400" />
             Insert channel below
+          </button>
+          <div className="border-t border-gray-100 dark:border-white/8 my-1" />
+          <button
+            onClick={() => openSync(contextMenu.channelId, new DOMRect(contextMenu.x, contextMenu.y, 0, 0))}
+            className="md-btn w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
+          >
+            <Link2 className="h-4 w-4 shrink-0 text-gray-400" />
+            {channels.find(c => c.id === contextMenu.channelId)?.link ? 'Sync settings…' : 'Link to source…'}
           </button>
         </div>
       )}
@@ -1311,6 +1458,43 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Channel sync ─────────────────────────────────────────────────── */}
+      {showSyncLog && (
+        <SyncLogPanel
+          playlistId={playlistId}
+          channels={channels}
+          onClose={() => setShowSyncLog(false)}
+          onJumpToChannel={jumpToChannel}
+        />
+      )}
+
+      {syncPopover && syncPopoverChannel && (
+        <ChannelSyncPopover
+          playlistId={playlistId}
+          channel={syncPopoverChannel}
+          sourceName={poolSources.find(s => s.id === syncPopoverChannel.link!.sourceId)?.name || 'its source'}
+          anchor={syncPopover.anchor}
+          onClose={() => setSyncPopover(null)}
+          onRelink={() => { setSyncPopover(null); setLinkDialogChannelId(syncPopoverChannel.id); }}
+        />
+      )}
+
+      {linkDialogChannel && (
+        <LinkChannelDialog
+          playlistId={playlistId}
+          channel={linkDialogChannel}
+          onClose={() => setLinkDialogChannelId(null)}
+        />
+      )}
+
+      {showBulkSyncSettings && selectedLinkedChannels.length > 0 && (
+        <BulkSyncSettingsDialog
+          playlistId={playlistId}
+          channels={selectedLinkedChannels}
+          onClose={() => setShowBulkSyncSettings(false)}
+        />
       )}
 
       {/* ── Dialog: Bulk EPG Assignment ─────────────────────────────────── */}

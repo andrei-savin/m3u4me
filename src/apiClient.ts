@@ -60,8 +60,56 @@ export interface Playlist {
   exportId: string;
   shortId: number;
   lastDownloadedAt: number | null;
+  syncLogReadAt?: number | null;
   createdAt: number;
   updatedAt: number;
+  /** Response-only (GET /api/playlists): channels with a sync suggestion waiting. */
+  pendingSyncCount?: number;
+  /** Response-only (GET /api/playlists): sync log entries newer than syncLogReadAt. */
+  unreadSyncLogCount?: number;
+}
+
+// ── Channel sync ("linking") ──
+// Mirrors the types in server.ts; see the comments there for how sync uses each field.
+export type SyncField = 'url' | 'name' | 'logo' | 'tvgId';
+export const SYNC_FIELDS: SyncField[] = ['url', 'name', 'logo', 'tvgId'];
+export type SyncFieldToggles = Record<SyncField, boolean>;
+
+export interface PoolSnapshot {
+  name: string;
+  url: string;
+  logo: string | null;
+  tvgId: string | null;
+  category: string;
+}
+
+export interface ChannelLink {
+  sourceId: string;
+  poolEntryId: string;
+  fields: SyncFieldToggles;
+  lastPool: PoolSnapshot;
+  pending: Partial<Record<SyncField, string | null>>;
+  lost: boolean;
+  missingRefreshes?: number;
+}
+
+export interface SyncLogEntry {
+  id: string;
+  playlistId: string;
+  channelId: string | null;
+  channelName: string;
+  sourceName: string;
+  timestamp: number;
+  type: 'updated' | 'suggested' | 'applied' | 'dismissed' | 'lost' | 'returned' | 'held' | 'linked' | 'unlinked';
+  field?: SyncField;
+  oldValue?: string | null;
+  newValue?: string | null;
+  count?: number;
+  reason?: 'source-deleted';
+}
+
+export interface AppSettings {
+  defaultSyncFields: SyncFieldToggles;
 }
 
 export interface Channel {
@@ -74,6 +122,8 @@ export interface Channel {
   category: string;
   order: number;
   isHidden?: boolean;
+  link?: ChannelLink;
+  hiddenBySync?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -129,6 +179,8 @@ export interface ChannelPoolSource {
   channelCount: number;
   createdAt: number;
   updatedAt: number;
+  /** Response-only (GET /api/channel-pool/sources): playlist channels linked to this source. */
+  linkedChannelCount?: number;
 }
 
 export interface ChannelPoolEntry {
@@ -139,6 +191,14 @@ export interface ChannelPoolEntry {
   logo: string | null;
   category: string;
   tvgId: string | null;
+  /** Response-only (source channels list): playlists with a channel linked to this entry. */
+  linkedPlaylistIds?: string[];
+}
+
+/** A pool channel offered by the "Link to source" dialog. */
+export interface LinkCandidate extends ChannelPoolEntry {
+  sourceName: string;
+  match: 'url' | 'name' | 'search';
 }
 
 export interface ChannelPoolChangeLog {
@@ -177,6 +237,9 @@ export interface Stats {
   epgChannelCount: number;
   lastPlaylistDownload: number | null;
   latestChannelPoolAdditions: ChannelPoolChangeLog | null;
+  /** Linked channels with a sync suggestion waiting, across all playlists. */
+  pendingSyncCount: number;
+  pendingSyncPlaylists: { id: string; name: string; count: number }[];
   /** Small, purely decorative sample of distinct channel logo URLs from the user's own
    * playlists — powers the homescreen's scrolling background wall. */
   sampleLogos: string[];
@@ -267,6 +330,33 @@ export const api = {
 
   // Homescreen
   getStats: () => authFetch('/api/stats').then(r => r.json()) as Promise<Stats>,
+
+  // Settings
+  getSettings: () => authFetch('/api/settings').then(r => r.json()) as Promise<AppSettings>,
+  updateSettings: (updates: Partial<AppSettings>) =>
+    authFetch('/api/settings', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(updates) }).then(r => r.json()) as Promise<AppSettings>,
+
+  // Channel sync
+  getLinkCandidates: (playlistId: string, channelId: string, q?: string) =>
+    authFetch(`/api/playlists/${playlistId}/channels/${channelId}/link/candidates${q ? '?q=' + encodeURIComponent(q) : ''}`).then(r => r.json()) as Promise<LinkCandidate[]>,
+  linkChannel: (playlistId: string, channelId: string, data: { poolEntryId: string; fields: SyncFieldToggles; useSourceValues: SyncField[] }) =>
+    authFetch(`/api/playlists/${playlistId}/channels/${channelId}/link`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(r => r.json()) as Promise<Channel>,
+  updateChannelLink: (playlistId: string, channelId: string, fields: SyncFieldToggles) =>
+    authFetch(`/api/playlists/${playlistId}/channels/${channelId}/link`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ fields }) }).then(r => r.json()) as Promise<Channel>,
+  unlinkChannel: (playlistId: string, channelId: string) =>
+    authFetch(`/api/playlists/${playlistId}/channels/${channelId}/link`, { method: 'DELETE' }),
+  applySyncSuggestion: (playlistId: string, channelId: string, field: SyncField) =>
+    authFetch(`/api/playlists/${playlistId}/channels/${channelId}/link/apply`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ field }) }).then(r => r.json()) as Promise<Channel>,
+  dismissSyncSuggestion: (playlistId: string, channelId: string, field: SyncField) =>
+    authFetch(`/api/playlists/${playlistId}/channels/${channelId}/link/dismiss`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ field }) }).then(r => r.json()) as Promise<Channel>,
+  bulkUpdateLinkSettings: (playlistId: string, ids: string[], fields: Partial<SyncFieldToggles>) =>
+    authFetch(`/api/playlists/${playlistId}/channels/bulk-link-settings`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ids, fields }) }).then(r => r.json()) as Promise<{ success: boolean; updated: number }>,
+  bulkUnlinkChannels: (playlistId: string, ids: string[]) =>
+    authFetch(`/api/playlists/${playlistId}/channels/bulk-unlink`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ids }) }).then(r => r.json()) as Promise<{ success: boolean; unlinked: number }>,
+  getSyncLog: (playlistId: string, page?: number) =>
+    authFetch(`/api/playlists/${playlistId}/sync-log${page ? '?page=' + page : ''}`).then(r => r.json()) as Promise<{ entries: SyncLogEntry[]; hasMore: boolean; readAt: number | null }>,
+  markSyncLogRead: (playlistId: string) =>
+    authFetch(`/api/playlists/${playlistId}/sync-log/read`, { method: 'POST' }),
 };
 
 export function usePlaylists() {

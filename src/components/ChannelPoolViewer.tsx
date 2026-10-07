@@ -1,24 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { api, ChannelPoolEntry, usePlaylists, Playlist, channelPoolEvents, triggerRefresh } from '../apiClient';
+import { api, ChannelPoolEntry, ChannelPoolSource, usePlaylists, Playlist, channelPoolEvents, triggerRefresh, triggerChannelPoolRefresh, SyncFieldToggles as SyncFieldTogglesValue } from '../apiClient';
 import { useStore, notifyError } from '../store';
-import { Search, Loader2, Plus, Check, X, CheckSquare, Square } from 'lucide-react';
+import { Search, Loader2, Plus, Check, X, CheckSquare, Square, Link2 } from 'lucide-react';
 import ChannelLogo from './ChannelLogo';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import Dialog from './Dialog';
+import SyncFieldToggles, { describeSyncFields, anySyncFieldOn } from './SyncFieldToggles';
 
 interface ChannelPoolViewerProps {
   sourceId: string;
+  // Undefined while the source list is still loading. Sync is only offered once it's known.
+  sourceType?: ChannelPoolSource['type'];
 }
 
 function AddToPlaylistModal({
   channels,
   playlists,
   accentColor,
+  canSync,
   onClose,
 }: {
   channels: ChannelPoolEntry[];
   playlists: Playlist[];
   accentColor: string;
+  // False for uploaded-file sources: the file never changes, so there'd be nothing to sync.
+  canSync: boolean;
   onClose: () => void;
 }) {
   const [selectedPlaylist, setSelectedPlaylist] = useState(playlists[0]?.id ?? '');
@@ -26,9 +32,28 @@ function AddToPlaylistModal({
   const [adding, setAdding] = useState(false);
   const [done, setDone] = useState(false);
 
+  // Sync options apply to every channel in this selection. For different settings per channel,
+  // the user adds channels one at a time.
+  const [keepInSync, setKeepInSync] = useState(false);
+  const [syncMode, setSyncMode] = useState<'default' | 'custom'>('default');
+  const [defaultFields, setDefaultFields] = useState<SyncFieldTogglesValue | null>(null);
+  const [customFields, setCustomFields] = useState<SyncFieldTogglesValue>({ url: true, name: true, logo: true, tvgId: true });
+
+  useEffect(() => {
+    if (!canSync) return;
+    api.getSettings()
+      .then(s => { setDefaultFields(s.defaultSyncFields); setCustomFields(s.defaultSyncFields); })
+      .catch(e => { console.error(e); notifyError(e, "Couldn't load your default sync settings."); });
+  }, [canSync]);
+
+  const syncFields = syncMode === 'custom' ? customFields : defaultFields;
+  // Covers both modes: the saved defaults can have every field switched off too.
+  const nothingToSync = keepInSync && !!syncFields && !anySyncFieldOn(syncFields);
+
   const handleAdd = async () => {
     if (!selectedPlaylist) return;
     setAdding(true);
+    const linking = canSync && keepInSync;
     try {
       await api.bulkAddChannels(
         selectedPlaylist,
@@ -38,9 +63,13 @@ function AddToPlaylistModal({
           logo: c.logo,
           tvgId: c.tvgId,
           category: categoryOverride.trim() || c.category,
+          // Without fields (defaults not loaded yet), the server uses the saved defaults.
+          ...(linking ? { link: { sourceId: c.sourceId, poolEntryId: c.id, ...(syncFields ? { fields: syncFields } : {}) } } : {}),
         }))
       );
       triggerRefresh();
+      // Refetches the source list so the new link icons show up on these channels.
+      if (linking) triggerChannelPoolRefresh();
       setDone(true);
       setTimeout(onClose, 900);
     } catch (e) {
@@ -89,6 +118,48 @@ function AddToPlaylistModal({
               ))}
             </select>
           </div>
+
+          {canSync && (
+            <div className="rounded border border-gray-200 dark:border-white/10 p-3 flex flex-col gap-3">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={keepInSync}
+                  onChange={e => setKeepInSync(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer"
+                  style={{ accentColor }}
+                />
+                <span>
+                  <span className="block text-sm text-gray-900 dark:text-white">Keep in sync with source</span>
+                  <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    When the provider changes {channels.length === 1 ? 'this channel' : 'these channels'}, your playlist updates too.
+                  </span>
+                </span>
+              </label>
+              {keepInSync && (
+                <>
+                  <select
+                    value={syncMode}
+                    onChange={e => setSyncMode(e.target.value as 'default' | 'custom')}
+                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#333] text-gray-900 dark:text-white focus:outline-none"
+                  >
+                    <option value="default">Default settings{defaultFields ? ` (${describeSyncFields(defaultFields)})` : ''}</option>
+                    <option value="custom">Custom settings</option>
+                  </select>
+                  {syncMode === 'custom' && (
+                    <SyncFieldToggles value={customFields} onChange={setCustomFields} accentColor={accentColor} />
+                  )}
+                  {nothingToSync && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      {syncMode === 'custom'
+                        ? 'Pick at least one thing to sync, or turn off "Keep in sync with source".'
+                        : "Your default sync settings don't sync anything. Pick custom settings, or change the defaults in Settings."}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-1 px-4 pb-4">
@@ -101,7 +172,7 @@ function AddToPlaylistModal({
           </button>
           <button
             onClick={handleAdd}
-            disabled={adding || !selectedPlaylist || done}
+            disabled={adding || !selectedPlaylist || done || nothingToSync}
             className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-white disabled:opacity-50 flex items-center gap-2"
             style={{ backgroundColor: accentColor }}
           >
@@ -114,7 +185,7 @@ function AddToPlaylistModal({
 
 const ROW = 56;
 
-export default function ChannelPoolViewer({ sourceId }: ChannelPoolViewerProps) {
+export default function ChannelPoolViewer({ sourceId, sourceType }: ChannelPoolViewerProps) {
   const { accentColor, logoBgColor, hideUrls, scrollTarget, setScrollTarget } = useStore();
   const scrollToChannelPoolEntryId = scrollTarget?.kind === 'channelPool' ? scrollTarget.id : null;
   const [channels, setChannels] = useState<ChannelPoolEntry[]>([]);
@@ -411,9 +482,20 @@ export default function ChannelPoolViewer({ sourceId }: ChannelPoolViewerProps) 
                         flex-auto (grow) outcompete it and collapse the name to
                         zero width on narrower screens. */}
                     <div className="flex-1 min-w-0 pr-4 flex flex-col justify-center gap-0.5 overflow-hidden">
-                      <p className={`text-sm font-medium truncate ${isSelected ? '' : 'text-gray-900 dark:text-white'}`} style={isSelected ? { color: accentColor } : undefined} title={channel.name}>
-                        {channel.name || 'Unnamed'}
-                      </p>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <p className={`text-sm font-medium truncate ${isSelected ? '' : 'text-gray-900 dark:text-white'}`} style={isSelected ? { color: accentColor } : undefined} title={channel.name}>
+                          {channel.name || 'Unnamed'}
+                        </p>
+                        {channel.linkedPlaylistIds && (
+                          <span
+                            className="shrink-0 flex items-center"
+                            style={{ color: accentColor }}
+                            title={`Kept in sync in: ${channel.linkedPlaylistIds.map(id => playlists.find(p => p.id === id)?.name).filter(Boolean).join(', ')}`}
+                          >
+                            <Link2 className="h-3.5 w-3.5" />
+                          </span>
+                        )}
+                      </div>
                       {!hideUrls && (
                         <p className="text-[11px] font-mono text-gray-400 dark:text-gray-500 truncate" title={channel.url}>
                           {channel.url || '— no url —'}
@@ -459,6 +541,7 @@ export default function ChannelPoolViewer({ sourceId }: ChannelPoolViewerProps) 
           channels={modalChannels}
           playlists={playlists}
           accentColor={accentColor}
+          canSync={sourceType === 'xtream' || sourceType === 'playlist-url'}
           onClose={handleModalClose}
         />
       )}
