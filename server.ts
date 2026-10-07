@@ -12,6 +12,10 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const DB_FILE = path.join(DATA_DIR, "db.json");
+// writeDb() saves into this file first, then swaps it in place of db.json (see writeDb).
+// It has to sit in data/: the systemd unit only allows writes there, and the swap only
+// works within one folder/disk.
+const DB_TMP_FILE = path.join(DATA_DIR, "db.json.tmp");
 
 // Define types matching frontend
 interface Playlist {
@@ -181,32 +185,79 @@ function emptyDb(): Database {
 
 // Initial DB
 if (!fs.existsSync(DB_FILE)) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(emptyDb(), null, 2));
+  writeDb(emptyDb());
 }
 
 // Simple DB sync functions (fine for local single-user apps)
 function readDb(): Database {
+  let text: string;
   try {
-    const data = fs.readFileSync(DB_FILE, "utf-8");
-    const parsed = JSON.parse(data);
-    if (!parsed.epgSources) parsed.epgSources = [];
-    if (!parsed.channelPoolSources) parsed.channelPoolSources = [];
-    if (!parsed.channelPoolEntries) parsed.channelPoolEntries = [];
-    if (!parsed.channelPoolChangeLogs) parsed.channelPoolChangeLogs = [];
-    if (!parsed.syncLogs) parsed.syncLogs = [];
-    parsed.settings = {
-      ...DEFAULT_SETTINGS,
-      ...(parsed.settings || {}),
-      defaultSyncFields: { ...DEFAULT_SETTINGS.defaultSyncFields, ...(parsed.settings?.defaultSyncFields || {}) },
-    };
-    return parsed;
+    text = fs.readFileSync(DB_FILE, "utf-8");
   } catch (e) {
-    return emptyDb();
+    // No db.json at all is the one case where "start with an empty database" is right.
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return emptyDb();
+    // Anything else (no permission, a failing SD card…) means the data is there but can't be
+    // read right now. Treating that as empty would let the next save replace it for good,
+    // so stop with an error instead, and nothing gets written.
+    throw new Error(`Can't read ${DB_FILE} (${(e as Error).message}). Nothing was changed. Check the file's permissions and that the disk is healthy.`);
   }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return setAsideDamagedDb();
+  }
+  if (!parsed.epgSources) parsed.epgSources = [];
+  if (!parsed.channelPoolSources) parsed.channelPoolSources = [];
+  if (!parsed.channelPoolEntries) parsed.channelPoolEntries = [];
+  if (!parsed.channelPoolChangeLogs) parsed.channelPoolChangeLogs = [];
+  if (!parsed.syncLogs) parsed.syncLogs = [];
+  parsed.settings = {
+    ...DEFAULT_SETTINGS,
+    ...(parsed.settings || {}),
+    defaultSyncFields: { ...DEFAULT_SETTINGS.defaultSyncFields, ...(parsed.settings?.defaultSyncFields || {}) },
+  };
+  return parsed;
 }
 
+// db.json exists but isn't valid JSON, most likely because it was cut off by a power cut or
+// a full disk while an older version of the app was saving it (writeDb() below can't do
+// that any more). Two simpler options were rejected:
+// - Starting empty, as the app used to, means the next save overwrites the real data for good.
+// - Refusing to start leaves a restart loop under systemd/Docker and a page that won't load,
+//   which a non-developer can't diagnose either.
+// So the damaged file is moved aside untouched, to db.json.corrupt-<date and time>, where it
+// can be repaired, and the app carries on with an empty database. Moving it (rather than
+// copying it) means this happens once, not again on every request. If the move itself fails,
+// the error stops the read and nothing gets written.
+function setAsideDamagedDb(): Database {
+  // The date and time are in UTC. No ":" in the name: it isn't allowed in file names on
+  // Windows or some NAS shares.
+  const backupFile = `${DB_FILE}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  fs.renameSync(DB_FILE, backupFile);
+  console.error(
+    `${DB_FILE} is damaged (not valid JSON) and couldn't be loaded. ` +
+    `It was moved, unchanged, to ${backupFile}, and the app is continuing with an empty database. ` +
+    `To get your data back, stop the app, repair that file (or use a backup copy of db.json), ` +
+    `put it back as ${DB_FILE} and start the app again.`
+  );
+  return emptyDb();
+}
+
+// Saves in two steps so db.json is never half-written: the whole database goes into
+// db.json.tmp first, and only once that has fully succeeded is it renamed over db.json. A
+// rename is all-or-nothing. So if the app crashes or is restarted, the disk fills up, or the
+// power goes out mid-save, db.json is still the previous complete version, and at worst
+// the last change is lost. The old in-place write could leave db.json cut off halfway. A
+// failed save leaves a stray db.json.tmp behind; the next save simply overwrites it.
+// `flush: true` makes sure db.json.tmp is physically on the disk before the rename. Without
+// it, on some filesystems a power cut just after a save can still leave an empty db.json,
+// because the rename can reach the disk before the data does. It costs some time per save
+// on slow disks such as SD cards; keeping the data is worth more.
 function writeDb(data: Database) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  fs.writeFileSync(DB_TMP_FILE, JSON.stringify(data, null, 2), { flush: true });
+  fs.renameSync(DB_TMP_FILE, DB_FILE);
 }
 
 // ── EPG Cache and Parser ─────────────────────────────────────────────────
@@ -939,6 +990,8 @@ async function refreshChannelPoolSourcesSequentially(sourceIds: string[]) {
 
 // ── Auth helpers ─────────────────────────────────────────────────────────
 const AUTH_FILE = path.join(DATA_DIR, 'auth.json');
+// writeAuth() saves into this file first, like writeDb() does with db.json.tmp.
+const AUTH_TMP_FILE = path.join(DATA_DIR, 'auth.json.tmp');
 const PBKDF2_ITERATIONS = 100_000;
 const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = 'sha512';
@@ -952,15 +1005,48 @@ interface AuthData {
 
 const activeSessions = new Set<string>();
 
-function readAuth(): AuthData | null {
+// Shown on the lock screen while auth.json is 'damaged' (see readAuth).
+const AUTH_DAMAGED_MESSAGE = "m3u4me can't read its password file, so it stays locked. To get back in, delete auth.json from m3u4me's data folder on the server (this removes the password), then set a new password in Settings.";
+
+// Returns null when no password is set. Returns 'damaged' when auth.json exists but can't be
+// read or isn't a complete password record, e.g. because a power cut interrupted an older
+// version of the app while it was saving it.
+// Why a damaged file isn't treated as "no password", as it used to be: that silently switched
+// password protection off for anyone on the network. And it isn't moved aside like a damaged
+// db.json (see setAsideDamagedDb), because that would switch protection off too. Instead the
+// app stays locked: protected requests are refused, and login/recovery explain the way out.
+// That way out is deleting auth.json by hand, which needs access to the server itself.
+function readAuth(): AuthData | null | 'damaged' {
+  let text: string;
   try {
-    if (!fs.existsSync(AUTH_FILE)) return null;
-    return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf-8'));
-  } catch { return null; }
+    text = fs.readFileSync(AUTH_FILE, 'utf-8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    return 'damaged';
+  }
+  try {
+    const parsed = JSON.parse(text);
+    // All four hashes/salts must be there, or no password could ever be checked against it.
+    const complete = ['passwordHash', 'passwordSalt', 'recoveryKeyHash', 'recoveryKeySalt']
+      .every(key => typeof parsed?.[key] === 'string');
+    return complete ? parsed : 'damaged';
+  } catch {
+    return 'damaged';
+  }
 }
 
+// Answers login/recovery (and the routes behind the auth check) while auth.json is damaged.
+// Logged too, so it shows up in `m3u4me logs` / `docker logs`.
+function refuseDamagedAuth(res: express.Response) {
+  console.error(`${AUTH_FILE} can't be read or is damaged, so passwords can't be checked and m3u4me stays locked. Deleting that file removes the password.`);
+  res.status(500).json({ error: AUTH_DAMAGED_MESSAGE });
+}
+
+// Same two-step save as writeDb(), for the same reasons. Here a half-written auth.json would
+// lock everyone out (see readAuth).
 function writeAuth(data: AuthData) {
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2));
+  fs.writeFileSync(AUTH_TMP_FILE, JSON.stringify(data, null, 2), { flush: true });
+  fs.renameSync(AUTH_TMP_FILE, AUTH_FILE);
 }
 
 function deleteAuth() {
@@ -1152,6 +1238,9 @@ async function startServer() {
     // Skip auth for M3U serving endpoints handled outside /api
     const auth = readAuth();
     if (!auth) return next(); // No password set — allow all
+    // Damaged password file: stay locked, even for sessions that logged in earlier (see readAuth).
+    // The 401 makes the frontend show the lock screen, where login explains what to do.
+    if (auth === 'damaged') return res.status(401).json({ error: AUTH_DAMAGED_MESSAGE });
     const header = req.headers.authorization;
     if (!header || !header.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -1166,12 +1255,14 @@ async function startServer() {
   // ── Auth routes ────────────────────────────────────────────────────
   app.get('/api/auth/status', (_req, res) => {
     const auth = readAuth();
+    // A damaged password file counts as enabled, so the lock screen shows (see readAuth).
     res.json({ enabled: !!auth });
   });
 
   app.post('/api/auth/login', async (req, res) => {
     const auth = readAuth();
     if (!auth) return res.json({ token: null, message: 'No password set' });
+    if (auth === 'damaged') return refuseDamagedAuth(res);
     const { password } = req.body;
     if (!password) return res.status(400).json({ error: 'Password required' });
     try {
@@ -1190,6 +1281,9 @@ async function startServer() {
 
   app.post('/api/auth/set-password', async (req, res) => {
     const auth = readAuth();
+    // Not normally reachable, because the auth check above already refuses it. It's here so
+    // the checks below only ever see a real password record.
+    if (auth === 'damaged') return refuseDamagedAuth(res);
     const { password, currentPassword } = req.body;
     if (!password || password.length < 4) {
       return res.status(400).json({ error: 'Password must be at least 4 characters' });
@@ -1219,6 +1313,7 @@ async function startServer() {
   app.post('/api/auth/recover', async (req, res) => {
     const auth = readAuth();
     if (!auth) return res.status(400).json({ error: 'No password set' });
+    if (auth === 'damaged') return refuseDamagedAuth(res);
     const { recoveryKey, newPassword } = req.body;
     if (!recoveryKey || !newPassword) {
       return res.status(400).json({ error: 'Recovery key and new password required' });
@@ -1252,6 +1347,7 @@ async function startServer() {
   app.post('/api/auth/remove-password', async (req, res) => {
     const auth = readAuth();
     if (!auth) return res.json({ success: true });
+    if (auth === 'damaged') return refuseDamagedAuth(res); // also unreachable, as in set-password
     const { currentPassword } = req.body;
     if (!currentPassword) return res.status(400).json({ error: 'Current password required' });
     try {

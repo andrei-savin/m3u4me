@@ -40,6 +40,10 @@ All backend code lives in `server.ts`: no router modules, no ORM, no shared code
 
 **Persistence:**
 - `data/db.json` (gitignored, auto-created) holds everything. `readDb()`/`writeDb()` synchronously read or rewrite the *whole file* on each request. There are no transactions and no concurrent-writer safety, which is acceptable only because the app is single-user.
+- `writeDb()` is crash-safe. It writes `data/db.json.tmp` with `flush: true` (fsync), then renames it over `db.json`, so a crash, restart, full disk or power cut leaves the previous complete file. Never write `db.json` directly.
+- `readDb()` returns an empty database only when `db.json` doesn't exist.
+  - Any other read error throws, so nothing gets saved over data that's merely unreadable.
+  - Invalid JSON is renamed, untouched, to `db.json.corrupt-<UTC timestamp>` (`setAsideDamagedDb()`), logged, and the app continues empty.
 - `readDb()` backfills missing top-level arrays. When adding a field to an existing record type, make it optional or nullable and tolerate its absence on old records (see `lastDownloadedAt`). Only use a boot migration like `migrateShortIds()` when a value must be backfilled.
 - The dev server uses the real `data/db.json`, so any testing in the browser mutates real data.
 - Validation is minimal. Most `POST`/`PUT` handlers spread `req.body` straight into the stored record, and the frontend is trusted to send correct shapes.
@@ -98,6 +102,11 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 ### Auth (bespoke)
 
 - `data/auth.json` (gitignored) holds a PBKDF2 hash of the password and of a one-time-shown recovery key. If that file doesn't exist, auth is a complete no-op.
+- If `auth.json` exists but can't be read, isn't valid JSON or lacks a hash/salt, `readAuth()` returns `'damaged'` and the app **fails closed**.
+  - `/auth/status` reports enabled, every gated route returns 401, and login/recover return `AUTH_DAMAGED_MESSAGE`.
+  - Deleting the file by hand is the only way back in.
+  - Never treat a damaged file as "no password". That used to switch protection off silently.
+- `writeAuth()` uses the same tmp-file-plus-rename save as `writeDb()`.
 - Login issues a random token kept in an in-memory `Set` (`activeSessions`), so **every server restart logs everyone out**.
 - The frontend keeps the token in `sessionStorage` and sends it via `authFetch()`. A 401 fires a window `auth-expired` event, and `App.tsx` responds by showing `LockScreen`.
 - `src/contexts/AuthContext.tsx` is a **vestigial stub** unrelated to this. `AuthProvider` still wraps `<App>`, but nothing calls `useAuth()`. Ignore it when working on auth.
