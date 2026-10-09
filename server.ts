@@ -162,9 +162,15 @@ interface SyncLogEntry {
 interface AppSettings {
   // Which fields "Keep in sync with source" syncs when the user doesn't pick custom ones.
   defaultSyncFields: SyncFieldToggles;
+  // False until the first-run setup (Onboarding.tsx) is finished, which happens when the first
+  // playlist is made (see POST /api/playlists) or a backup with playlists is restored.
+  // Absent in databases from before onboarding existed; readDb() fills it in.
+  onboardingDone: boolean;
 }
 
-const DEFAULT_SETTINGS: AppSettings = {
+// onboardingDone is left out on purpose: readDb() decides it for databases that don't have it,
+// and a default here would hide that they don't.
+const DEFAULT_SETTINGS: Omit<AppSettings, 'onboardingDone'> = {
   defaultSyncFields: { url: true, name: true, logo: true, tvgId: true },
 };
 
@@ -180,7 +186,7 @@ interface Database {
 }
 
 function emptyDb(): Database {
-  return { playlists: [], channels: [], epgSources: [], channelPoolSources: [], channelPoolEntries: [], channelPoolChangeLogs: [], syncLogs: [], settings: DEFAULT_SETTINGS };
+  return { playlists: [], channels: [], epgSources: [], channelPoolSources: [], channelPoolEntries: [], channelPoolChangeLogs: [], syncLogs: [], settings: { ...DEFAULT_SETTINGS, onboardingDone: false } };
 }
 
 // Initial DB
@@ -217,6 +223,12 @@ function readDb(): Database {
     ...DEFAULT_SETTINGS,
     ...(parsed.settings || {}),
     defaultSyncFields: { ...DEFAULT_SETTINGS.defaultSyncFields, ...(parsed.settings?.defaultSyncFields || {}) },
+    // A database from before onboarding existed counts as set up once it has anything in it,
+    // so people updating m3u4me never get the welcome screens. New installs start with an
+    // explicit false (emptyDb), so this guess only applies to those older databases.
+    onboardingDone: parsed.settings?.onboardingDone ?? (
+      (parsed.playlists?.length || 0) > 0 || parsed.channelPoolSources.length > 0 || parsed.epgSources.length > 0
+    ),
   };
   return parsed;
 }
@@ -378,16 +390,17 @@ async function refreshEpgSource(sourceId: string) {
   if (!source) return;
   try {
     const data = await fetchAndParseEpg(source);
-    epgCache.set(sourceId, { ...data, fetchedAt: Date.now() });
 
     const updatedDb = readDb();
     const idx = updatedDb.epgSources.findIndex(s => s.id === sourceId);
-    if (idx !== -1) {
-      updatedDb.epgSources[idx].lastFetched = Date.now();
-      updatedDb.epgSources[idx].channelCount = data.channels.length;
-      updatedDb.epgSources[idx].lastFetchError = null;
-      writeDb(updatedDb);
-    }
+    // The source was deleted, or replaced by restoring a backup, during the fetch. Its guide
+    // data mustn't be kept: the /:shortId/epg feed reads every cached source.
+    if (idx === -1) return;
+    epgCache.set(sourceId, { ...data, fetchedAt: Date.now() });
+    updatedDb.epgSources[idx].lastFetched = Date.now();
+    updatedDb.epgSources[idx].channelCount = data.channels.length;
+    updatedDb.epgSources[idx].lastFetchError = null;
+    writeDb(updatedDb);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Failed to refresh EPG source ${source.name}:`, err);
@@ -888,10 +901,13 @@ function detectChannelPoolChanges(sourceId: string, newEntries: ChannelPoolEntry
   const db = readDb();
   const oldEntries = db.channelPoolEntries.filter(e => e.sourceId === sourceId);
   const source = db.channelPoolSources.find(s => s.id === sourceId);
+  // The source was deleted, or replaced by restoring a backup, while its channels were being
+  // fetched. Saving them now would leave channels that belong to no source.
+  if (!source) return false;
 
   // Done before anything else so the stored entries (and linked channels) keep stable ids.
   const missingCount = oldEntries.length
-    ? carryOverPoolEntryIds(oldEntries, newEntries, source?.type === 'xtream')
+    ? carryOverPoolEntryIds(oldEntries, newEntries, source.type === 'xtream')
     : 0;
   const holdBackLosses = missingCount > HOLD_BACK_MIN_COUNT && missingCount / oldEntries.length > HOLD_BACK_MIN_SHARE;
 
@@ -926,7 +942,7 @@ function detectChannelPoolChanges(sourceId: string, newEntries: ChannelPoolEntry
       const log: ChannelPoolChangeLog = {
         id: uuidv4(),
         sourceId,
-        sourceName: source?.name || 'Unknown Source',
+        sourceName: source.name,
         timestamp: Date.now(),
         added,
         removed,
@@ -940,7 +956,7 @@ function detectChannelPoolChanges(sourceId: string, newEntries: ChannelPoolEntry
   }
 
   db.channelPoolEntries = db.channelPoolEntries.filter(e => e.sourceId !== sourceId).concat(newEntries);
-  if (source) syncLinkedChannels(db, source, newEntries, holdBackLosses);
+  syncLinkedChannels(db, source, newEntries, holdBackLosses);
   writeDb(db);
   return hasChanges;
 }
@@ -960,16 +976,17 @@ async function refreshChannelPoolSource(sourceId: string): Promise<boolean> {
     }
 
     const changed = detectChannelPoolChanges(sourceId, newEntries);
-    channelPoolCache.set(sourceId, newEntries);
 
     const updatedDb = readDb();
     const idx = updatedDb.channelPoolSources.findIndex(s => s.id === sourceId);
-    if (idx !== -1) {
-      updatedDb.channelPoolSources[idx].lastFetched = Date.now();
-      updatedDb.channelPoolSources[idx].channelCount = newEntries.length;
-      updatedDb.channelPoolSources[idx].lastFetchError = null;
-      writeDb(updatedDb);
-    }
+    // Gone during the fetch (deleted, or replaced by a restored backup), same as in
+    // detectChannelPoolChanges: keep nothing for it.
+    if (idx === -1) return false;
+    channelPoolCache.set(sourceId, newEntries);
+    updatedDb.channelPoolSources[idx].lastFetched = Date.now();
+    updatedDb.channelPoolSources[idx].channelCount = newEntries.length;
+    updatedDb.channelPoolSources[idx].lastFetchError = null;
+    writeDb(updatedDb);
     return changed;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -993,6 +1010,24 @@ async function refreshChannelPoolSourcesSequentially(sourceIds: string[]) {
   for (const id of sourceIds) {
     await refreshChannelPoolSource(id);
   }
+}
+
+// Fills the in-memory caches from scratch: uploaded-file sources never refresh, so their saved
+// channels go straight into the cache, and every other source is fetched again. Run at boot and
+// after a backup is restored. The fetches go one source at a time (see the two functions above)
+// and aren't awaited, so neither the server's start nor the restore request waits for them.
+function loadAndRefreshAllSources() {
+  const db = readDb();
+  refreshEpgSourcesSequentially(db.epgSources.map(s => s.id));
+  const channelPoolSourceIdsToRefresh: string[] = [];
+  for (const source of db.channelPoolSources) {
+    if (source.type !== 'playlist-file') {
+      channelPoolSourceIdsToRefresh.push(source.id);
+    } else {
+      channelPoolCache.set(source.id, db.channelPoolEntries.filter(e => e.sourceId === source.id));
+    }
+  }
+  refreshChannelPoolSourcesSequentially(channelPoolSourceIdsToRefresh);
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────
@@ -1194,25 +1229,7 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
 
-  // Initialize EPG Cache. Refreshed one source at a time (not all at once) —
-  // see refreshEpgSourcesSequentially. This is fired without awaiting so it
-  // doesn't delay the server from listening.
-  const dbConfig = readDb();
-  refreshEpgSourcesSequentially(dbConfig.epgSources.map(s => s.id));
-  const channelPoolSourceIdsToRefresh: string[] = [];
-  for (const source of dbConfig.channelPoolSources) {
-    if (source.type !== 'playlist-file') {
-      channelPoolSourceIdsToRefresh.push(source.id);
-    } else {
-      const entries = dbConfig.channelPoolEntries.filter(e => e.sourceId === source.id);
-      channelPoolCache.set(source.id, entries);
-    }
-  }
-  // Same reasoning as the EPG sources above — refreshed one at a time (see
-  // refreshChannelPoolSourcesSequentially) instead of all firing their fetches
-  // in the same instant, and fired without awaiting so it doesn't delay the
-  // server from listening.
-  refreshChannelPoolSourcesSequentially(channelPoolSourceIdsToRefresh);
+  loadAndRefreshAllSources();
 
   setInterval(() => {
     const currentDb = readDb();
@@ -1308,7 +1325,12 @@ async function startServer() {
       const recoveryKey = generateRecoveryKey();
       const { hash: recoveryKeyHash, salt: recoveryKeySalt } = await hashPassword(recoveryKey);
       writeAuth({ passwordHash, passwordSalt, recoveryKeyHash, recoveryKeySalt });
-      res.json({ recoveryKey: formatRecoveryKey(recoveryKey) });
+      // Signs this browser in, like /auth/recover does. Without a session, the very next request
+      // after turning a password on would bounce to the lock screen, in the middle of Settings
+      // or of the first-run setup.
+      const token = generateToken();
+      activeSessions.add(token);
+      res.json({ recoveryKey: formatRecoveryKey(recoveryKey), token });
     } catch (e) {
       // This message is shown to the user as-is, so keep it plain. The usual cause is data/ not
       // being writable.
@@ -1856,6 +1878,10 @@ async function startServer() {
       updatedAt: Date.now(),
     };
     db.playlists.push(newPlaylist);
+    // Naming the first playlist is the last required step of the first-run setup, so making any
+    // playlist finishes it. Saved in this same write so a failed second request can't leave
+    // someone stuck in the setup with a playlist already made.
+    db.settings.onboardingDone = true;
     writeDb(db);
     res.json(newPlaylist);
   });
@@ -1949,6 +1975,7 @@ async function startServer() {
 
     db.playlists.push(newPlaylist);
     db.channels = [...db.channels, ...newChannels];
+    db.settings.onboardingDone = true; // same reason as in POST /api/playlists
     writeDb(db);
 
     res.json(newPlaylist);
@@ -2229,6 +2256,71 @@ async function startServer() {
     };
     writeDb(db);
     res.json(db.settings);
+  });
+
+  // ── Backup & restore ─────────────────────────────────────────────────
+  // A backup is the whole database (playlists, channels, sources with their saved channels, logs
+  // and settings) in one JSON file, so it's the same thing as a copy of db.json. The password
+  // (auth.json) is never part of it. Both routes sit behind the password like the rest of /api.
+  app.get("/api/backup", (_req, res) => {
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="m3u4me-backup-${date}.json"`);
+    res.send(JSON.stringify(readDb(), null, 2));
+  });
+
+  // Replaces the whole database with a backup, or with a db.json copied from another m3u4me.
+  // The file arrives as raw bytes (application/octet-stream) rather than JSON, because the
+  // app-wide JSON parser above stops at 50 MB and a database with a few big sources is larger.
+  app.post("/api/backup/restore", express.raw({ type: 'application/octet-stream', limit: '200mb' }), (req, res) => {
+    const notABackup = "This file isn't an m3u4me backup. Pick a backup downloaded from m3u4me's Settings, or the db.json file from its data folder.";
+    let backup;
+    try {
+      backup = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString('utf-8') : '');
+    } catch {
+      return res.status(400).json({ error: notABackup });
+    }
+    // Every m3u4me database ever made has playlists and channels. The other lists arrived in
+    // later versions, so an older backup may not have them (readDb() fills them in), but any
+    // that are there must be lists.
+    const optionalLists = ['epgSources', 'channelPoolSources', 'channelPoolEntries', 'channelPoolChangeLogs', 'syncLogs'];
+    const looksRight = backup && typeof backup === 'object' && !Array.isArray(backup)
+      && Array.isArray(backup.playlists) && Array.isArray(backup.channels)
+      && optionalLists.every(key => backup[key] === undefined || Array.isArray(backup[key]));
+    if (!looksRight) return res.status(400).json({ error: notABackup });
+
+    const current = readDb();
+    try {
+      // Keep the data being replaced, in case the wrong file was picked. Same kind of name as
+      // the copy setAsideDamagedDb() makes, next to db.json in the data folder.
+      if (fs.existsSync(DB_FILE)) {
+        fs.copyFileSync(DB_FILE, `${DB_FILE}.before-restore-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+      }
+      // A restore never sends anyone back to the setup screens. During setup, a backup without
+      // any playlist leaves setup unfinished, so it carries on to "name your first playlist".
+      const settings = backup.settings && typeof backup.settings === 'object' ? backup.settings : {};
+      backup.settings = { ...settings, onboardingDone: backup.playlists.length > 0 || current.settings.onboardingDone };
+      writeDb(backup);
+      // Backups from before short playlist links existed need their numbers filled in.
+      migrateShortIds();
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: "Couldn't restore the backup. Check that m3u4me can write to its data folder, then try again." });
+    }
+
+    // The caches still hold the replaced sources' channels and guide data.
+    epgCache.clear();
+    channelPoolCache.clear();
+    loadAndRefreshAllSources();
+
+    const restored = readDb();
+    res.json({
+      playlists: restored.playlists.length,
+      channels: restored.channels.length,
+      channelPoolSources: restored.channelPoolSources.length,
+      epgSources: restored.epgSources.length,
+      onboardingDone: restored.settings.onboardingDone,
+    });
   });
 
   // Pool channels to offer in the "Link to source" dialog, from every source except uploaded

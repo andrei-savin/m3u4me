@@ -56,6 +56,13 @@ interface AppState {
   setToast: (toast: { id: number; type: 'error' | 'warning' | 'info'; message: string } | null) => void;
 }
 
+/** The accent colour swatches offered in Settings and on the first-run setup's welcome screen.
+ * The first one is the default accentColor below. */
+export const ACCENT_PRESETS = [
+  '#FF2960', '#FF5D29', '#22D5A7', '#29CBFF',
+  '#5D29FF', '#607083',
+];
+
 export const useStore = create<AppState>()(
   persist(
     (set) => ({

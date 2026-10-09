@@ -110,6 +110,9 @@ export interface SyncLogEntry {
 
 export interface AppSettings {
   defaultSyncFields: SyncFieldToggles;
+  /** False until the first-run setup is finished; making the first playlist finishes it. Only
+   * the server sets it (PUT /api/settings ignores it). */
+  onboardingDone: boolean;
 }
 
 export interface Channel {
@@ -245,6 +248,15 @@ export interface Stats {
   sampleLogos: string[];
 }
 
+/** Response shape of POST /api/backup/restore: what the restored backup contains. */
+export interface RestoreResult {
+  playlists: number;
+  channels: number;
+  channelPoolSources: number;
+  epgSources: number;
+  onboardingDone: boolean;
+}
+
 // Custom event target for triggering refetches across components
 export const dbEvents = new EventTarget();
 export const triggerRefresh = () => dbEvents.dispatchEvent(new Event('refresh'));
@@ -328,6 +340,10 @@ export const api = {
   uploadChannelPoolSource: (data: { name: string; content: string; filename: string }) =>
     authFetch('/api/channel-pool/sources/upload', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(r => r.json()) as Promise<ChannelPoolSource>,
 
+  // App version (package.json), for the update check in AppInfo.tsx. Behind the password like
+  // the rest of /api, so it has to send the session token too.
+  getVersion: () => authFetch('/api/version').then(r => r.json()) as Promise<{ version: string }>,
+
   // Homescreen
   getStats: () => authFetch('/api/stats').then(r => r.json()) as Promise<Stats>,
 
@@ -335,6 +351,12 @@ export const api = {
   getSettings: () => authFetch('/api/settings').then(r => r.json()) as Promise<AppSettings>,
   updateSettings: (updates: Partial<AppSettings>) =>
     authFetch('/api/settings', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(updates) }).then(r => r.json()) as Promise<AppSettings>,
+
+  // Backup & restore
+  downloadBackup: () => authFetch('/api/backup').then(r => r.blob()),
+  // Sent as the raw file rather than JSON, see POST /api/backup/restore in server.ts.
+  restoreBackup: (file: File) =>
+    authFetch('/api/backup/restore', { method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: file }).then(r => r.json()) as Promise<RestoreResult>,
 
   // Channel sync
   getLinkCandidates: (playlistId: string, channelId: string, q?: string) =>

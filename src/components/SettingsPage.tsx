@@ -1,18 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
-import { api, clearSessionToken, SyncFieldToggles as SyncFieldTogglesValue } from '../apiClient';
-import { ArrowLeft, Shield, Palette, Eye, EyeOff, Copy, Check, KeyRound, Lock, Unlock, Github, ArrowUpCircle, Info, Coffee, Link2 } from 'lucide-react';
+import { api, clearSessionToken, setSessionToken, triggerRefresh, triggerEpgRefresh, triggerChannelPoolRefresh, SyncFieldToggles as SyncFieldTogglesValue } from '../apiClient';
+import { ArrowLeft, Shield, Palette, Eye, EyeOff, Copy, Check, KeyRound, Lock, Unlock, Github, ArrowUpCircle, Info, Coffee, Link2, DatabaseBackup, Download, ArchiveRestore, Loader2 } from 'lucide-react';
 import { Logo } from './Logo';
 import { useVersionInfo } from './AppInfo';
-import { contrastText, notifyError } from '../store';
+import { contrastText, notifyError, notifyInfo, ACCENT_PRESETS, AuthExpiredError } from '../store';
 import Toast from './Toast';
 import SyncFieldToggles from './SyncFieldToggles';
-
-const ACCENT_PRESETS = [
-  '#FF2960', '#FF5D29', '#22D5A7', '#29CBFF',
-  '#5D29FF', '#607083',
-];
+import Dialog from './Dialog';
+import BackupDropZone, { describeRestoredBackup, restoreErrorMessage } from './BackupDropZone';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
@@ -22,6 +19,7 @@ export default function SettingsPage() {
     logoBgColor, setLogoBgColor,
     accentColor, setAccentColor,
     is24Hour, set24Hour,
+    setActivePlaylistId, setActiveChannelPoolSourceId, setActiveEpgSourceId, setUndoEntry,
   } = useStore();
 
   // Security state
@@ -82,6 +80,69 @@ export default function SettingsPage() {
     }
   };
 
+  // Backup
+  const [downloadingBackup, setDownloadingBackup] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState('');
+
+  // The backup sits behind the password, so it can't be a plain <a href download> link (that
+  // can't send the session token). It's fetched first, then saved through a temporary link.
+  const handleDownloadBackup = async () => {
+    setDownloadingBackup(true);
+    try {
+      const blob = await api.downloadBackup();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `m3u4me-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // Some browsers start the download only after click() returns, so the file's address is
+      // released a moment later rather than right away.
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (e) {
+      console.error(e);
+      notifyError(e, "Couldn't download the backup. Try again.");
+    } finally {
+      setDownloadingBackup(false);
+    }
+  };
+
+  const closeRestore = () => {
+    setRestoreOpen(false);
+    setRestoreFile(null);
+    setRestoreError('');
+  };
+
+  const handleRestore = async () => {
+    if (!restoreFile) return;
+    setRestoring(true);
+    setRestoreError('');
+    try {
+      const result = await api.restoreBackup(restoreFile);
+      // Whatever was selected, or could still be undone, belonged to the data that was replaced.
+      setActivePlaylistId(null);
+      setActiveChannelPoolSourceId(null);
+      setActiveEpgSourceId(null);
+      setUndoEntry(null);
+      triggerRefresh();
+      triggerEpgRefresh();
+      triggerChannelPoolRefresh();
+      api.getSettings().then(s => setSyncDefaults(s.defaultSyncFields)).catch(console.error);
+      closeRestore();
+      notifyInfo(`Backup restored: ${describeRestoredBackup(result)}. Your sources are refreshing in the background.`);
+    } catch (e) {
+      if (e instanceof AuthExpiredError) return; // the lock screen takes over
+      console.error(e);
+      setRestoreError(restoreErrorMessage(e));
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const resetSecurityForm = () => {
     setPassword('');
     setConfirmPassword('');
@@ -101,6 +162,9 @@ export default function SettingsPage() {
     try {
       const res = await api.setPassword(password, authEnabled ? currentPassword : undefined);
       if (res.ok) {
+        // The server signs this browser in along with setting the password. Without the new
+        // session, turning a password on would lock this page on the very next request.
+        if (res.token) setSessionToken(res.token);
         setRecoveryKey(res.recoveryKey);
         setAuthEnabled(true);
         setSecuritySuccess(authEnabled ? 'Password changed successfully' : 'Password protection enabled');
@@ -526,6 +590,40 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* ── Backup ────────────────────────────────────────────────────── */}
+          <section className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] rounded-lg elev-1 overflow-hidden">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 dark:border-white/8">
+              <DatabaseBackup className="h-5 w-5" style={{ color: accentColor }} />
+              <h2 className="text-base font-medium text-gray-900 dark:text-white">Backup</h2>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div>
+                <p className="text-sm text-gray-800 dark:text-gray-200">Save everything in one file</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Your playlists, sources, TV guides and settings. Use it to move m3u4me to a new server, or to go back to how things were. It contains your providers' logins, so keep it somewhere private. Your m3u4me password isn't included.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleDownloadBackup}
+                  disabled={downloadingBackup}
+                  className="md-btn inline-flex items-center gap-2 h-9 px-4 rounded-lg text-sm font-medium disabled:opacity-60"
+                  style={{ backgroundColor: accentColor, color: contrastText(accentColor) }}
+                >
+                  {downloadingBackup ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  Download backup
+                </button>
+                <button
+                  onClick={() => setRestoreOpen(true)}
+                  className="md-btn inline-flex items-center gap-2 h-9 px-4 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-white/15"
+                >
+                  <ArchiveRestore className="h-4 w-4" />
+                  Restore from backup…
+                </button>
+              </div>
+            </div>
+          </section>
+
           {/* ── About ─────────────────────────────────────────────────────── */}
           <section className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] rounded-lg elev-1 overflow-hidden">
             <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 dark:border-white/8">
@@ -604,6 +702,36 @@ export default function SettingsPage() {
 
         </div>
       </div>
+
+      {restoreOpen && (
+        <Dialog onClose={closeRestore} dismissible={!restoring} maxWidth="max-w-md">
+          <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-3">Restore from backup</h2>
+          <div className="px-6 space-y-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              This replaces all your playlists, sources, TV guides and settings with the ones in the backup. A copy of what you have now is kept in m3u4me's data folder on the server, just in case.
+            </p>
+            <BackupDropZone file={restoreFile} onFileChange={f => { setRestoreFile(f); setRestoreError(''); }} accentColor={accentColor} disabled={restoring} />
+            {restoreError && <p className="text-xs text-red-500 dark:text-red-400">{restoreError}</p>}
+          </div>
+          <div className="flex justify-end gap-1 px-6 py-4 mt-2">
+            <button
+              onClick={closeRestore}
+              disabled={restoring}
+              className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleRestore}
+              disabled={!restoreFile || restoring}
+              className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-red-600 dark:text-red-400 disabled:opacity-40 flex items-center gap-2"
+            >
+              {restoring && <Loader2 className="w-3 h-3 animate-spin" />}
+              Replace everything
+            </button>
+          </div>
+        </Dialog>
+      )}
 
       {/* Error/info snackbar, same as Dashboard and Home, so failures here aren't silent */}
       <Toast />

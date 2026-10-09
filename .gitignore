@@ -17,6 +17,8 @@ dist-ssr/
 
 # Ignore the live database and auth secrets
 data/*.json
-# ...plus the database's temporary save file and any damaged copies set aside by server.ts
+# ...plus the database's temporary save file, any damaged copies set aside by server.ts,
+# and the copies kept whenever a backup is restored
 data/*.json.tmp
 data/*.json.corrupt-*
+data/*.json.before-restore-*

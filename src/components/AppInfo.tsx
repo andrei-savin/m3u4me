@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { api } from '../apiClient';
 
 const GITHUB_API_LATEST = 'https://api.github.com/repos/andrei-savin/m3u4me/releases/latest';
 
@@ -40,9 +41,9 @@ export function useVersionInfo(): VersionInfo {
     let cancelled = false;
     (async () => {
       try {
-        // Fetch local version
-        const localRes = await fetch('/api/version');
-        const { version: current } = await localRes.json();
+        // Fetch local version. Through api (not a bare fetch) so it carries the session token:
+        // with a password set, a bare fetch got a 401 and the version showed as unknown.
+        const { version: current } = await api.getVersion();
 
         // Fetch latest GitHub release
         let latest: string | null = null;

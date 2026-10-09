@@ -16,8 +16,9 @@ const NAV_TABS: { key: string; label: string; path: string }[] = [
 ];
 
 /** Shared glass surface for every card on this screen — translucent + blurred so the
- * animated background reads through softly instead of being hidden behind flat panels. */
-const GLASS = 'backdrop-blur-xl bg-white/60 dark:bg-white/[0.06] amoled:dark:bg-white/[0.03] border border-white/60 dark:border-white/10 amoled:dark:border-white/5 shadow-xl';
+ * animated background reads through softly instead of being hidden behind flat panels.
+ * Also used by the first-run setup (Onboarding.tsx), which sits on the same background. */
+export const GLASS = 'backdrop-blur-xl bg-white/60 dark:bg-white/[0.06] amoled:dark:bg-white/[0.03] border border-white/60 dark:border-white/10 amoled:dark:border-white/5 shadow-xl';
 
 /** "Today at 14:32" for a timestamp from today, "03.09.2026 at 14:32" otherwise — same
  * shape as the channel-pool update log's timestamps, so the two read consistently. */
@@ -56,8 +57,9 @@ function useCountUp(target: number, durationMs = 900): number {
 /** Decorative background: two slow-drifting accent-colored "aurora" blobs, a tilted "floor"
  * of the user's own channel logos scrolling past as if shot from above at an angle, and a
  * gradient scrim so the glass cards in front stay legible either way. Purely decorative —
- * aria-hidden, and every logo silently drops itself if its URL 404s. */
-function HomeBackground({ logos, accentColor }: { logos: string[]; accentColor: string }) {
+ * aria-hidden, and every logo silently drops itself if its URL 404s. The first-run setup
+ * (Onboarding.tsx) uses it too, with no logos, so only the aurora shows. */
+export function HomeBackground({ logos, accentColor }: { logos: string[]; accentColor: string }) {
   const rowCount = 5;
   // Split into two alternating pools so adjacent rows read as visually distinct sets instead
   // of the same full list just phase-shifted — even rows draw only from pool A, odd rows only

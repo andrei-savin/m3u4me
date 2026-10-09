@@ -21,6 +21,7 @@ m3u4me is your IPTV playlists' new home. Your streams don't leave your local net
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 ## Features
+- <b>Guided setup:</b> The first time you open m3u4me, a short setup walks you through adding your provider and TV guide, an optional password, and your first playlist. Moving from another m3u4me? Restore your backup right from the welcome screen.
 - <b>Multiple playlist support:</b> Add as many playlists as you like. Start empty or import an M3U or XSPF playlist from a URL or an uploaded file.
 - <b>Channel pool sources:</b> Connect your Xtream Codes account, a playlist URL, or an M3U/XSPF file; then browse, search and add channels into any playlist. Each source refreshes on its own schedule and keeps a changelog of what got added, removed or renamed.
 - <b>Channel sync:</b> When you add channels from an Xtream Codes or playlist URL source, you can keep them in sync with that source. Choose what updates automatically (stream link, name, logo, TVG ID), per selection or per channel, and set your defaults in Settings. If you changed something yourself, the provider's update waits for you to accept or skip it. Channels that disappear from their source are hidden and marked, and every playlist has a sync log. Channels already in a playlist can be linked too.
@@ -31,6 +32,7 @@ m3u4me is your IPTV playlists' new home. Your streams don't leave your local net
 - <b>Auto-saving:</b> You don't need to remember to save your changes or push your playlist. Everything happens instantly, automatically.
 - <b>Undo delete:</b> Deleted a channel by mistake? Hit the "Undo" button which appears on the bottom of your screen and bring it back without a hassle.
 - <b>Simple playlist link structure:</b> No more typing huge links on your TV. Playlists get assigned a numerical ID, which means that your download links look like this: http://IP:port/1 for your first playlist, http://IP:port/2 for the second one, and so on. Each playlist also gets its own EPG feed at http://IP:port/{number_ID}/epg.
+- <b>Backup & restore:</b> Download everything (playlists, sources, TV guides and settings) as one file from Settings, then restore it on the same server or a new one.
 - <b>Global search:</b> Search across every playlist, channel pool source, and EPG source at once. All searches ignore accents, so typing "stiri" also finds "Știri".
 - <b>Keyboard shortcuts</b>: Delete your channels with `DEL`, select everything with `Cmd+A`, make your work easier overall. Full list of commands is available inside the app.
 
@@ -45,7 +47,7 @@ m3u4me is your IPTV playlists' new home. Your streams don't leave your local net
 > [!NOTE]
 > m3u4me has been tested on macOS (Apple Silicon) and Debian, running with as little as 512MB of RAM.
 
-There are three ways to install m3u4me. The first one is by far the easiest.
+There are three ways to install m3u4me. The first one is by far the easiest. Once it's running, open it in your browser and a short setup walks you through the rest.
 
 ### Option 1: One-line install (recommended)
 For Linux servers running systemd that install software with `apt` or `dnf`: Debian, Ubuntu, Fedora, and Proxmox containers based on them.
@@ -172,6 +174,16 @@ npm run build
 ```
 pm2 restart ecosystem.config.cjs --update-env
 ```
+
+## Backups & moving to a new server
+In m3u4me, open <b>Settings → Backup → Download backup</b>. That one file holds your playlists, sources, TV guides and settings. It also holds your providers' logins, so keep it private. Your m3u4me password is not part of it.
+
+To restore a backup:
+- <b>On a new server:</b> install m3u4me, open it, and choose <b>Restore a backup</b> on the welcome screen.
+- <b>On a server that's already set up:</b> open <b>Settings → Backup → Restore from backup</b>. This replaces everything m3u4me has now. Just in case, a copy of the replaced data stays in m3u4me's data folder, named `db.json.before-restore-` followed by the date and time.
+
+> [!NOTE]
+> Older versions of m3u4me don't have the Download backup button. Use the `db.json` file from the old server's data folder instead: `/opt/m3u4me/data` for the one-line install, or the `data` folder inside the m3u4me folder for Docker and PM2.
 
 ## Bug reports & feature requests
 If you encounter any AI slop, or other sort of error, feel free to create a GitHub issue. I will reply ASAP.

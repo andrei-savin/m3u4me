@@ -45,11 +45,23 @@ All backend code lives in `server.ts`: no router modules, no ORM, no shared code
   - Any other read error throws, so nothing gets saved over data that's merely unreadable.
   - Invalid JSON is renamed, untouched, to `db.json.corrupt-<UTC timestamp>` (`setAsideDamagedDb()`), logged, and the app continues empty.
 - `readDb()` backfills missing top-level arrays. When adding a field to an existing record type, make it optional or nullable and tolerate its absence on old records (see `lastDownloadedAt`). Only use a boot migration like `migrateShortIds()` when a value must be backfilled.
+- `settings.onboardingDone` decides whether the first-run setup shows.
+  - `emptyDb()` sets it to an explicit `false`.
+  - `readDb()` fills it in for databases from before onboarding existed, as "has any playlist or source", so upgrading users never see the setup. It's deliberately not in `DEFAULT_SETTINGS`, which would hide its absence.
+  - `POST /api/playlists` and `/import` set it to `true` in the same write: making any playlist finishes the setup. `PUT /api/settings` ignores it.
+- **Backup = the whole database.** `GET /api/backup` sends `readDb()` as a JSON attachment. `auth.json` is never included.
+- **Restore** (`POST /api/backup/restore`):
+  - It takes the raw file as `application/octet-stream`, with a route-level `express.raw` limit of 200 MB. The app-wide `express.json` stops at 50 MB, and real databases with big sources are larger.
+  - It needs `playlists` and `channels` arrays, and any other known list that's present must be an array.
+  - It first copies the current `db.json` to `data/db.json.before-restore-<UTC stamp>` (gitignored).
+  - It sets `onboardingDone` to "backup has playlists, or setup was already done", so a restore never sends anyone back to the setup.
+  - Then it runs `migrateShortIds()`, clears both caches and calls `loadAndRefreshAllSources()`.
 - The dev server uses the real `data/db.json`, so any testing in the browser mutates real data.
 - Validation is minimal. Most `POST`/`PUT` handlers spread `req.body` straight into the stored record, and the frontend is trusted to send correct shapes.
 
 **Background refresh (EPG sources and channel-pool sources):**
-- At boot, every EPG source and every non-file pool source is refreshed. The refresh is fire-and-forget, so it doesn't block `listen`.
+- At boot, every EPG source and every non-file pool source is refreshed (`loadAndRefreshAllSources()`, which a backup restore also runs). The refresh is fire-and-forget, so it doesn't block `listen`.
+- A source deleted or replaced by a restore while its fetch was in flight keeps nothing: `refreshEpgSource`, `refreshChannelPoolSource` and `detectChannelPoolChanges` check that it still exists before caching or saving.
 - A 5-minute `setInterval` refreshes any source that has never been fetched, whose last attempt errored (`lastFetchError`), or whose `refreshIntervalHours` has elapsed. Defaults are 12h for EPG and 24h for pool. Failed sources are therefore retried every tick.
 - Refreshes run **sequentially** (`refresh*SourcesSequentially`), not in parallel. This is deliberate: parallel large fetches made healthy sources fail at boot.
 - EPG data is cached **in memory only** (`epgCache`), never persisted. After a restart it's empty until each source re-fetches. `channelCount` in `db.json` is the fallback used by `/api/stats`.
@@ -95,7 +107,8 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 | EPG | `/epg-sources` CRUD, `/:id/refresh`, `/:id/channels`, `/:id/now` (programmes from −3h to +6h), `/epg/tvg-ids?q=` (autocomplete), `/epg/resolve-tvg-ids` |
 | Channel pool | `/channel-pool/sources` CRUD, `/upload`, `/:id/refresh`, `/:id/channels?q=&category=&sort=name\|original`, `/:id/categories`, `/validate-url`, `/changelog?page=` |
 | Channel sync | `/settings` GET/PUT (default sync fields). Under `/playlists/:id/channels`: `:channelId/link` POST (link, with `useSourceValues`)/PUT (fields)/DELETE, `:channelId/link/candidates?q=`, `:channelId/link/apply` and `/dismiss` (one pending field), `bulk-link-settings`, `bulk-unlink`. Plus `/playlists/:id/sync-log?page=` and `/sync-log/read` |
-| Other | `/search?q=` (all three surfaces, capped at 50 per kind), `/stats` (homescreen), `/health-check` (HEAD, then GET fallback, 8s timeout), `/version` (reads `package.json`) |
+| Backup | `/backup` GET (the whole db as a download), `/backup/restore` POST (raw file body, replaces the db, see Persistence) |
+| Other | `/search?q=` (all three surfaces, capped at 50 per kind), `/stats` (homescreen), `/health-check` (HEAD, then GET fallback, 8s timeout), `/version` (reads `package.json`; gated like the rest, so `api.getVersion()` sends the token) |
 
 `/api/proxy`, `/api/epg-sources/:id/programs/:channelId` (`api.getEpgPrograms`) and `api.logout` exist, but nothing in the frontend currently calls them.
 
@@ -107,7 +120,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
   - Deleting the file by hand is the only way back in.
   - Never treat a damaged file as "no password". That used to switch protection off silently.
 - `writeAuth()` uses the same tmp-file-plus-rename save as `writeDb()`.
-- Login issues a random token kept in an in-memory `Set` (`activeSessions`), so **every server restart logs everyone out**.
+- Login issues a random token kept in an in-memory `Set` (`activeSessions`), so **every server restart logs everyone out**. `set-password` and `recover` also return a fresh token, so turning a password on (in Settings or the first-run setup) doesn't bounce the current browser to the lock screen.
 - The frontend keeps the token in `sessionStorage` and sends it via `authFetch()`. A 401 fires a window `auth-expired` event, and `App.tsx` responds by showing `LockScreen`.
 - `src/contexts/AuthContext.tsx` is a **vestigial stub** unrelated to this. `AuthProvider` still wraps `<App>`, but nothing calls `useAuth()`. Ignore it when working on auth.
 
@@ -125,13 +138,13 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 
 ## Frontend
 
-**Entry and routing:** `main.tsx` wraps everything in `BrowserRouter` and calls `initRipples()`. `App.tsx` applies the `dark`/`amoled` classes to `<html>`, updates the accent-tinted favicon, checks auth status, shows `LockScreen` when locked, and otherwise renders routes:
+**Entry and routing:** `main.tsx` wraps everything in `BrowserRouter` and calls `initRipples()`. `App.tsx` applies the `dark`/`amoled` classes to `<html>`, updates the accent-tinted favicon, checks auth status, and shows `LockScreen` when locked. Once unlocked it fetches `/api/settings` and shows `Onboarding` while `onboardingDone` is false. Both are gates rather than routes, so every address shows them. Otherwise it renders routes:
 
 | Path | Component |
 | --- | --- |
 | `/` | `Home.tsx`: homescreen with stats tiles, last download, newest pool channels, a "Sync updates waiting" card (only when suggestions are pending), per-playlist copy/download links |
 | `/playlists`, `/sources`, `/epg` | `Dashboard.tsx` with `activeView` prop `'playlists' \| 'channels' \| 'epg'` (note: **`'channels'` means the Sources tab**) |
-| `/settings` | `SettingsPage.tsx`: appearance, channel sync defaults, password/recovery key, about + version |
+| `/settings` | `SettingsPage.tsx`: appearance, channel sync defaults, password/recovery key, backup (download, restore dialog), about + version |
 | `*` | redirect to `/` |
 
 **Data fetching (no query library):**
@@ -146,17 +159,26 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 - The sidebar *width* is local state in `Dashboard.tsx`, not in the store.
 - **Errors and notifications:** in a mutation's catch block, call `console.error(e)` plus `notifyError(e, 'fallback message')`. For non-error feedback, use `notifyWarning` or `notifyInfo`. `AuthExpiredError` is ignored on purpose (the lock screen covers it). One toast shows at a time.
 - **Undo:** `setUndoEntry({ description, restore })`. Existing restores re-create data via `bulkAddChannels`, so restored channels get new ids. `bulk` add keeps `isHidden` (only restores send it), so hidden channels come back hidden.
-- `<Toast />` renders both the toast and the undo snackbar (Cmd/Ctrl+Z triggers undo). It's mounted in `Dashboard`, `Home` and `SettingsPage`, but not in LockScreen. Error messages users see (toasts, inline form errors, server `{ error }` text) should be plain language that says what to do next.
+- `<Toast />` renders both the toast and the undo snackbar (Cmd/Ctrl+Z triggers undo). It's mounted in `Dashboard`, `Home`, `SettingsPage` and `Onboarding`, but not in LockScreen. Error messages users see (toasts, inline form errors, server `{ error }` text) should be plain language that says what to do next.
 
 **Cross-surface search:**
 - `Spotlight.tsx` (Cmd/Ctrl+K) queries `/api/search` and groups results as kind → container → category.
 - Picking a result navigates, sets the active container, and sets `scrollTarget: { kind, id }`. The matching view (`PlaylistEditor` / `ChannelPoolViewer` / `EpgViewer`) clears any filter or pagination hiding the target, scrolls to it, highlights it, and resets `scrollTarget` to null.
 - `handleSpotlightNavigate` and the keyboard-shortcuts dialog are **duplicated verbatim in `Dashboard.tsx` and `Home.tsx`**, so edit both. The top nav bar is also deliberately mirrored between the two files so nothing shifts when navigating.
 
-**Version check:** `AppInfo.tsx`'s `useVersionInfo()` compares `/api/version` (the `package.json` version) to GitHub's latest release, fetched from the browser. It drives the update banner in Dashboard/Home and the About section.
+**Version check:** `AppInfo.tsx`'s `useVersionInfo()` compares `api.getVersion()` (the `package.json` version) to GitHub's latest release, fetched from the browser. It drives the update banner in Dashboard/Home and the About section.
 
 ### Feature surfaces
 
+- **First-run setup** (`Onboarding.tsx`, one file with all steps)
+  - Welcome ("make it yours": accent presets + light/dark), then two paths:
+    - Start fresh: Sources → Password → Playlist → Done
+    - Restore a backup: Backup → Password → Done (plus the Playlist step if the backup had no playlist)
+  - Naming a playlist can't be skipped. The server finishes the setup when the playlist is made, so leaving mid-way or reloading brings the setup back from Welcome.
+  - The Sources step reuses `AddChannelPoolSourceDialog`/`AddEpgSourceDialog`, rendered outside the glass card (its backdrop blur would otherwise anchor their `position: fixed` to the card). It also offers "Use the TV guide from <Xtream source>", which creates an Xtream EPG source with the same login.
+  - The Password step stores the token `set-password` returns. The Done step shows the playlist's short link (and `/epg` when there's a guide), then navigates and calls `onFinish`.
+  - The step container is keyed by step for its entrance animation, and the scroll container resets to the top on every step change.
+- `BackupDropZone.tsx`: the shared drop-or-click file picker for a backup, used by onboarding and the Settings restore dialog. It also exports `describeRestoredBackup()` and `restoreErrorMessage()`.
 - **My Playlists**
   - The sidebar has the playlist list plus `CategoryList.tsx`: dnd-kit category reordering and rename/delete/add. Category mutations write the full `categories` array and suppress the auto-sync effect while in flight, to avoid a race.
   - `PlaylistEditor.tsx` covers:
@@ -189,6 +211,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 ### Shared pieces and conventions
 
 - `Dialog.tsx` is the shared modal shell (scrim, Escape/backdrop close, `dismissible` flag). Use it for new dialogs. The confirm dialogs inline in Dashboard/Home predate it.
+- `ACCENT_PRESETS` lives in `store.ts` (Settings and onboarding). `Home.tsx` exports `HomeBackground` and `GLASS`, which onboarding reuses for its aurora background and glass card.
 - `ChannelLogo.tsx` renders a logo with an initials fallback. `Logo.tsx` exports `M3U_ICON_PATH`, which `utils/favicon.ts` reuses.
 - Utilities in `src/utils/`:
   - `formatTime` (always honor `is24Hour`)
@@ -199,6 +222,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 - XMLTV timestamp parsing exists twice: `parseXmltvDate` inside the `/now` route in `server.ts` and `parseXmltvTime` in `EpgProgramDialog.tsx`.
 - Text search is accent-insensitive everywhere (EPG view, TVG-ID autocomplete, Sources, Link to Source, Spotlight): both sides go through `foldText()`, which exists twice (`server.ts` and `src/utils/foldText.ts`). Use it for any new search. Spotlight's `highlight()` folds per character so the bold range maps back onto the original text.
 - Use relative imports. The `@/*` path alias is configured in `tsconfig.json`/`vite.config.ts`, but nothing uses it.
+- There's no `@types/react`, so JSX is only loosely typed. A `key` on a custom component whose props are typed inline fails `tsc`, so put the `key` on a `React.Fragment` around it instead (see Onboarding's source rows).
 
 ### Styling
 
@@ -215,7 +239,8 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
   - `.elev-{1,2,4,8,16,24}` shadows
   - `--md-standard/decelerate/accelerate` easing tokens
   - entrance classes: `.md-scrim`, `.md-dialog`, `.md-dialog-top`, `.md-menu`, `.md-list-in`, `.md-snackbar-in`, `.md-page-in`
-  - `.home-*` classes are Home-only
+  - `.home-*` classes belong to Home; onboarding reuses `.home-aurora` through `HomeBackground`
+  - `.onboarding-step-in`/`.onboarding-step-back`/`.onboarding-pop` are the first-run setup's step slide and Done check-mark
 - Add any new animation class to the `prefers-reduced-motion` block too.
 - The `.elev-*`/`.md-btn` transitions sit in `@layer components` so Tailwind `transition-*` utilities override them. Keep new default transitions in that layer.
 - The accent color is user-picked, so apply it with inline `style={{ color/backgroundColor: accentColor }}`, not Tailwind classes. Use `contrastText()` for readable text on it and `accentAlpha(hex, '18')` for tints.

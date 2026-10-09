@@ -4,8 +4,9 @@ import { AuthProvider } from './contexts/AuthContext';
 import Dashboard from './components/Dashboard';
 import Home from './components/Home';
 import LockScreen from './components/LockScreen';
+import Onboarding from './components/Onboarding';
 import SettingsPage from './components/SettingsPage';
-import { useStore, notifyError } from './store';
+import { useStore, notifyError, AuthExpiredError } from './store';
 import { api, getSessionToken } from './apiClient';
 import { updateFavicon } from './utils/favicon';
 
@@ -13,6 +14,8 @@ function AppContent() {
   const { isDarkMode, isAmoledMode, accentColor } = useStore();
   const [authChecked, setAuthChecked] = useState(false);
   const [locked, setLocked] = useState(false);
+  // Whether to show the first-run setup instead of the app. null until the server has answered.
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
 
   useEffect(() => {
     updateFavicon(accentColor);
@@ -54,10 +57,33 @@ function AppContent() {
     return () => window.removeEventListener('auth-expired', handler);
   }, []);
 
+  // Asked only once unlocked, because /api/settings is behind the password like the rest of /api.
+  useEffect(() => {
+    if (!authChecked || locked) return;
+    api.getSettings().then(settings => {
+      setNeedsOnboarding(!settings.onboardingDone);
+    }).catch((e) => {
+      // A 401 brings up the lock screen, and this runs again after unlocking.
+      if (e instanceof AuthExpiredError) return;
+      // Better to open the app than to show the setup to someone who may already have data.
+      console.error(e);
+      notifyError(e, 'Could not connect to the server. Some data may fail to load.');
+      setNeedsOnboarding(false);
+    });
+  }, [authChecked, locked]);
+
   if (!authChecked) return null; // Brief flash prevention
 
   if (locked) {
     return <LockScreen onUnlock={() => setLocked(false)} />;
+  }
+
+  if (needsOnboarding === null) return null;
+
+  // A gate rather than a route, like the lock screen, so every address shows the setup until
+  // it's finished.
+  if (needsOnboarding) {
+    return <Onboarding onFinish={() => setNeedsOnboarding(false)} />;
   }
 
   return (
