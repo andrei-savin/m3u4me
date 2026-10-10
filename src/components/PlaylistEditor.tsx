@@ -1008,12 +1008,6 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
                 <span className="font-light" style={{ color: onAccentMuted }}> / {activeCategory}</span>
               )}
             </h2>
-            <span
-              className="text-[11px] font-medium px-1.5 py-0.5 rounded shrink-0"
-              style={{ backgroundColor: 'rgba(0,0,0,0.15)', color: onAccent }}
-            >
-              {channels.length}
-            </span>
           </div>
 
           <div className="flex items-center gap-1 relative">

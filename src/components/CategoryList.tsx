@@ -17,12 +17,13 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Trash2, Plus } from 'lucide-react';
+import { GripVertical, Trash2, Plus, Eye, EyeOff } from 'lucide-react';
 
 const restrictToVerticalAxis = ({ transform }: any) => ({ ...transform, x: 0 });
 
 function SortableCategoryItem({
   category, isActive, onClick, onDelete, count, accentColor,
+  isHidden, isSaving, onToggleHide,
   isRenaming, renameValue, onRenameStart, onRenameChange, onRenameConfirm, onRenameCancel,
 }: {
   key?: string | number;
@@ -32,6 +33,9 @@ function SortableCategoryItem({
   onDelete: () => void;
   count: number;
   accentColor: string;
+  isHidden: boolean;
+  isSaving: boolean;
+  onToggleHide: () => void;
   isRenaming: boolean;
   renameValue: string;
   onRenameStart: () => void;
@@ -101,6 +105,17 @@ function SortableCategoryItem({
           </span>
         </button>
       )}
+
+      {/* Hide/show every channel in the category. Looks and reads exactly like the
+          per-channel eye button in PlaylistEditor, so it behaves the way people expect. */}
+      <button
+        onClick={e => { e.stopPropagation(); onToggleHide(); }}
+        disabled={count === 0 || isSaving}
+        className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 disabled:opacity-40"
+        title={isHidden ? 'Include in export' : 'Exclude from export'}
+      >
+        {isHidden ? <EyeOff className="h-3.5 w-3.5 text-amber-500" /> : <Eye className="h-3.5 w-3.5" />}
+      </button>
 
       {/* Delete */}
       <button
@@ -175,6 +190,46 @@ export default function CategoryList({ playlistId }: { playlistId: string }) {
     channels.forEach(c => { if (c.category) map.set(c.category, (map.get(c.category) || 0) + 1); });
     return map;
   }, [channels]);
+
+  // A category has no hidden flag of its own: it counts as hidden when every
+  // channel in it is hidden, so it always matches what the channel rows show.
+  const hiddenCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    channels.forEach(c => { if (c.category && c.isHidden) map.set(c.category, (map.get(c.category) || 0) + 1); });
+    return map;
+  }, [channels]);
+
+  const [savingCategory, setSavingCategory] = useState<string | null>(null);
+
+  const toggleCategoryHidden = async (catName: string) => {
+    const inCategory = channels.filter(c => c.category === catName);
+    if (inCategory.length === 0) return;
+    // All hidden → show them all. Anything visible → hide them all, so a partly
+    // hidden category becomes fully hidden on the first click.
+    const hide = !inCategory.every(c => c.isHidden);
+    // Remember each channel's own state so undo brings back a hand-picked mix exactly.
+    const previous = inCategory.map(c => ({ id: c.id, changes: { isHidden: !!c.isHidden } }));
+    setSavingCategory(catName);
+    try {
+      await api.bulkUpdateChannels(playlistId, inCategory.map(c => c.id), { isHidden: hide });
+      triggerRefresh();
+      setUndoEntry({
+        description: `${hide ? 'Hid' : 'Showed'} category "${catName}" (${inCategory.length} channels)`,
+        restore: async () => {
+          try {
+            await api.bulkUpdateManyChannels(playlistId, previous);
+            triggerRefresh();
+          } catch (e) {
+            console.error(e);
+            notifyError(e, 'Failed to undo.');
+          }
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      notifyError(e, hide ? 'Failed to hide category.' : 'Failed to show category.');
+    } finally { setSavingCategory(null); }
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -306,6 +361,9 @@ export default function CategoryList({ playlistId }: { playlistId: string }) {
                 onClick={() => setActiveCategory(c)}
                 onDelete={() => setShowDeleteConfirm(c)}
                 accentColor={accentColor}
+                isHidden={(counts.get(c) || 0) > 0 && hiddenCounts.get(c) === counts.get(c)}
+                isSaving={savingCategory === c}
+                onToggleHide={() => toggleCategoryHidden(c)}
                 isRenaming={renamingCategory === c}
                 renameValue={renameValue}
                 onRenameStart={() => { setRenamingCategory(c); setRenameValue(c); }}

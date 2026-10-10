@@ -411,16 +411,23 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                             <svg className="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                             </svg>
-                            <span className="truncate">{pl.name}</span>
+                            <span className="flex-1 truncate">{pl.name}</span>
                             {(pl.unreadSyncLogCount || 0) > 0 && (
                               <span
-                                className="ml-auto shrink-0 min-w-5 h-5 px-1.5 rounded-full text-[10px] font-semibold leading-5 text-center"
+                                className="shrink-0 min-w-5 h-5 px-1.5 rounded-full text-[10px] font-semibold leading-5 text-center"
                                 style={{ backgroundColor: accentAlpha(accentColor, '20'), color: accentColor }}
                                 title="New entries in this playlist's sync log"
                               >
                                 {pl.unreadSyncLogCount! > 99 ? '99+' : pl.unreadSyncLogCount}
                               </span>
                             )}
+                            {/* Same look as the channel count on categories (CategoryList.tsx) */}
+                            <span
+                              className={`shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded ${!isActive ? 'bg-gray-100 dark:bg-white/8 text-gray-500 dark:text-gray-400' : ''}`}
+                              style={isActive ? { backgroundColor: accentAlpha(accentColor, '22'), color: accentColor } : undefined}
+                            >
+                              {pl.channelCount ?? 0}
+                            </span>
                           </button>
                         )}
                         <button

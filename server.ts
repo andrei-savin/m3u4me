@@ -1834,12 +1834,15 @@ async function startServer() {
     });
   });
 
-  // `pendingSyncCount` (channels with a sync suggestion waiting) and `unreadSyncLogCount` are
-  // response-only, for the badges in the sidebar and top nav.
+  // `channelCount` (all channels, hidden included), `pendingSyncCount` (channels with a sync
+  // suggestion waiting) and `unreadSyncLogCount` are response-only, for the counts and badges in
+  // the sidebar and top nav.
   app.get("/api/playlists", (req, res) => {
     const db = readDb();
+    const total = new Map<string, number>();
     const pending = new Map<string, number>();
     for (const c of db.channels) {
+      total.set(c.playlistId, (total.get(c.playlistId) || 0) + 1);
       if (c.link && Object.keys(c.link.pending).length > 0) {
         pending.set(c.playlistId, (pending.get(c.playlistId) || 0) + 1);
       }
@@ -1857,6 +1860,7 @@ async function startServer() {
     }
     res.json(db.playlists.map(p => ({
       ...p,
+      channelCount: total.get(p.id) || 0,
       pendingSyncCount: pending.get(p.id) || 0,
       unreadSyncLogCount: unread.get(p.id) || 0,
     })));
@@ -2000,7 +2004,7 @@ async function startServer() {
       req.body.categories = trimmed;
     }
     // Counts added by GET /api/playlists aren't stored; drop them if a caller echoes them back.
-    const { pendingSyncCount: _pending, unreadSyncLogCount: _unread, ...updates } = req.body;
+    const { channelCount: _total, pendingSyncCount: _pending, unreadSyncLogCount: _unread, ...updates } = req.body;
     db.playlists[idx] = { ...db.playlists[idx], ...updates, updatedAt: Date.now() };
     writeDb(db);
     res.json(db.playlists[idx]);

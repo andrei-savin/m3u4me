@@ -63,6 +63,8 @@ export interface Playlist {
   syncLogReadAt?: number | null;
   createdAt: number;
   updatedAt: number;
+  /** Response-only (GET /api/playlists): every channel in the playlist, hidden ones included. */
+  channelCount?: number;
   /** Response-only (GET /api/playlists): channels with a sync suggestion waiting. */
   pendingSyncCount?: number;
   /** Response-only (GET /api/playlists): sync log entries newer than syncLogReadAt. */

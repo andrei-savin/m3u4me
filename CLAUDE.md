@@ -126,7 +126,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 
 ## Data model: duplicated by hand
 
-`server.ts` and `src/apiClient.ts` each declare `Playlist`, `Channel`, `EpgSource`, `ChannelPoolSource`, `ChannelPoolEntry`, `ChannelPoolChangeLog`, the EPG programme shape, and the sync types (`SyncField`, `ChannelLink`, `PoolSnapshot`, `SyncLogEntry`, `AppSettings`). **When changing a shape, update both files.** Response-only types (`SearchResult`, `Stats`, `EpgChannel`, `LinkCandidate`) exist only in `apiClient.ts` and must match what the route actually returns. Some routes also add response-only fields: `GET /playlists` adds `pendingSyncCount`/`unreadSyncLogCount`, `GET /channel-pool/sources` adds `linkedChannelCount`, and the pool channel list adds `linkedPlaylistIds`. The matching `PUT` routes drop these if a caller echoes them back.
+`server.ts` and `src/apiClient.ts` each declare `Playlist`, `Channel`, `EpgSource`, `ChannelPoolSource`, `ChannelPoolEntry`, `ChannelPoolChangeLog`, the EPG programme shape, and the sync types (`SyncField`, `ChannelLink`, `PoolSnapshot`, `SyncLogEntry`, `AppSettings`). **When changing a shape, update both files.** Response-only types (`SearchResult`, `Stats`, `EpgChannel`, `LinkCandidate`) exist only in `apiClient.ts` and must match what the route actually returns. Some routes also add response-only fields: `GET /playlists` adds `channelCount`/`pendingSyncCount`/`unreadSyncLogCount`, `GET /channel-pool/sources` adds `linkedChannelCount`, and the pool channel list adds `linkedPlaylistIds`. The matching `PUT` routes drop these if a caller echoes them back.
 
 - **Playlist**
   - `shortId`: incrementing integer used in the public URLs.
@@ -180,7 +180,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
   - The step container is keyed by step for its entrance animation, and the scroll container resets to the top on every step change.
 - `BackupDropZone.tsx`: the shared drop-or-click file picker for a backup, used by onboarding and the Settings restore dialog. It also exports `describeRestoredBackup()` and `restoreErrorMessage()`.
 - **My Playlists**
-  - The sidebar has the playlist list plus `CategoryList.tsx`: dnd-kit category reordering and rename/delete/add. Category mutations write the full `categories` array and suppress the auto-sync effect while in flight, to avoid a race.
+  - The sidebar has the playlist list plus `CategoryList.tsx`: dnd-kit category reordering and rename/delete/add. Category mutations write the full `categories` array and suppress the auto-sync effect while in flight, to avoid a race. Each category also has an eye button that hides/shows all its channels via `bulk-update`. There's no stored per-category flag: a category shows as hidden when every channel in it is hidden. Undo restores each channel's previous `isHidden` via `bulk-update-many`.
   - `PlaylistEditor.tsx` covers:
     - dnd-kit channel reordering with an optimistic local order
     - click-to-edit fields

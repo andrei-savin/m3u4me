@@ -28,7 +28,7 @@ m3u4me is your IPTV playlists' new home. Your streams don't leave your local net
 - <b>EPG guide:</b> Add EPG sources from an XMLTV URL or an Xtream Codes account, each on its own refresh interval. Browse a live programme timeline and assign TVG IDs to your channels by hand, in bulk via automatic fuzzy name-matching, or one by one.
 - <b>Logo editing:</b> Add/edit/remove your channels' logos.
 - <b>Stream checker</b> (Not recommended): Basic stream checking functionality, not recommended due to some IPTV providers not reacting nicely to any sort of bulk checking. Use at your own risk!
-- <b>Bulk actions:</b> Move, delete, find & replace, or check multiple channels at once.
+- <b>Bulk actions:</b> Move, delete, find & replace, or check multiple channels at once. Hide a whole category from your playlist with one click on its eye button.
 - <b>Auto-saving:</b> You don't need to remember to save your changes or push your playlist. Everything happens instantly, automatically.
 - <b>Undo delete:</b> Deleted a channel by mistake? Hit the "Undo" button which appears on the bottom of your screen and bring it back without a hassle.
 - <b>Simple playlist link structure:</b> No more typing huge links on your TV. Playlists get assigned a numerical ID, which means that your download links look like this: http://IP:port/1 for your first playlist, http://IP:port/2 for the second one, and so on. Each playlist also gets its own EPG feed at http://IP:port/{number_ID}/epg.
