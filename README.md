@@ -5,6 +5,20 @@
 <p align="center">
 m3u4me is your IPTV playlists' new home. Your streams don't leave your local network, you are in charge, nobody can see or control your playlists.
 </p>
+<p align="center">
+<a href="LICENSE"><img alt="License: GPL v3" src="https://img.shields.io/badge/license-GPLv3-blue"></a>
+<a href="docs/install.md#option-2-docker"><img alt="Docker ready" src="https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white"></a>
+<a href="docs/about.md"><img alt="Free forever" src="https://img.shields.io/badge/price-free%20forever-brightgreen"></a>
+<a href="https://github.com/andrei-savin/m3u4me/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/andrei-savin/m3u4me"></a>
+<a href="https://github.com/andrei-savin/m3u4me/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/andrei-savin/m3u4me?style=flat&color=yellow"></a>
+</p>
+<p align="center">
+<a href="docs/install.md"><b>Install</b></a> ·
+<a href="docs/README.md"><b>Help pages</b></a> ·
+<a href="docs/features.md"><b>Features</b></a> ·
+<a href="docs/troubleshooting.md"><b>Troubleshooting</b></a> ·
+<a href="#ai-disclosure"><b>AI disclosure</b></a>
+</p>
 <br/>
 
 > [!WARNING]
@@ -18,173 +32,46 @@ m3u4me is your IPTV playlists' new home. Your streams don't leave your local net
 > [!NOTE]
 > This app's code was AI-generated, with minor interventions from me. I am a graphic designer with very limited coding knowledge; I do not support pointless usage of AI and I am fully aware of the harm it can cause. <br/><br/> m3u4me started out as something that was intended only for personal use - I am sharing it only because I believe it is an useful app which might help many other IPTV enthusiasts. <b>It will always be entirely free</b>. <br/><br/> I fully encourage any developer who comes across this app and wants to turn it into something human-made, without AI involvement. </br></br> AI was not used for <b>anything</b> else besides writing the actual code of the app.
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+## Get started in 3 steps
 
-## Features
-- <b>Guided setup:</b> The first time you open m3u4me, a short setup walks you through adding your provider and TV guide, an optional password, and your first playlist. Moving from another m3u4me? Restore your backup right from the welcome screen.
-- <b>Multiple playlist support:</b> Add as many playlists as you like. Start empty or import an M3U or XSPF playlist from a URL or an uploaded file.
-- <b>Channel pool sources:</b> Connect your Xtream Codes account, a playlist URL, or an M3U/XSPF file; then browse, search and add channels into any playlist. Each source refreshes on its own schedule and keeps a changelog of what got added, removed or renamed. If a provider only works with certain apps, choose which app the source downloads as (TiviMate, VLC, Kodi, a browser, or your own user agent). When a download fails, the source tells you why in plain words and what to try, and keeps showing it until a download works.
-- <b>Channel sync:</b> When you add channels from an Xtream Codes or playlist URL source, you can keep them in sync with that source. Choose what updates automatically (stream link, name, logo, TVG ID), per selection or per channel, and set your defaults in Settings. If you changed something yourself, the provider's update waits for you to accept or skip it. Channels that disappear from their source are hidden and marked, and every playlist has a sync log. Channels already in a playlist can be linked too.
-- <b>EPG guide:</b> Add EPG sources from an XMLTV URL or an Xtream Codes account, each on its own refresh interval. Browse a live programme timeline and assign TVG IDs to your channels by hand, in bulk via automatic fuzzy name-matching, or one by one.
-- <b>Logo editing:</b> Add/edit/remove your channels' logos.
-- <b>Stream checker</b> (Not recommended): Basic stream checking functionality, not recommended due to some IPTV providers not reacting nicely to any sort of bulk checking. Use at your own risk!
-- <b>Bulk actions:</b> Move, delete, find & replace, or check multiple channels at once. Hide a whole category from your playlist with one click on its eye button.
-- <b>Auto-saving:</b> You don't need to remember to save your changes or push your playlist. Everything happens instantly, automatically.
-- <b>Undo delete:</b> Deleted a channel by mistake? Hit the "Undo" button which appears on the bottom of your screen and bring it back without a hassle.
-- <b>Simple playlist link structure:</b> No more typing huge links on your TV. Playlists get assigned a numerical ID, which means that your download links look like this: http://IP:port/1 for your first playlist, http://IP:port/2 for the second one, and so on. Each playlist also gets its own EPG feed at http://IP:port/{number_ID}/epg.
-- <b>Printable channel list:</b> Turn any playlist into a neat A4 channel list PDF, with numbers, logos, names and whether each channel has a TV guide. Press "PDF" in the playlist's toolbar, check the preview, then "Save PDF" and choose "Save as PDF" in the print window.
-- <b>Backup & restore:</b> Download everything (playlists, sources, TV guides and settings) as one file from Settings, then restore it on the same server or a new one.
-- <b>Global search:</b> Search across every playlist, channel pool source, and EPG source at once. All searches ignore accents, so typing "stiri" also finds "Știri".
-- <b>Keyboard shortcuts</b>: Delete your channels with `DEL`, select everything with `Cmd+A`, make your work easier overall. Full list of commands is available inside the app.
-
-### Cosmetic UI features:
-- <b>Light mode, Dark mode & AMOLED Dark mode</b>
-- <b>Custom accent colours:</b> Even the browser tab's favicon matches your chosen colour.
-- <b>Channel logo background colour presets</b>: Choose between light gray, white, black or transparency. <i>(Only for previewing. Does not affect the actual logos in the playlist.)</i>
-- <b>Hide stream URLs</b>: Useful for sharing screenshots.
-- <b>12-hour or 24-hour time</b>: Pick your preferred clock format for the EPG guide.
-
-## Installation
-> [!NOTE]
-> m3u4me has been tested on macOS (Apple Silicon) and Debian, running with as little as 512MB of RAM.
-
-There are three ways to install m3u4me. The first one is by far the easiest. Once it's running, open it in your browser and a short setup walks you through the rest.
-
-### Option 1: One-line install (recommended)
-For Linux servers running systemd that install software with `apt` or `dnf`: Debian, Ubuntu, Fedora, and Proxmox containers based on them.
-```
+**1. Install it.** On a Linux server (Debian, Ubuntu, Fedora, or a Proxmox container based on them), paste this into the terminal:
+```bash
 curl -fsSL https://raw.githubusercontent.com/andrei-savin/m3u4me/main/install.sh | sudo bash
 ```
-This command installs Node.js if it is missing, downloads the latest release, builds the app, and sets it up to start automatically whenever your server boots. When it is done, it prints the address where you can open m3u4me.
 
-To use a port other than 8080:
-```
-curl -fsSL https://raw.githubusercontent.com/andrei-savin/m3u4me/main/install.sh | sudo PORT=9090 bash
-```
-(Obviously, replace 9090 with your desired port.)
+**2. Open it.** When the install is done, it prints an address like `http://192.168.1.50:8080`. Open that address in a browser on any device in your home.
 
-This only works on the first install. To change the port later, edit `/etc/m3u4me.env` and run `sudo m3u4me restart`.
+**3. Follow the setup.** A short setup walks you through adding your provider and TV guide, an optional password, and your first playlist.
 
-> [!NOTE]
-> Piping a script into `sudo bash` means trusting it. [install.sh](install.sh) is deliberately commented so you can read the whole thing first. Here is everything it changes on your system:
-> - Installs git and curl if they are missing.
-> - Installs Node.js if it is missing or too old. It comes from [NodeSource](https://github.com/nodesource/distributions), whose package repository is added to your system so Node.js keeps getting updates.
-> - Puts m3u4me in `/opt/m3u4me` and runs it as a locked-down `m3u4me` user, through one systemd service.
-> - Saves the port in `/etc/m3u4me.env` and adds the `m3u4me` command to `/usr/local/bin`.
+Not on Linux, or prefer Docker? See [all the ways to install m3u4me](docs/install.md).
 
-Once it is installed, you get an `m3u4me` command:
+## Help pages
 
-| Command | What it does |
-| --- | --- |
-| `sudo m3u4me update` | Update to the newest release and restart |
-| `m3u4me status` | Check whether m3u4me is running |
-| `sudo m3u4me logs` | Watch the live log (Ctrl+C to stop) |
-| `sudo m3u4me restart` | Restart m3u4me |
-| `sudo m3u4me uninstall` | Remove m3u4me — your playlists are kept |
+| | Page | Read this if… |
+| :-: | --- | --- |
+| 📦 | [Install](docs/install.md) | You want to get m3u4me running. |
+| 👋 | [First steps](docs/first-steps.md) | You just installed it and want to make your first playlist. |
+| 📺 | [Use it in your TV app](docs/tv-app.md) | You have a playlist and want to watch it on your TV, phone or computer. |
+| ✨ | [Features](docs/features.md) | You want to know everything m3u4me can do. |
+| 🔄 | [Updating](docs/updating.md) | A new version is out. |
+| 💾 | [Backup & moving to a new server](docs/backup.md) | You want a copy of everything, or you're moving m3u4me. |
+| 🔒 | [Password & recovery key](docs/password.md) | You want to lock m3u4me, or you forgot your password. |
+| 🛠️ | [Troubleshooting](docs/troubleshooting.md) | Something isn't working. |
+| 📖 | [Glossary](docs/glossary.md) | A word like EPG, TVG ID or Xtream Codes doesn't make sense. |
+| ℹ️ | [About](docs/about.md) | You want to know who made this and how. |
 
-Your playlists live in `/opt/m3u4me/data`, and the port setting lives in `/etc/m3u4me.env`.
+## What it can do
 
-### Option 2: Docker
-```
-git clone https://github.com/andrei-savin/m3u4me.git
-cd m3u4me
-docker compose up -d
-```
-m3u4me will be running at http://localhost:8080. Your playlists are stored in the `data` folder next to `docker-compose.yml`. To use a different port, change it in `docker-compose.yml` and run the last command again.
+- **[Many playlists](docs/features.md#playlists-and-channels)**, each with a short, easy-to-type link like `http://IP:port/1`.
+- **[Channel sources](docs/features.md#sources)**: connect your Xtream Codes account, a playlist link or a file, then pick the channels you want.
+- **[Channel sync](docs/features.md#channel-sync)**: channels stay up to date when your provider changes their links, names or logos.
+- **[TV guide (EPG)](docs/features.md#tv-guide-epg)**: browse what's on, and match your channels to the guide automatically.
+- **[Printable channel list](docs/features.md#printable-channel-list)**: turn any playlist into a neat A4 PDF.
+- **[Backup & restore](docs/backup.md)**: everything in one file, ready to move to a new server.
+- **[Search everything at once](docs/features.md#search-and-shortcuts)**, with keyboard shortcuts for the busy bits.
+- **[Light, dark and AMOLED themes](docs/features.md#look-and-feel)**, in your favourite accent colour.
 
-### Option 3: Manual, with PM2
-The original way to run m3u4me. Use this if you would rather set everything up yourself.
-
-<b>1. Install Node.js</b><br/>
-m3u4me needs <b>Node.js 22.18 or newer</b>. The official website is pretty straightforward about installing it: https://nodejs.org/en/download.<br/>After installing, make sure it worked by running `node -v` in your terminal — it should print v22.18.0 or higher.
-
-<b>2. Install PM2</b><br/>
-This keeps your app running 24/7 in the background.
-```
-npm install -g pm2
-```
-<b>3. Clone the source via git:</b>
-```
-git clone https://github.com/andrei-savin/m3u4me.git
-```
-<b>4. Navigate into the folder:</b>
-```
-cd m3u4me
-```
-<b>5. Install the dependencies:</b>
-```
-npm ci
-```
-m3u4me runs on port 8080 by default. You can change that in `ecosystem.config.cjs`.
-
-<b>6. Build the app:</b>
-```
-npm run build
-```
-<b>7. Start up PM2:</b>
-```
-pm2 start ecosystem.config.cjs
-```
-All done! You can now use m3u4me at http://localhost:8080 [replace `localhost` with the IP of your server, and `8080` with whatever custom port you set up earlier].
-
-<b>8. Make m3u4me auto-run at startup (optional):</b>
-```
-pm2 startup
-pm2 save
-```
-
-## Updating
-
-### If you used the one-line install
-```
-sudo m3u4me update
-```
-That is the entire update. It fetches the newest release, rebuilds the app, restarts it and checks that it is running. If the new version fails to build or does not start, it automatically puts the previous version back.
-
-### If you use Docker
-```
-git pull --ff-only
-docker compose up -d --build
-```
-
-### If you installed manually with PM2
-<b>1. Navigate into the app's folder</b>
-> [!NOTE]
-> The folder shown in the command below is only an example.
-```
-cd /opt/m3u4me
-```
-<b>2. Pull the latest code from this repo</b>
-```
-git pull --ff-only
-```
-> [!NOTE]
-> During this step, you might run into the following error:
-> `Your local changes to the following files would be overwritten by merge. / package-lock.json / Please commit your changes or stash them before you merge.`
-> If so, just run `git restore package-lock.json` and then continue with the following steps.
-
-<b>3. Install any new dependencies</b>
-```
-npm ci
-```
-<b>4. Rebuild the app</b>
-```
-npm run build
-```
-<b>5. Restart the PM2 process</b>
-```
-pm2 restart ecosystem.config.cjs --update-env
-```
-
-## Backups & moving to a new server
-In m3u4me, open <b>Settings → Backup → Download backup</b>. That one file holds your playlists, sources, TV guides and settings. It also holds your providers' logins, so keep it private. Your m3u4me password is not part of it.
-
-To restore a backup:
-- <b>On a new server:</b> install m3u4me, open it, and choose <b>Restore a backup</b> on the welcome screen.
-- <b>On a server that's already set up:</b> open <b>Settings → Backup → Restore from backup</b>. This replaces everything m3u4me has now. Just in case, a copy of the replaced data stays in m3u4me's data folder, named `db.json.before-restore-` followed by the date and time.
-
-> [!NOTE]
-> Older versions of m3u4me don't have the Download backup button. Use the `db.json` file from the old server's data folder instead: `/opt/m3u4me/data` for the one-line install, or the `data` folder inside the m3u4me folder for Docker and PM2.
+Everything saves by itself, and an accidental delete can be undone.
 
 ## Bug reports & feature requests
 If you encounter any AI slop, or other sort of error, feel free to create a GitHub issue. I will reply ASAP.
