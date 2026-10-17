@@ -83,6 +83,8 @@ export interface PoolSnapshot {
   logo: string | null;
   tvgId: string | null;
   category: string;
+  httpReferrer?: string | null;
+  httpUserAgent?: string | null;
 }
 
 export interface ChannelLink {
@@ -125,6 +127,9 @@ export interface Channel {
   logo: string | null;
   tvgId: string | null;
   category: string;
+  /** Headers some providers need before they'll serve the stream. Absent when not needed. */
+  httpReferrer?: string | null;
+  httpUserAgent?: string | null;
   order: number;
   isHidden?: boolean;
   link?: ChannelLink;
@@ -200,6 +205,8 @@ export interface ChannelPoolEntry {
   logo: string | null;
   category: string;
   tvgId: string | null;
+  httpReferrer?: string | null;
+  httpUserAgent?: string | null;
   /** Response-only (source channels list): playlists with a channel linked to this entry. */
   linkedPlaylistIds?: string[];
 }
@@ -287,7 +294,7 @@ export const api = {
   bulkDeleteChannels: (playlistId: string, ids: string[]) => authFetch(`/api/playlists/${playlistId}/channels/bulk-delete`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids}) }),
   reorderChannels: (playlistId: string, orders: Record<string, number>) => authFetch(`/api/playlists/${playlistId}/channels/reorder`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({orders}) }),
   search: (q: string) => authFetch(`/api/search?q=${encodeURIComponent(q)}`).then(r => r.json()) as Promise<SearchResult[]>,
-  healthCheck: (channels: { id: string; url: string }[]) =>
+  healthCheck: (channels: { id: string; url: string; referrer?: string | null; userAgent?: string | null }[]) =>
     authFetch('/api/health-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channels }) }).then(r => r.json()),
   bulkReplace: (playlistId: string, search: string, replace: string, field: string, ids?: string[]) =>
     authFetch(`/api/playlists/${playlistId}/channels/bulk-replace`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ search, replace, field, ...(ids ? { ids } : {}) }) }).then(r => r.json()),

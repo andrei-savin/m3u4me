@@ -53,6 +53,9 @@ interface PoolSnapshot {
   tvgId: string | null;
   // Never synced, but needed to recognise the pool channel again by name + category.
   category: string;
+  // Synced together with url (see StreamHeaders). Absent on links made before they existed.
+  httpReferrer?: string | null;
+  httpUserAgent?: string | null;
 }
 
 interface ChannelLink {
@@ -77,6 +80,9 @@ interface Channel {
   logo: string | null;
   tvgId: string | null;
   category: string;
+  // See StreamHeaders. Absent when the channel needs none.
+  httpReferrer?: string | null;
+  httpUserAgent?: string | null;
   order: number;
   isHidden?: boolean;
   // Present only on channels kept in sync with a channel pool channel.
@@ -129,6 +135,39 @@ interface ChannelPoolEntry {
   logo: string | null;
   category: string;
   tvgId: string | null;
+  // See StreamHeaders. Absent when the provider's playlist doesn't ask for any.
+  httpReferrer?: string | null;
+  httpUserAgent?: string | null;
+}
+
+// Some providers only serve a stream when the player sends a particular Referer and/or
+// User-Agent (for example iptv-org's playlists, written as http-referrer="…" / http-user-agent="…"
+// attributes and #EXTVLCOPT lines). They belong to the stream link: a different link usually
+// needs different ones, so sync treats them as part of `url` rather than as fields of their own.
+// Stored only when set, so channels and pool entries without them stay as small as before.
+interface StreamHeaders {
+  httpReferrer?: string | null;
+  httpUserAgent?: string | null;
+}
+const STREAM_HEADER_FIELDS = ['httpReferrer', 'httpUserAgent'] as const;
+
+function sameStreamHeaders(a: StreamHeaders, b: StreamHeaders): boolean {
+  return STREAM_HEADER_FIELDS.every(f => (a[f] || null) === (b[f] || null));
+}
+
+function copyStreamHeaders(target: StreamHeaders, from: StreamHeaders) {
+  for (const f of STREAM_HEADER_FIELDS) {
+    const value = typeof from[f] === 'string' ? from[f]!.trim() : '';
+    if (value) target[f] = value;
+    else delete target[f];
+  }
+}
+
+// Only the header fields that are set, for spreading into a new record.
+function pickStreamHeaders(from: StreamHeaders): StreamHeaders {
+  const headers: StreamHeaders = {};
+  copyStreamHeaders(headers, from);
+  return headers;
 }
 
 interface ChannelPoolChangeLog {
@@ -561,6 +600,20 @@ async function fetchXtreamChannels(source: ChannelPoolSource): Promise<ChannelPo
   return entries;
 }
 
+// Splits an #EXTINF line into its attributes and the channel name. The name starts after the
+// first comma that isn't inside a quoted attribute value: values like a browser user-agent
+// ("…(KHTML, like Gecko)…") contain commas of their own, and cutting at the very first comma
+// turned the rest of that value into the channel name.
+function splitExtinf(line: string): { attrs: string; name: string } {
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') inQuotes = !inQuotes;
+    else if (ch === ',' && !inQuotes) return { attrs: line.slice(0, i), name: line.slice(i + 1).trim() };
+  }
+  return { attrs: line, name: '' };
+}
+
 function parseM3uToChannelPoolEntries(content: string, sourceId: string): ChannelPoolEntry[] {
   const lines = content.split(/\r?\n/);
   const entries: ChannelPoolEntry[] = [];
@@ -569,17 +622,27 @@ function parseM3uToChannelPoolEntries(content: string, sourceId: string): Channe
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (line.startsWith('#EXTINF:')) {
-      const tvgIdMatch = line.match(/tvg-id="([^"]+)"/i);
-      const tvgLogoMatch = line.match(/tvg-logo="([^"]+)"/i);
-      const groupTitleMatch = line.match(/group-title="([^"]+)"/i);
-      const nameMatch = line.match(/,(.+)$/);
-      
+      // Attributes are read only from the part before the name, so a name that happens to
+      // contain text like tvg-logo="…" isn't mistaken for one.
+      const { attrs, name } = splitExtinf(line);
+      const attr = (key: string) => attrs.match(new RegExp(`(?:^|\\s)${key}="([^"]+)"`, 'i'))?.[1] || null;
+
       currentEntry = {
-        tvgId: tvgIdMatch ? tvgIdMatch[1] : null,
-        logo: tvgLogoMatch ? tvgLogoMatch[1] : null,
-        category: groupTitleMatch ? groupTitleMatch[1] : 'General',
-        name: nameMatch ? nameMatch[1].trim() : 'Unknown',
+        tvgId: attr('tvg-id'),
+        logo: attr('tvg-logo'),
+        category: attr('group-title') || 'General',
+        name: name || 'Unknown',
+        httpReferrer: attr('http-referrer'),
+        httpUserAgent: attr('http-user-agent'),
       };
+    } else if (line.startsWith('#EXTVLCOPT:') && currentEntry.name) {
+      // VLC's way of writing the same headers, on lines between #EXTINF and the stream link.
+      const opt = line.slice('#EXTVLCOPT:'.length);
+      const eq = opt.indexOf('=');
+      const key = eq === -1 ? '' : opt.slice(0, eq).trim().toLowerCase();
+      const value = eq === -1 ? '' : opt.slice(eq + 1).trim();
+      if (value && key === 'http-referrer') currentEntry.httpReferrer = value;
+      if (value && key === 'http-user-agent') currentEntry.httpUserAgent = value;
     } else if (line && !line.startsWith('#')) {
       if (currentEntry.name) {
         entries.push({
@@ -590,6 +653,7 @@ function parseM3uToChannelPoolEntries(content: string, sourceId: string): Channe
           logo: currentEntry.logo || null,
           category: currentEntry.category || 'General',
           tvgId: currentEntry.tvgId || null,
+          ...pickStreamHeaders(currentEntry),
         });
         currentEntry = {};
       }
@@ -800,7 +864,7 @@ function setChannelField(channel: Channel, field: SyncField, value: string | nul
 }
 
 function snapshotPoolEntry(entry: ChannelPoolEntry): PoolSnapshot {
-  return { name: entry.name, url: entry.url, logo: entry.logo || null, tvgId: entry.tvgId || null, category: entry.category };
+  return { name: entry.name, url: entry.url, logo: entry.logo || null, tvgId: entry.tvgId || null, category: entry.category, ...pickStreamHeaders(entry) };
 }
 
 // Reads a fields object from a request, falling back per field for anything missing.
@@ -927,6 +991,14 @@ function syncLinkedChannels(db: Database, source: ChannelPoolSource, newEntries:
         link.pending[field] = poolNew;
         addSyncLog(db, { ...logBase, type: 'suggested', field, oldValue: current, newValue: poolNew }, now);
       }
+    }
+
+    // The stream headers follow the stream link's sync setting. They change silently (no log
+    // entry or suggestion): they're technical details of the link, and if the user set their
+    // own, those stay.
+    if (link.fields.url && !sameStreamHeaders(link.lastPool, entry) && sameStreamHeaders(channel, link.lastPool)) {
+      copyStreamHeaders(channel, entry);
+      channelChanged = true;
     }
 
     // Tracked even for fields that aren't synced, so the snapshot is always current if the user
@@ -1273,7 +1345,16 @@ function serveM3U(playlist: Playlist, db: Database, res: any) {
     if (ch.tvgId) extinf += ` tvg-id="${escapeM3uAttr(stripM3uNewlines(ch.tvgId))}"`;
     if (ch.logo)  extinf += ` tvg-logo="${escapeM3uAttr(stripM3uNewlines(ch.logo))}"`;
     if (ch.category) extinf += ` group-title="${escapeM3uAttr(stripM3uNewlines(ch.category))}"`;
-    extinf += `,${stripM3uNewlines(ch.name || 'Unnamed')}\n${stripM3uNewlines(ch.url)}\n`;
+    // Stream headers are written both ways players read them: as #EXTINF attributes (TiviMate
+    // and most apps) and as #EXTVLCOPT lines (VLC, Kodi), like iptv-org's own playlists.
+    const referrer = ch.httpReferrer ? stripM3uNewlines(ch.httpReferrer) : '';
+    const userAgent = ch.httpUserAgent ? stripM3uNewlines(ch.httpUserAgent) : '';
+    if (referrer) extinf += ` http-referrer="${escapeM3uAttr(referrer)}"`;
+    if (userAgent) extinf += ` http-user-agent="${escapeM3uAttr(userAgent)}"`;
+    extinf += `,${stripM3uNewlines(ch.name || 'Unnamed')}\n`;
+    if (referrer) extinf += `#EXTVLCOPT:http-referrer=${referrer}\n`;
+    if (userAgent) extinf += `#EXTVLCOPT:http-user-agent=${userAgent}\n`;
+    extinf += `${stripM3uNewlines(ch.url)}\n`;
     m3u += extinf;
   });
   res.send(m3u);
@@ -2060,6 +2141,7 @@ async function startServer() {
       logo: e.logo || null,
       tvgId: e.tvgId || null,
       category: e.category || "General",
+      ...pickStreamHeaders(e),
       order: i + 1,
       isHidden: false,
       createdAt: Date.now(),
@@ -2163,6 +2245,7 @@ async function startServer() {
         logo: c.logo || null,
         tvgId: c.tvgId || null,
         category: cat,
+        ...pickStreamHeaders(c),
         order: maxOrder + i + 1,
         // Only undo restores send isHidden, so a hidden channel comes back hidden. A channel sync
         // had hidden also keeps hiddenBySync, so sync can still unhide it if its source returns.
@@ -2505,6 +2588,8 @@ async function startServer() {
       // own action and doesn't show up as unread.
       addSyncLog(db, { ...logBase, type: 'applied', field, oldValue, newValue }, now);
     }
+    // Taking the source's stream link means taking the headers it needs to play, too.
+    if (useSourceValues.includes('url')) copyStreamHeaders(channel, entry);
 
     channel.link = {
       sourceId: source.id,
@@ -2551,6 +2636,8 @@ async function startServer() {
     const oldValue = syncValue(channel, field);
     delete channel.link.pending[field];
     if (action === 'apply') setChannelField(channel, field, newValue);
+    // The source's stream link comes with the headers it needs (as of the last refresh).
+    if (action === 'apply' && field === 'url') copyStreamHeaders(channel, channel.link.lastPool);
     channel.updatedAt = Date.now();
     addSyncLog(db, {
       playlistId: channel.playlistId,
@@ -2623,17 +2710,21 @@ async function startServer() {
   });
 
   app.post("/api/health-check", async (req, res) => {
-    const { channels } = req.body as { channels: { id: string; url: string }[] };
+    const { channels } = req.body as { channels: { id: string; url: string; referrer?: string; userAgent?: string }[] };
     if (!Array.isArray(channels)) return res.status(400).json({ error: 'Invalid input' });
     const TIMEOUT_MS = 8000;
     const results = await Promise.all(
-      channels.map(async ({ id, url }) => {
+      channels.map(async ({ id, url, referrer, userAgent }) => {
         if (!url) return { id, ok: false, code: null, skipped: true };
         if (!/^https?:\/\//i.test(url)) return { id, ok: false, code: null, skipped: true };
+        // Sent like a player would, so channels whose provider needs them don't show as offline.
+        const headers: Record<string, string> = {};
+        if (referrer) headers['Referer'] = referrer;
+        if (userAgent) headers['User-Agent'] = userAgent;
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
         try {
-          const r = await fetch(url, { method: 'HEAD', signal: controller.signal });
+          const r = await fetch(url, { method: 'HEAD', headers, signal: controller.signal });
           clearTimeout(timer);
           return { id, ok: r.status < 400, code: r.status };
         } catch (e: any) {
@@ -2643,7 +2734,7 @@ async function startServer() {
           const c2 = new AbortController();
           const t2 = setTimeout(() => c2.abort(), TIMEOUT_MS);
           try {
-            const r2 = await fetch(url, { method: 'GET', signal: c2.signal });
+            const r2 = await fetch(url, { method: 'GET', headers, signal: c2.signal });
             clearTimeout(t2);
             c2.abort();
             return { id, ok: r2.status < 400, code: r2.status };

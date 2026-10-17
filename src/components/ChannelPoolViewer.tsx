@@ -150,6 +150,8 @@ function AddToPlaylistModal({
           url: c.url,
           logo: c.logo,
           tvgId: c.tvgId,
+          httpReferrer: c.httpReferrer,
+          httpUserAgent: c.httpUserAgent,
           category: categoryOverride.trim() || c.category,
           // Without fields (defaults not loaded yet), the server uses the saved defaults.
           ...(linking ? { link: { sourceId: c.sourceId, poolEntryId: c.id, ...(syncFields ? { fields: syncFields } : {}) } } : {}),

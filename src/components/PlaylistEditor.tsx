@@ -6,13 +6,14 @@ import { useStore, contrastText, accentAlpha, notifyError, notifyInfo } from '..
 import {
   Download, Check, Copy,
   GripVertical, CheckSquare, Square, Trash2, Eye, EyeOff, Plus, ArrowUp, ArrowDown, Activity, X,
-  Replace, Search, Wand2, ChevronLeft, ChevronRight, Layers, Link2, History, Unlink, FileDown,
+  Replace, Search, Wand2, ChevronLeft, ChevronRight, Layers, Link2, History, Unlink, FileDown, SlidersHorizontal,
 } from 'lucide-react';
 import BulkEpgAssignDialog from './BulkEpgAssignDialog';
 import { ChannelSyncPopover, BulkSyncSettingsDialog } from './ChannelSyncPopover';
 import LinkChannelDialog from './LinkChannelDialog';
 import SyncLogPanel from './SyncLogPanel';
 import ChannelListPdf from './ChannelListPdf';
+import StreamHeadersDialog from './StreamHeadersDialog';
 import ChannelLogo from './ChannelLogo';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { formatTime } from '../utils/formatTime';
@@ -205,7 +206,7 @@ function SortableChannelItem({
   channel, isSelected, toggleSelection,
   onUpdate, onDelete, onToggleHide,
   activeEditId, setActiveEditId, colWidths, isHighlighted, rowIndex, onRightClick, healthSt, tvgIdLabel, isSaving,
-  onOpenSync,
+  onOpenSync, onEditHeaders,
 }: {
   key?: string | number;
   channel: Channel;
@@ -226,6 +227,7 @@ function SortableChannelItem({
   // Opens the sync popover (linked channel) or the Link to Source dialog (unlinked channel),
   // anchored to the element that was clicked.
   onOpenSync: (channelId: string, anchor: DOMRect) => void;
+  onEditHeaders: (channelId: string) => void;
 }) {
   const { logoBgColor, hideUrls, accentColor, is24Hour } = useStore();
   const hasPendingSync = !!channel.link && Object.keys(channel.link.pending).length > 0;
@@ -359,6 +361,20 @@ function SortableChannelItem({
           ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={handleKey} className={inlineInputCls} style={{ borderColor: accentColor }} onClick={e => e.stopPropagation()} placeholder="Channel name" />
           : <div className="flex items-center gap-1.5 min-w-0">
               <p onClick={() => startEdit('name', channel.name)} className={`min-w-0 text-sm font-medium truncate cursor-text hover:underline decoration-dashed underline-offset-2 ${isSelected ? '' : 'text-gray-900 dark:text-white'}`} style={isSelected ? { color: accentColor } : undefined} title="Click to edit">{channel.name || 'Unnamed'}</p>
+              {(channel.httpReferrer || channel.httpUserAgent) && (
+                <button
+                  onClick={() => onEditHeaders(channel.id)}
+                  className="md-btn shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 text-gray-600 dark:bg-white/10 dark:text-gray-300"
+                  title={[
+                    'This channel sends extra headers so its stream plays.',
+                    channel.httpReferrer ? `Referrer: ${channel.httpReferrer}` : '',
+                    channel.httpUserAgent ? `User-agent: ${channel.httpUserAgent}` : '',
+                    'Click to edit',
+                  ].filter(Boolean).join('\n')}
+                >
+                  {[channel.httpReferrer && 'Referrer', channel.httpUserAgent && 'UA'].filter(Boolean).join(' · ')}
+                </button>
+              )}
               {channel.link?.lost && (
                 <button
                   {...syncTriggerProps}
@@ -508,6 +524,9 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const pendingScrollId = useRef<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ channelId: string; x: number; y: number } | null>(null);
+  // The channel whose Stream headers dialog is open (from its chip or the right-click menu).
+  const [headersChannelId, setHeadersChannelId] = useState<string | null>(null);
+  const headersChannel = headersChannelId ? channels.find(c => c.id === headersChannelId) : undefined;
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const pendingInsert = useRef<{ newId: string; insertAfterIndex: number } | null>(null);
   // Channel ids with an in-flight single-field save (rename, hide toggle, URL/TVG-ID edit),
@@ -645,7 +664,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
         || document.activeElement instanceof HTMLTextAreaElement;
       // While a sync dialog or popover is open, Space/Delete/Escape belong to it (e.g. Space toggles a
       // focused checkbox there), not to the selected channels behind it.
-      if (typing || contextMenu || syncPopover || linkDialogChannelId || showBulkSyncSettings) return;
+      if (typing || contextMenu || syncPopover || linkDialogChannelId || showBulkSyncSettings || headersChannelId) return;
       if (e.key === 'Escape' && selectedIds.size > 0) {
         setSelectedIds(new Set()); setLastSelectedId(null);
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
@@ -662,7 +681,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [selectedIds, displayedChannels, playlistId, contextMenu, syncPopover, linkDialogChannelId, showBulkSyncSettings]);
+  }, [selectedIds, displayedChannels, playlistId, contextMenu, syncPopover, linkDialogChannelId, showBulkSyncSettings, headersChannelId]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -953,7 +972,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
       if (cancelHealthRef.current) break;
       const batch = toCheck.slice(i, i + BATCH);
       try {
-        const { results } = await api.healthCheck(batch.map(c => ({ id: c.id, url: c.url })));
+        const { results } = await api.healthCheck(batch.map(c => ({ id: c.id, url: c.url, referrer: c.httpReferrer, userAgent: c.httpUserAgent })));
         setHealthStatus(prev => {
           const next = new Map(prev);
           const now = Date.now();
@@ -1297,6 +1316,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
                     tvgIdLabel={channel.tvgId ? tvgIdLabels[channel.tvgId] : undefined}
                     isSaving={savingIds.has(channel.id)}
                     onOpenSync={openSync}
+                    onEditHeaders={setHeadersChannelId}
                   />
                 ))}
               </SortableContext>
@@ -1387,6 +1407,13 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
           >
             <Link2 className="h-4 w-4 shrink-0 text-gray-400" />
             {channels.find(c => c.id === contextMenu.channelId)?.link ? 'Sync settings…' : 'Link to source…'}
+          </button>
+          <button
+            onClick={() => { setHeadersChannelId(contextMenu.channelId); setContextMenu(null); }}
+            className="md-btn w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
+          >
+            <SlidersHorizontal className="h-4 w-4 shrink-0 text-gray-400" />
+            Stream headers…
           </button>
         </div>
       )}
@@ -1545,6 +1572,25 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
           anchor={syncPopover.anchor}
           onClose={() => setSyncPopover(null)}
           onRelink={() => { setSyncPopover(null); setLinkDialogChannelId(syncPopoverChannel.id); }}
+        />
+      )}
+
+      {headersChannel && (
+        <StreamHeadersDialog
+          channel={headersChannel}
+          onClose={() => setHeadersChannelId(null)}
+          onSave={async headers => {
+            markSaving(headersChannel.id);
+            try {
+              await api.updateChannel(playlistId, headersChannel.id, headers);
+              await refetchChannels();
+              triggerRefresh();
+            } catch (e) {
+              console.error(e);
+              notifyError(e, 'Failed to save the stream headers.');
+              throw e;
+            } finally { clearSaving(headersChannel.id); }
+          }}
         />
       )}
 

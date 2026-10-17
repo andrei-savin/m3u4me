@@ -20,6 +20,8 @@ The first time you open m3u4me, a short setup walks you through adding your prov
 
 **Logo editing.** Add, edit or remove your channels' logos.
 
+**Stream headers.** Some channels only play when your TV app sends a certain referrer or [user agent](glossary.md#user-agent) along with the request. m3u4me keeps these from your source's playlist and writes them into the playlist your TV app loads. Channels that have them show a small **Referrer · UA** tag next to their name. Click the tag, or right-click any channel and choose **Stream headers…**, to change or add them. If a synced channel's stream link updates, its headers update with it.
+
 **Bulk actions.** Select several channels to move, delete or hide them all at once, or to find & replace text across them. Hide a whole category from your playlist with one click on its eye button. Hidden channels stay in m3u4me but are left out of the playlist your TV app loads.
 
 **Auto-saving.** You don't need to remember to save your changes or push your playlist. Everything happens instantly, automatically.
