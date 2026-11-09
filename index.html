@@ -2,7 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <script>
+      // Tablets get the desktop layout because they're wider than 768px, where the phone
+      // layout stops (see "Phone layout" in CLAUDE.md). But when someone asks for the mobile
+      // site (Safari on an iPad: "Request Mobile Website"), the browser reports itself as a
+      // mobile one ("Mobile" in its user agent), so honour that: lay the page out 767px wide,
+      // just inside the phone layout, and let the browser scale it to fill the screen.
+      // Only on tablet-sized screens (shortest side 600px or more): phones are unaffected,
+      // and an iPad left in its default desktop mode reports itself as a Mac.
+      // initial-scale is left out on purpose: next to it, iPads ignore the fixed width.
+      (function () {
+        var asksForMobileSite = /Mobi/.test(navigator.userAgent);
+        var isTabletSized = Math.min(screen.width, screen.height) >= 600;
+        if (asksForMobileSite && isTabletSized) {
+          document.querySelector('meta[name="viewport"]').setAttribute('content', 'width=767, viewport-fit=cover');
+        }
+      })();
+    </script>
     <title>m3u4me</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>

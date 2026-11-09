@@ -44,13 +44,7 @@ export function ChannelSyncPopover({
   onClose: () => void;
   onRelink: () => void;
 }) {
-  const { accentColor } = useStore();
   const ref = useRef<HTMLDivElement>(null);
-  const link = channel.link!;
-  const [fields, setFields] = useState<Toggles>(link.fields);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => { setFields(link.fields); }, [link.fields]);
 
   // Below the anchor when there's room, otherwise above it. Left-aligned with the anchor unless
   // that would run off the right edge.
@@ -85,6 +79,60 @@ export function ChannelSyncPopover({
       window.removeEventListener('resize', onClose);
     };
   }, [onClose]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      className="md-menu fixed z-50 w-80 bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-8 border border-gray-200 dark:border-white/10 text-left"
+      onMouseDown={e => e.stopPropagation()}
+      onContextMenu={e => e.stopPropagation()}
+    >
+      <ChannelSyncDetails
+        playlistId={playlistId}
+        channel={channel}
+        sourceName={sourceName}
+        onRelink={onRelink}
+        onUnlinked={onClose}
+      />
+    </div>,
+    document.body
+  );
+}
+
+/**
+ * The inside of the sync popover: header, the "Source lost" note, suggestions waiting for
+ * Keep mine / Use new, the fields to sync, and Link to another channel / Unlink. Shared by
+ * the desktop popover above and the phone channel editor (ChannelEditSheet), which shows it
+ * inline instead of floating next to the row.
+ *
+ * The "What to keep in sync" checkboxes save straight away in the popover. The phone editor
+ * passes `fields` and `onFieldsChange` instead, so they become part of its form and are saved
+ * with its Save button like everything else there.
+ */
+export function ChannelSyncDetails({
+  playlistId,
+  channel,
+  sourceName,
+  onRelink,
+  onUnlinked,
+  fields: fieldsFromForm,
+  onFieldsChange,
+}: {
+  playlistId: string;
+  channel: Channel;
+  sourceName: string;
+  onRelink: () => void;
+  // Called after Unlink worked; the popover closes itself here.
+  onUnlinked: () => void;
+  fields?: Toggles;
+  onFieldsChange?: (fields: Toggles) => void;
+}) {
+  const { accentColor } = useStore();
+  const link = channel.link!;
+  const [fields, setFields] = useState<Toggles>(link.fields);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { setFields(link.fields); }, [link.fields]);
 
   const saveFields = async (next: Toggles) => {
     const previous = fields;
@@ -123,7 +171,7 @@ export function ChannelSyncPopover({
       triggerRefresh();
       triggerChannelPoolRefresh();
       notifyInfo(`"${channel.name}" won't sync anymore.`);
-      onClose();
+      onUnlinked();
     } catch (e) {
       console.error(e);
       notifyError(e, "Couldn't unlink the channel. Try again.");
@@ -132,15 +180,12 @@ export function ChannelSyncPopover({
   };
 
   const pendingFields = SYNC_FIELDS.filter(f => f in link.pending);
-  const smallBtn = 'md-btn h-7 px-2.5 rounded text-[11px] font-medium uppercase tracking-wider disabled:opacity-40';
+  const shownFields = onFieldsChange && fieldsFromForm ? fieldsFromForm : fields;
+  // Taller on phones, where these are tapped with a finger (in the channel editor sheet).
+  const smallBtn = 'md-btn h-7 max-md:h-10 px-2.5 max-md:px-3 rounded text-[11px] font-medium uppercase tracking-wider disabled:opacity-40';
 
-  return createPortal(
-    <div
-      ref={ref}
-      className="md-menu fixed z-50 w-80 bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-8 border border-gray-200 dark:border-white/10 text-left"
-      onMouseDown={e => e.stopPropagation()}
-      onContextMenu={e => e.stopPropagation()}
-    >
+  return (
+    <>
       <div className="flex items-center gap-2 px-4 pt-3 pb-2">
         <Link2 className="h-4 w-4 shrink-0" style={{ color: accentColor }} />
         <p className="text-sm text-gray-900 dark:text-white min-w-0 truncate">
@@ -176,8 +221,8 @@ export function ChannelSyncPopover({
 
         <div>
           <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400 mb-1.5">What to keep in sync</p>
-          <SyncFieldToggles value={fields} onChange={saveFields} accentColor={accentColor} disabled={busy} />
-          {!anySyncFieldOn(fields) && (
+          <SyncFieldToggles value={shownFields} onChange={onFieldsChange ?? saveFields} accentColor={accentColor} disabled={busy} />
+          {!anySyncFieldOn(shownFields) && (
             <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5">Nothing is synced right now. You can unlink this channel instead.</p>
           )}
         </div>
@@ -191,8 +236,7 @@ export function ChannelSyncPopover({
           Unlink
         </button>
       </div>
-    </div>,
-    document.body
+    </>
   );
 }
 

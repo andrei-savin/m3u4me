@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { isPhoneNow } from './utils/useIsPhone';
 
 interface AppState {
   activePlaylistId: string | null;
@@ -80,7 +81,8 @@ export const useStore = create<AppState>()(
       setChannelPoolLogOpen: (open) => set({ channelPoolLogOpen: open }),
       syncLogOpenFor: null,
       setSyncLogOpenFor: (playlistId) => set({ syncLogOpenFor: playlistId }),
-      isSidebarOpen: true,
+      // Starts closed on phones, where the drawer floats over the whole screen.
+      isSidebarOpen: !isPhoneNow(),
       setSidebarOpen: (isOpen) => set({ isSidebarOpen: isOpen }),
       logoBgColor: '#f1f5f9',
       setLogoBgColor: (color) => set({ logoBgColor: color }),

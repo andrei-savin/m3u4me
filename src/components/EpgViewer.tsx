@@ -6,6 +6,7 @@ import EpgProgramDialog, { parseXmltvTime } from './EpgProgramDialog';
 import ChannelLogo from './ChannelLogo';
 import { formatTime } from '../utils/formatTime';
 import { foldText } from '../utils/foldText';
+import { useIsPhone } from '../utils/useIsPhone';
 
 export interface EpgViewerProps {
   sourceId: string;
@@ -21,6 +22,17 @@ const TIMELINE_TOTAL_HOURS = TIMELINE_PAST_HOURS + TIMELINE_FUTURE_HOURS;
 // Extra rows rendered above/below the visible window so a fast flick-scroll
 // on touch devices never outruns virtualization and reveals blank rows.
 const ROW_OVERSCAN = 8;
+
+/**
+ * The horizontal scroll position that puts `timelineOffset` (pixels from the start of the
+ * timeline) in the middle of the part of the screen where programmes show. The pinned
+ * channel column covers the left `channelColWidth` pixels, so the middle is there, not
+ * the middle of the whole grid. (Centring on the whole grid put "now" at the right edge
+ * of a phone screen.)
+ */
+function scrollLeftToCenter(timelineOffset: number, clientWidth: number, channelColWidth: number): number {
+  return timelineOffset - (clientWidth - channelColWidth) / 2;
+}
 
 interface ProgrammeWithTimes {
   prog: EpgProgramme;
@@ -53,6 +65,14 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
 
   const [sidebarWidth, setSidebarWidth] = useState(200);
   const sidebarResizing = useRef<{ startX: number; startW: number } | null>(null);
+  // On a phone the channel column is a fixed narrow strip (small logo + name), so most of
+  // the screen is left for the timeline. Everything below uses channelColWidth.
+  const isPhone = useIsPhone();
+  const channelColWidth = isPhone ? 104 : sidebarWidth;
+  // Read by the "centre on now" scroll below, which runs from a fetch callback that would
+  // otherwise only ever see the column width from when the source was opened.
+  const channelColWidthRef = useRef(channelColWidth);
+  channelColWidthRef.current = channelColWidth;
 
   const [pixelsPerHour, setPixelsPerHour] = useState(200);
   const timelineWidth = TIMELINE_TOTAL_HOURS * pixelsPerHour;
@@ -97,7 +117,7 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
             setTimeout(() => {
               if (scrollRef.current) {
                 const currentOffset = (currentTime.getTime() - newWindowStart) / MS_PER_HOUR * pixelsPerHour;
-                scrollRef.current.scrollLeft = currentOffset - (scrollRef.current.clientWidth / 2);
+                scrollRef.current.scrollLeft = scrollLeftToCenter(currentOffset, scrollRef.current.clientWidth, channelColWidthRef.current);
               }
             }, 100);
           }
@@ -253,7 +273,7 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
     if (scrollRef.current) {
       const currentOffset = (now.getTime() - windowStart) / MS_PER_HOUR * pixelsPerHour;
       scrollRef.current.scrollTo({
-        left: currentOffset - (scrollRef.current.clientWidth / 2),
+        left: scrollLeftToCenter(currentOffset, scrollRef.current.clientWidth, channelColWidth),
         behavior: 'smooth'
       });
     }
@@ -320,15 +340,15 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
     <div className="flex flex-col h-full bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black overflow-hidden relative font-sans">
 
       {/* Toolbar */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-white/10 z-20 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black">
-        <div className="relative w-64">
+      <div className="shrink-0 flex items-center justify-between gap-2 px-4 max-md:px-2 py-2 border-b border-gray-200 dark:border-white/10 z-20 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black">
+        <div className="relative w-64 max-md:w-auto max-md:flex-1 max-md:min-w-0">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input
             type="text"
             placeholder="Search channels..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 text-sm rounded border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white focus:outline-none"
+            className="w-full pl-9 pr-3 py-1.5 max-md:py-2 text-sm max-md:text-base rounded border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white focus:outline-none"
             onFocus={e => (e.target.style.borderColor = accentColor)}
             onBlur={e => (e.target.style.borderColor = '')}
           />
@@ -336,24 +356,25 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
         <div className="flex items-center gap-1">
           <button
             onClick={() => setPixelsPerHour(p => Math.min(p + 100, 600))}
-            className="md-btn flex items-center justify-center w-8 h-8 rounded text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600"
+            className="md-btn flex items-center justify-center w-8 h-8 max-md:w-10 max-md:h-10 rounded text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600"
             title="Zoom In"
           >
             <ZoomIn className="h-4 w-4" />
           </button>
           <button
             onClick={() => setPixelsPerHour(p => Math.max(p - 100, 100))}
-            className="md-btn flex items-center justify-center w-8 h-8 rounded text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600"
+            className="md-btn flex items-center justify-center w-8 h-8 max-md:w-10 max-md:h-10 rounded text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600"
             title="Zoom Out"
           >
             <ZoomOut className="h-4 w-4" />
           </button>
           <button
             onClick={scrollToNow}
-            className="md-btn flex items-center gap-2 h-8 px-3 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 ml-2"
+            className="md-btn flex items-center gap-2 h-8 px-3 max-md:h-10 max-md:px-2.5 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 ml-2 max-md:ml-1"
+            title="Jump to now"
           >
             <Crosshair className="h-4 w-4" />
-            Now
+            <span className="hidden md:inline">Now</span>
           </button>
         </div>
       </div>
@@ -361,11 +382,13 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
       <div className="flex-1 overflow-hidden relative">
         {/* Sidebar resize handle — lives outside the scroll container so it
             stays at a fixed screen position (not part of scrolled content). */}
-        <div
-          onMouseDown={startSidebarResize}
-          className="absolute top-0 bottom-0 w-1 cursor-col-resize hover:bg-gray-300 dark:hover:bg-white/15 transition-colors z-50"
-          style={{ left: sidebarWidth }}
-        />
+        {!isPhone && (
+          <div
+            onMouseDown={startSidebarResize}
+            className="absolute top-0 bottom-0 w-1 cursor-col-resize hover:bg-gray-300 dark:hover:bg-white/15 transition-colors z-50"
+            style={{ left: sidebarWidth }}
+          />
+        )}
 
         {/* Single scroll container for the whole grid. The header row and
             channel sidebar are `position: sticky` children of this element,
@@ -376,7 +399,7 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
           className="w-full h-full overflow-auto overscroll-contain"
           onScroll={handleScroll}
         >
-          <div style={{ width: sidebarWidth + timelineWidth }}>
+          <div style={{ width: channelColWidth + timelineWidth }}>
             {/* Header bar: pinned to the top while scrolling vertically, and
                 scrolls horizontally in lockstep with the grid since it's the
                 same scroll container. */}
@@ -387,8 +410,8 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
               {/* Corner cell: additionally pinned to the left so it stays put
                   on both axes. */}
               <div
-                className="sticky left-0 z-10 shrink-0 flex items-center px-4 border-r border-gray-200 dark:border-white/10"
-                style={{ width: sidebarWidth, height: HEADER_HEIGHT }}
+                className="sticky left-0 z-10 shrink-0 flex items-center px-4 max-md:px-3 border-r border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#1a1a1a] amoled:dark:bg-[#0a0a0a]"
+                style={{ width: channelColWidth, height: HEADER_HEIGHT }}
               >
                 <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Channel</span>
               </div>
@@ -410,7 +433,7 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
               {/* Channel sidebar: pinned to the left while scrolling horizontally. */}
               <div
                 className="sticky left-0 z-30 shrink-0 relative border-r border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#1a1a1a] amoled:dark:bg-[#0a0a0a] shadow-[8px_0_24px_-8px_rgba(0,0,0,0.15)] dark:shadow-[8px_0_24px_-8px_rgba(0,0,0,0.6)]"
-                style={{ width: sidebarWidth }}
+                style={{ width: channelColWidth }}
               >
                 {visibleChannels.map((channel, idx) => {
                   const globalIndex = startIndex + idx;
@@ -422,6 +445,26 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
                       : 'bg-gray-50/70 dark:bg-[#222222] amoled:dark:bg-[#0d0d0d] hover:bg-gray-100/70 dark:hover:bg-white/5 amoled:dark:hover:bg-white/5';
 
                   return (
+                    isPhone ? (
+                      // Phone: small logo and a two-line name, no id. The whole cell is the
+                      // "assign this guide channel" button, since there's no hover to reveal one.
+                      <button
+                        key={globalIndex}
+                        onClick={() => onAssignChannel(channel.id, channel.displayName)}
+                        className={`absolute left-0 right-0 flex items-center gap-2 px-2 text-left border-b border-gray-200 dark:border-white/5 ${rowBg}`}
+                        style={{ top: globalIndex * ROW_HEIGHT, height: ROW_HEIGHT }}
+                      >
+                        <ChannelLogo
+                          logo={channel.icon}
+                          name={channel.displayName}
+                          logoBgColor={logoBgColor}
+                          className="shrink-0 w-7 h-5 rounded border border-gray-200 dark:border-white/10"
+                        />
+                        <span className="flex-1 min-w-0 text-xs font-medium leading-tight text-gray-900 dark:text-white line-clamp-2 break-words">
+                          {channel.displayName}
+                        </span>
+                      </button>
+                    ) : (
                     <div
                       key={globalIndex}
                       className={`absolute left-0 right-0 flex items-center px-3 border-b border-gray-200 dark:border-white/5 group transition-colors ${rowBg}`}
@@ -452,6 +495,7 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
                         <LinkIcon className="h-4 w-4" />
                       </button>
                     </div>
+                    )
                   );
                 })}
               </div>

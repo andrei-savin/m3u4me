@@ -10,6 +10,27 @@ html {
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+/* ── Phones: notch and home-bar room ──────────────────────────────────
+   index.html sets `viewport-fit=cover`, so the page runs edge to edge under
+   a phone's notch, rounded corners and home bar. These insets are 0 on
+   computers. The sides are padded here once (a phone on its side is wider
+   than 768px and gets the desktop layout); the top and bottom bars pad
+   themselves with `pt-safe` / `pb-safe`. The body gets the page color so
+   the padded strips don't show up white. */
+body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  background-color: var(--color-gray-100);
+}
+.dark body { background-color: #121212; }
+.amoled.dark body { background-color: #000; }
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 /* ── MD2 motion tokens ────────────────────────────────────────────────
    The three standard Material easing curves. Used by every transition/
    animation below so motion feels consistent across the app. ───────── */
@@ -86,7 +107,11 @@ html {
     opacity: 0;
     transition: opacity 150ms var(--md-standard);
   }
-  .md-btn:hover::after  { opacity: 0.08; }
+  /* Only on devices with a real pointer. A phone fakes a "hover" on whatever was last
+     tapped, which left the tint stuck on that button until you tapped somewhere else. */
+  @media (hover: hover) {
+    .md-btn:hover::after { opacity: 0.08; }
+  }
   .md-btn:active::after { opacity: 0.18; }
   .md-btn:focus-visible { outline: 2px solid; outline-offset: 2px; }
 }
@@ -146,6 +171,18 @@ html {
    outright rather than transitioning, so this just softens their arrival. */
 .md-page-in {
   animation: md-fade-in 220ms var(--md-decelerate) both;
+}
+
+/* Phone bottom sheets (BottomSheet.tsx) rise from the bottom edge. It ends on
+   `transform: none` on purpose: a leftover transform would make anything
+   `position: fixed` inside the sheet (autocomplete lists) position itself
+   against the sheet instead of the screen. */
+.md-sheet-in {
+  animation: md-sheet-in 240ms var(--md-decelerate) both;
+}
+@keyframes md-sheet-in {
+  from { transform: translateY(100%); }
+  to   { transform: none; }
 }
 
 @keyframes md-fade-in {
@@ -251,7 +288,7 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .md-ripple, .md-scrim, .md-dialog, .md-dialog-top, .md-list-in, .md-snackbar-in, .md-page-in, .md-menu {
+  .md-ripple, .md-scrim, .md-dialog, .md-dialog-top, .md-list-in, .md-snackbar-in, .md-page-in, .md-menu, .md-sheet-in {
     animation: none !important;
   }
   .onboarding-step-in, .onboarding-step-back, .onboarding-pop {

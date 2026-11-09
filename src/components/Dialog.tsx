@@ -7,6 +7,10 @@ import { useEffect, type ReactNode } from 'react';
  * still do their own `if (!open) return null` before reaching this); it owns just the
  * chrome around whatever header/body/footer content they pass as children.
  *
+ * The scrim itself scrolls: a dialog taller than the screen (a phone, or a short laptop
+ * window) can be scrolled to its top and bottom instead of being cut off. `my-auto` on
+ * the panel keeps a dialog that fits centered exactly as before.
+ *
  * `maxWidth` and `panelClassName` (extra classes appended to the panel — rounding,
  * max-height, overflow) are per-dialog since they vary by content. `dismissible`
  * defaults to true; pass false to suspend backdrop-click/Escape while a dialog is mid
@@ -39,11 +43,11 @@ export default function Dialog({
 
   return (
     <div
-      className={`md-scrim fixed inset-0 z-50 flex items-center justify-center px-4 ${scrimClassName}`}
+      className={`md-scrim fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain px-4 py-4 ${scrimClassName}`}
       onClick={dismissible ? onClose : undefined}
     >
       <div
-        className={`md-dialog w-full ${maxWidth} bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] elev-24 flex flex-col ${panelClassName}`}
+        className={`md-dialog my-auto w-full ${maxWidth} bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] elev-24 flex flex-col ${panelClassName}`}
         onClick={e => e.stopPropagation()}
       >
         {children}

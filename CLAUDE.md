@@ -157,17 +157,17 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 - `useChannels` returns a stable `EMPTY_CHANNELS` array while a fetch is in flight. Returning a fresh `[]` there once caused an infinite render loop, so keep hook return values referentially stable.
 
 **UI state: one Zustand store (`src/store.ts`):**
-- It holds active playlist/category/EPG source/pool source, `scrollTarget`, `isSidebarOpen`, `channelPoolLogOpen`, `syncLogOpenFor` (Home asks PlaylistEditor to open a sync log), `hideUrls`, `undoEntry`, `toast`, and the cosmetic settings.
+- It holds active playlist/category/EPG source/pool source, `scrollTarget`, `isSidebarOpen` (starts closed on phones), `channelPoolLogOpen` (opens the phone update-log sheet), `syncLogOpenFor` (Home asks PlaylistEditor to open a sync log), `hideUrls`, `undoEntry`, `toast`, and the cosmetic settings.
 - Only `logoBgColor`, `accentColor`, `isDarkMode`, `isAmoledMode` and `is24Hour` are persisted to localStorage. Everything else resets on reload.
 - The sidebar *width* is local state in `Dashboard.tsx`, not in the store.
 - **Errors and notifications:** in a mutation's catch block, call `console.error(e)` plus `notifyError(e, 'fallback message')`. For non-error feedback, use `notifyWarning` or `notifyInfo`. `AuthExpiredError` is ignored on purpose (the lock screen covers it). One toast shows at a time.
 - **Undo:** `setUndoEntry({ description, restore })`. Existing restores re-create data via `bulkAddChannels`, so restored channels get new ids. `bulk` add keeps `isHidden` (only restores send it), so hidden channels come back hidden.
-- `<Toast />` renders both the toast and the undo snackbar (Cmd/Ctrl+Z triggers undo). It's mounted in `Dashboard`, `Home`, `SettingsPage` and `Onboarding`, but not in LockScreen. Error messages users see (toasts, inline form errors, server `{ error }` text) should be plain language that says what to do next.
+- `<Toast />` renders both the toast and the undo snackbar (Cmd/Ctrl+Z triggers undo). It's mounted in `Dashboard`, `Home`, `SettingsPage` and `Onboarding`, but not in LockScreen. The first three pass `withTabBar`, which lifts it above the phone tab bar. Error messages users see (toasts, inline form errors, server `{ error }` text) should be plain language that says what to do next.
 
 **Cross-surface search:**
 - `Spotlight.tsx` (Cmd/Ctrl+K) queries `/api/search` and groups results as kind → container → category.
 - Picking a result navigates, sets the active container, and sets `scrollTarget: { kind, id }`. The matching view (`PlaylistEditor` / `ChannelPoolViewer` / `EpgViewer`) clears any filter or pagination hiding the target, scrolls to it, highlights it, and resets `scrollTarget` to null.
-- `handleSpotlightNavigate` and the keyboard-shortcuts dialog are **duplicated verbatim in `Dashboard.tsx` and `Home.tsx`**, so edit both. The top nav bar is also deliberately mirrored between the two files so nothing shifts when navigating.
+- `handleSpotlightNavigate` and the keyboard-shortcuts dialog are **duplicated verbatim in `Dashboard.tsx` and `Home.tsx`**, so edit both. The desktop top nav bar is also deliberately mirrored between the two files so nothing shifts when navigating (phones use the shared `MobileTopBar`/`MobileTabBar` instead, see Phone layout).
 
 **Version check:** `AppInfo.tsx`'s `useVersionInfo()` compares `api.getVersion()` (the `package.json` version) to GitHub's latest release, fetched from the browser. It drives the update banner in Dashboard/Home and the About section.
 
@@ -184,18 +184,18 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 - `BackupDropZone.tsx`: the shared drop-or-click file picker for a backup, used by onboarding and the Settings restore dialog. It also exports `describeRestoredBackup()` and `restoreErrorMessage()`.
 - **My Playlists**
   - The sidebar has the playlist list plus `CategoryList.tsx`: dnd-kit category reordering and rename/delete/add. Category mutations write the full `categories` array and suppress the auto-sync effect while in flight, to avoid a race. Each category also has an eye button that hides/shows all its channels via `bulk-update`. There's no stored per-category flag: a category shows as hidden when every channel in it is hidden. Undo restores each channel's previous `isHidden` via `bulk-update-many`.
-  - `PlaylistEditor.tsx` covers:
+  - `PlaylistEditor.tsx` covers (desktop; see Phone layout for its phone rows and sheet):
     - dnd-kit channel reordering with an optimistic local order
     - click-to-edit fields
     - multi-select with bulk move/delete/hide and find/replace
     - the stream health checker (batched to `/api/health-check`)
-    - TVG-ID autocomplete
+    - TVG-ID autocomplete (`TvgIdAutocomplete.tsx`: `inline` mode in desktop rows, `field` mode in the phone sheet)
     - client-side pagination of 100 channels per page
     - keyboard shortcuts: Cmd/Ctrl+A, Del, Space, Esc
   - `NewPlaylistDialog.tsx` creates an empty playlist or imports from a URL/file.
   - Channel sync in PlaylistEditor:
     - Each row has a link button, a quiet accent dot when suggestions are pending, and a "Source lost" chip.
-    - `ChannelSyncPopover.tsx` (portal, anchored to the clicked element) handles suggestions, sync toggles and Unlink. It also exports `BulkSyncSettingsDialog` for the selection bar.
+    - `ChannelSyncPopover.tsx` (portal, anchored to the clicked element) handles suggestions, sync toggles and Unlink. Its inside is the exported `ChannelSyncDetails`, which the phone channel sheet shows inline. It also exports `BulkSyncSettingsDialog` for the selection bar.
     - `LinkChannelDialog.tsx` links an existing channel: server-ranked candidates, then a per-field "Keep mine / Use source value" comparison.
     - `SyncLogPanel.tsx` is the per-playlist log drawer. Opening it marks the log read, and it offers Apply/Dismiss for suggestions still waiting.
     - `SyncFieldToggles.tsx` is the shared four-checkbox control (also used by Settings and Add to Playlist).
@@ -217,9 +217,28 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
   - `AddEpgSourceDialog.tsx` adds or edits sources.
   - `AssignTvgIdDialog.tsx` is the reverse of bulk assign: pick one EPG channel, then assign it to channels from any playlist. It's opened from Dashboard via EpgViewer's `onAssignChannel`.
 
+### Phone layout
+
+Below 768px (Tailwind's `md`) the app switches to a phone layout. Tablets and computers keep the desktop layout, except a tablet whose browser asks for the mobile site (iPad Safari's "Request Mobile Website" sends a user agent with "Mobile"): an inline script in `index.html` then sets the viewport to `width=767` (no `initial-scale`, which iPads let override the width) so the page lays out as a phone and is scaled up. Desktop markup itself is left alone: phone-only pieces are `md:hidden`, desktop-only pieces `hidden md:flex`, and phone-only sizes `max-md:…`. Don't put `max-md:` and an existing `sm:` on the same property (their order in the CSS isn't obvious); Home's count tiles use `max-sm:` to match its existing `sm:` grid.
+
+- **CSS vs `useIsPhone()`** (`src/utils/useIsPhone.ts`, `PHONE_QUERY` must match `md`): CSS for showing, hiding and sizing; the hook only where the phone needs different components or behaviour (drawer overlay and auto-close, `PhoneChannelRow` instead of `SortableChannelItem`, the channel sheet, long-press, selection bars, the EPG channel-column width, the update-log sheet, mounting the tab bar). `isPhoneNow()` is for the store's starting values.
+- **Shell:** `MobileTopBar.tsx` (☰, title with optional `overline`, or the logo; Search via the synthetic Cmd+K event; one `OverflowMenu` ⋮) and `MobileTabBar.tsx` (Home/Playlists/Sources/EPG/Settings, in the page flow as the last row, with the pending-sync dot) are shared by Dashboard, Home and Settings; their desktop navs are `hidden md:grid`/`md:flex`. `OverflowMenu.tsx` is the ⋮ menu (48px rows, `openUp` for bottom bars).
+- **Drawer:** the sidebar becomes `max-md:fixed` over the page with a scrim, `min(320px, 85vw)` wide, starts closed, and closes as soon as anything is picked or created in it: a playlist, a category (`CategoryList`'s `onPick`, also after adding one), a source or a guide. Rename, delete and hide leave it open. To switch category, open ☰ again. Playlists and categories get a visible rename pencil on phones (no double-click).
+- **Layering rule:** phone overlays (drawer, sheets) are `z-50` and come *before* the dialogs they open in the page, so dialogs paint on top. Never move them with a CSS `transform` (it would re-anchor `position: fixed` children); `.md-sheet-in` ends on `transform: none`. Bars shown while something is selected are `fixed bottom-0 z-40` and cover the tab bar on purpose.
+- **`BottomSheet.tsx`** is the phone counterpart of `Dialog` (title row with ✕, scrolling body, footer with `pb-safe`, `dismissible`, `fullHeight`). Used by `ChannelEditSheet.tsx` and the Sources update log.
+- **One bar, one ⋮, one way to navigate.** The user found a second (coloured) toolbar, two ⋮ menus and a tappable category title confusing, so on phones: ☰ is the only way to switch playlist/category/source/guide, the title only says where you are, and each screen has exactly one ⋮.
+- **Playlist editor:** its desktop toolbar is `hidden md:block`. Dashboard passes `phoneMenuSlot` (an empty spot in `MobileTopBar`, via `menuSlotRef`) and the editor portals its ⋮ into it with every playlist action (link & download, Sync log with a dot for unread, Select, Reorder, Find & Replace, Assign EPG, stream checks, PDF, Hide stream links). Stream-check progress and Reorder mode show as strips under the top bar. Tapping a `PhoneChannelRow` opens `ChannelEditSheet`; long-press (`src/utils/useLongPress.ts`, cancelled by movement so scrolling never selects) selects, and while anything is selected a tap toggles selection. **Reorder mode** shows a `touch-none` grip per row; dragging uses the same `PointerSensor`.
+- **Adding a channel on a phone** uses the round + button (FAB) or the sheet's Insert above/below. Both open `ChannelEditSheet` with `isNew`: nothing is created until Add (`handleCreateChannel`), so Cancel leaves nothing behind. Desktop's Add/Insert still create a "New Channel" immediately for inline editing.
+- **`ChannelEditSheet` is one form.** Every setting in it (text fields, "Show in playlist", stream headers, the sync checkboxes via `ChannelSyncDetails`' `fields`/`onFieldsChange`) is a draft until Save; ✕ and Cancel discard it (`BottomSheet`'s `canClose` keeps ✕ working while `dismissible` blocks stray outside taps). The user reported mixing instant-save toggles into it as a big bug. Only buttons that *do* something (Use new / Keep mine, Link, Unlink, Insert, Delete) act immediately.
+- **The sheet sends only fields that changed** (`handleSheetSave` → `handleChannelSave`, then `updateChannelLink` if the sync checkboxes changed). Any `isHidden` key in a channel PUT clears `hiddenBySync` (`afterManualChannelEdit`), so never echo unchanged values.
+- **Sources:** full-width search plus a filter button for category/sort, tap a row to select, a bottom "Add to playlist" bar, and the update log in a sheet from the top bar's ⋮ (`channelPoolLogOpen`).
+- **EPG:** a fixed 104px channel column (tap it to assign the guide channel). "Now" centring accounts for the pinned column on every screen size (`scrollLeftToCenter`).
+- **Global:** shell roots use `h-dvh` (not `h-screen`, which hides content behind mobile browser bars). `index.html` has `viewport-fit=cover`; `pt-safe`/`pb-safe` utilities and the `body` side padding handle notches and home bars. `.md-btn`'s hover tint only applies on `(hover: hover)` devices, so it doesn't stick after a tap. Form inputs in phone UI use `text-base` (16px), or iPhones zoom the page on focus.
+- **Testing:** the Browser pane can emulate the size but sends mouse events, so long-press, touch dragging, safe areas and the on-screen keyboard need a check on a real phone over the LAN.
+
 ### Shared pieces and conventions
 
-- `Dialog.tsx` is the shared modal shell (scrim, Escape/backdrop close, `dismissible` flag). Use it for new dialogs. The confirm dialogs inline in Dashboard/Home predate it.
+- `Dialog.tsx` is the shared modal shell (scrim, Escape/backdrop close, `dismissible` flag). Use it for new dialogs. The confirm dialogs inline in Dashboard/Home predate it. Its scrim scrolls (`items-start overflow-y-auto` plus `my-auto` on the panel), so a dialog taller than the screen can be scrolled; one that fits stays centred.
 - `ACCENT_PRESETS` lives in `store.ts` (Settings and onboarding). `Home.tsx` exports `HomeBackground` and `GLASS`, which onboarding reuses for its aurora background and glass card.
 - `ChannelLogo.tsx` renders a logo with an initials fallback. `Logo.tsx` exports `M3U_ICON_PATH`, which `utils/favicon.ts` reuses.
 - Utilities in `src/utils/`:
@@ -227,7 +246,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
   - `useDebouncedValue` (search-as-you-type)
   - `ripple.ts` (document-level ripple for every `.md-btn`)
 - **Programmatic "jump to row" scrolling uses `behavior: 'instant'`**, not `'smooth'`. Smooth scrolling was observed not to animate reliably, and the virtualized lists need `scrollTop` to actually change before the target row renders.
-- **Clipboard copy needs a fallback.** The app is usually opened over plain `http://<LAN-IP>`, which is not a secure context, so `navigator.clipboard` is undefined there. Follow the `execCommand('copy')` fallback pattern in `PlaylistEditor.tsx`/`Home.tsx`.
+- **Clipboard copy needs a fallback.** The app is usually opened over plain `http://<LAN-IP>`, which is not a secure context, so `navigator.clipboard` is undefined there. Always copy through `src/utils/copyToClipboard.ts` (it falls back to `execCommand('copy')`, iPhone-safe, and resolves to whether it worked).
 - XMLTV timestamp parsing exists twice: `parseXmltvDate` inside the `/now` route in `server.ts` and `parseXmltvTime` in `EpgProgramDialog.tsx`.
 - Text search is accent-insensitive everywhere (EPG view, TVG-ID autocomplete, Sources, Link to Source, Spotlight): both sides go through `foldText()`, which exists twice (`server.ts` and `src/utils/foldText.ts`). Use it for any new search. Spotlight's `highlight()` folds per character so the bold range maps back onto the original text.
 - Use relative imports. The `@/*` path alias is configured in `tsconfig.json`/`vite.config.ts`, but nothing uses it.

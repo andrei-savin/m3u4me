@@ -3,6 +3,7 @@ import { api, setSessionToken } from '../apiClient';
 import { useStore } from '../store';
 import { Logo } from './Logo';
 import { Lock, KeyRound, ArrowLeft, Eye, EyeOff, Copy, Check } from 'lucide-react';
+import { copyToClipboard } from '../utils/copyToClipboard';
 
 interface LockScreenProps {
   onUnlock: () => void;
@@ -67,37 +68,23 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
     }
   };
 
-  // Same copy-with-fallback as SettingsPage's handleCopyKey, kept in sync by hand. The app is
-  // usually opened over plain http://<LAN-IP>, which isn't a secure context, so navigator.clipboard
-  // doesn't exist there and the hidden-textarea execCommand path does the work.
-  const handleCopyKey = () => {
+  // Only a real copy shows the checkmark: a false "copied" here could cost someone their
+  // recovery key. A failure is shown inline, because <Toast /> isn't mounted on the lock screen.
+  const handleCopyKey = async () => {
     if (!newRecoveryKey) return;
-    const key = newRecoveryKey;
-    const flash = () => { setCopyFailed(false); setCopied(true); setTimeout(() => setCopied(false), 2000); };
-    // Shown inline rather than as a toast, because <Toast /> isn't mounted on the lock screen.
-    const showCopyFailed = () => setCopyFailed(true);
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(key).then(flash).catch(fallback);
+    if (await copyToClipboard(newRecoveryKey)) {
+      setCopyFailed(false);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } else {
-      fallback();
-    }
-    function fallback() {
-      const el = document.createElement('textarea');
-      el.value = key;
-      el.style.cssText = 'position:fixed;opacity:0;top:0;left:0;';
-      document.body.appendChild(el);
-      el.select();
-      // execCommand returns false (rather than throwing) when the copy is refused. Only show the
-      // checkmark on a real copy, since a false "copied" here could cost someone their recovery key.
-      try { if (document.execCommand('copy')) flash(); else showCopyFailed(); } catch (e) { console.error(e); showCopyFailed(); }
-      document.body.removeChild(el);
+      setCopyFailed(true);
     }
   };
 
   // After recovery: show new recovery key
   if (newRecoveryKey) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black px-4">
+      <div className="min-h-dvh flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black px-4">
         <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded-lg elev-24 overflow-hidden">
           <div className="px-6 pt-8 pb-4 text-center">
             <div className="mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: accentColor + '18' }}>
@@ -142,7 +129,7 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
   // Recovery mode
   if (isRecovery) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black px-4">
+      <div className="min-h-dvh flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black px-4">
         <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded-lg elev-24 overflow-hidden">
           <div className="px-6 pt-8 pb-4 text-center">
             <div className="mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: accentColor + '18' }}>
@@ -212,7 +199,7 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
 
   // Login mode
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black px-4">
+    <div className="min-h-dvh flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black px-4">
       <div className="w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded-lg elev-24 overflow-hidden">
         <div className="px-6 pt-8 pb-4 flex flex-col items-center">
           <div className="px-5 py-3 rounded-lg mb-5">

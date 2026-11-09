@@ -69,6 +69,7 @@ Not on Linux, or prefer Docker? See [all the ways to install m3u4me](docs/instal
 - **[Printable channel list](docs/features.md#printable-channel-list)**: turn any playlist into a neat A4 PDF.
 - **[Backup & restore](docs/backup.md)**: everything in one file, ready to move to a new server.
 - **[Search everything at once](docs/features.md#search-and-shortcuts)**, with keyboard shortcuts for the busy bits.
+- **[Works on your phone too](docs/features.md#on-your-phone)**, with a layout made for touch screens.
 - **[Light, dark and AMOLED themes](docs/features.md#look-and-feel)**, in your favourite accent colour.
 
 Everything saves by itself, and an accidental delete can be undone.

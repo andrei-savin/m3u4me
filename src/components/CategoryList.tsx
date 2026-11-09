@@ -17,7 +17,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Trash2, Plus, Eye, EyeOff } from 'lucide-react';
+import { GripVertical, Trash2, Plus, Eye, EyeOff, Pencil } from 'lucide-react';
 
 const restrictToVerticalAxis = ({ transform }: any) => ({ ...transform, x: 0 });
 
@@ -62,7 +62,7 @@ function SortableCategoryItem({
       <div
         {...attributes}
         {...listeners}
-        className="pl-3 pr-1 py-3 cursor-grab active:cursor-grabbing text-gray-300 dark:text-gray-600"
+        className="pl-3 pr-1 py-3 max-md:pl-2 max-md:pr-2 max-md:py-4 touch-none cursor-grab active:cursor-grabbing text-gray-300 dark:text-gray-600"
       >
         <GripVertical className="h-3.5 w-3.5" />
       </div>
@@ -106,12 +106,23 @@ function SortableCategoryItem({
         </button>
       )}
 
+      {/* Phones can't double-click to rename, so they get a pencil. */}
+      {!isRenaming && (
+        <button
+          onClick={e => { e.stopPropagation(); onRenameStart(); }}
+          className="md-btn md:hidden p-2.5 rounded-full text-gray-400"
+          title="Rename category"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
+
       {/* Hide/show every channel in the category. Looks and reads exactly like the
           per-channel eye button in PlaylistEditor, so it behaves the way people expect. */}
       <button
         onClick={e => { e.stopPropagation(); onToggleHide(); }}
         disabled={count === 0 || isSaving}
-        className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 disabled:opacity-40"
+        className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 disabled:opacity-40"
         title={isHidden ? 'Include in export' : 'Exclude from export'}
       >
         {isHidden ? <EyeOff className="h-3.5 w-3.5 text-amber-500" /> : <Eye className="h-3.5 w-3.5" />}
@@ -120,7 +131,7 @@ function SortableCategoryItem({
       {/* Delete */}
       <button
         onClick={e => { e.stopPropagation(); onDelete(); }}
-        className="md-btn p-1.5 mr-1 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
+        className="md-btn p-1.5 max-md:p-2.5 mr-1 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
         title="Delete category"
       >
         <Trash2 className="w-3.5 h-3.5" />
@@ -129,7 +140,8 @@ function SortableCategoryItem({
   );
 }
 
-export default function CategoryList({ playlistId }: { playlistId: string }) {
+/** `onPick` runs after a category is chosen or added; Dashboard uses it to close the drawer on phones. */
+export default function CategoryList({ playlistId, onPick }: { playlistId: string; onPick?: () => void }) {
   const { activeCategory, setActiveCategory, accentColor, setUndoEntry } = useStore();
   const { playlists } = usePlaylists();
   const { channels } = useChannels(playlistId);
@@ -325,6 +337,7 @@ export default function CategoryList({ playlistId }: { playlistId: string }) {
       await api.updatePlaylist(playlistId, { categories: newCats });
       setLocalOrder(newCats);
       setActiveCategory(name);
+      onPick?.();
       triggerRefresh();
     } catch (e) { console.error(e); notifyError(e, 'Failed to add category.'); }
     finally { mutatingCategoriesRef.current = false; setNewCategoryName(''); setShowAddCategory(false); }
@@ -341,7 +354,7 @@ export default function CategoryList({ playlistId }: { playlistId: string }) {
         </p>
         <button
           onClick={() => setShowAddCategory(true)}
-          className="md-btn p-1 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+          className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
           title="Add category"
         >
           <Plus className="h-3.5 w-3.5" />
@@ -358,7 +371,7 @@ export default function CategoryList({ playlistId }: { playlistId: string }) {
                 category={c}
                 isActive={activeCategory === c}
                 count={counts.get(c) || 0}
-                onClick={() => setActiveCategory(c)}
+                onClick={() => { setActiveCategory(c); onPick?.(); }}
                 onDelete={() => setShowDeleteConfirm(c)}
                 accentColor={accentColor}
                 isHidden={(counts.get(c) || 0) > 0 && hiddenCounts.get(c) === counts.get(c)}

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlaylists, useEpgSources, useChannelPoolSources, api, triggerRefresh, triggerEpgRefresh, triggerChannelPoolRefresh, SearchResult } from '../apiClient';
 import { useStore, accentAlpha, notifyError, notifyInfo } from '../store';
-import { Plus, Settings, FileAudio, Menu, Trash2, Eye, EyeOff, Keyboard, Search, ArrowUpCircle, Radio, RefreshCw, Clock, Layers, Pencil, AlertTriangle } from 'lucide-react';
+import { Plus, Settings, FileAudio, Menu, Trash2, Eye, EyeOff, Keyboard, Search, ArrowUpCircle, Radio, RefreshCw, Clock, Layers, Pencil, AlertTriangle, History } from 'lucide-react';
 import PlaylistEditor from './PlaylistEditor';
 import NewPlaylistDialog from './NewPlaylistDialog';
 import CategoryList from './CategoryList';
@@ -16,6 +16,9 @@ import AddChannelPoolSourceDialog from './AddChannelPoolSourceDialog';
 import ChannelPoolViewer from './ChannelPoolViewer';
 import ChannelPoolUpdateLog from './ChannelPoolUpdateLog';
 import Toast from './Toast';
+import MobileTopBar from './MobileTopBar';
+import MobileTabBar from './MobileTabBar';
+import { useIsPhone } from '../utils/useIsPhone';
 
 export default function Dashboard({ activeView }: { activeView: 'playlists' | 'channels' | 'epg' }) {
   const navigate = useNavigate();
@@ -30,9 +33,23 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
     accentColor,
     hideUrls, setHideUrls,
     setUndoEntry,
-    setActiveCategory,
+    activeCategory, setActiveCategory,
     setScrollTarget,
+    setChannelPoolLogOpen,
   } = useStore();
+  const isPhone = useIsPhone();
+  // The empty spot in the phone top bar where the playlist editor puts its own ⋮ menu.
+  const [phoneMenuSlot, setPhoneMenuSlot] = useState<HTMLDivElement | null>(null);
+
+  // On a phone the drawer floats over the whole screen, so it starts closed (also when
+  // arriving from another screen) and closes again as soon as anything is picked or created
+  // in it: a playlist, a category, a source or a guide. Managing things in it (rename,
+  // delete, hide) leaves it open.
+  useEffect(() => {
+    if (isPhone) setSidebarOpen(false);
+  }, [isPhone, setSidebarOpen]);
+  const closeDrawerOnPhone = () => { if (isPhone) setSidebarOpen(false); };
+  const activePlaylist = playlists.find(p => p.id === activePlaylistId);
   const [isCreating, setIsCreating] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
@@ -154,6 +171,8 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
     finally { setRefreshingChannelPoolId(null); }
   };
   const [sidebarWidth, setSidebarWidth] = useState(256);
+  // A phone's drawer is a fixed share of the screen instead of the draggable width.
+  const drawerWidth = isPhone ? 'min(320px, 85vw)' : sidebarWidth;
   const sidebarRef = useRef<HTMLDivElement>(null);
   const sidebarResizing = useRef<{ startX: number; startW: number } | null>(null);
   const startSidebarResize = (e: React.MouseEvent) => {
@@ -190,10 +209,43 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
     setIsCreating(false);
     triggerRefresh();
     setActivePlaylistId(playlistId);
+    closeDrawerOnPhone();
   };
 
   return (
-    <div className="md-page-in flex flex-col h-screen overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
+    <div className="md-page-in flex flex-col h-dvh overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
+
+      {/* ── Phone top bar (below 768px; the desktop bar further down is hidden there) ── */}
+      <MobileTopBar
+        {...(activeView === 'playlists' && activePlaylist
+          // A playlist: its name as a small line above the category, which is what the list shows.
+          ? activeCategory
+            ? { overline: activePlaylist.name, title: activeCategory }
+            : { title: activePlaylist.name }
+          : {
+              title: activeView === 'playlists'
+                ? 'My Playlists'
+                : activeView === 'channels'
+                  ? channelPoolSources.find(s => s.id === activeChannelPoolSourceId)?.name ?? 'Sources'
+                  : epgSources.find(s => s.id === activeEpgSourceId)?.name ?? 'EPG',
+            })}
+        onMenu={() => setSidebarOpen(!isSidebarOpen)}
+        // An open playlist fills this spot with the editor's own ⋮ menu (Hide stream links included).
+        menuSlotRef={setPhoneMenuSlot}
+        menuItems={activeView === 'playlists' && activePlaylist ? [] : [
+          (activeView === 'playlists' || activeView === 'channels') && {
+            label: hideUrls ? 'Show stream links' : 'Hide stream links',
+            icon: hideUrls ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />,
+            onClick: () => setHideUrls(!hideUrls),
+          },
+          // Same rule as ChannelPoolUpdateLog: uploaded files never refresh, so they have no log.
+          activeView === 'channels' && channelPoolSources.find(s => s.id === activeChannelPoolSourceId)?.type !== 'playlist-file' && {
+            label: 'Update log',
+            icon: <History className="h-4 w-4" />,
+            onClick: () => setChannelPoolLogOpen(true),
+          },
+        ]}
+      />
 
       {/* ── Top App Bar ─────────────────────────────────────────────────── */}
       {/* ── Update Banner ───────────────────────────────────────────────── */}
@@ -215,7 +267,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
         </div>
       )}
 
-      <nav className="h-16 shrink-0 z-50 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] elev-4 grid grid-cols-[1fr_auto_1fr] items-center px-2 gap-1 relative">
+      <nav className="h-16 shrink-0 z-50 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] elev-4 hidden md:grid grid-cols-[1fr_auto_1fr] items-center px-2 gap-1 relative">
         {/* Left group and right group are both `1fr` tracks, so the grid keeps
             them equal width and the middle (tabs) track dead-centered on the
             bar's full width — regardless of which right-side buttons the
@@ -350,14 +402,20 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
             time, so labels never re-wrap or re-truncate mid-animation; they just get covered
             or uncovered as the box widens, and cross-fade in/out a bit faster than the slide
             so nothing looks squeezed into a paper-thin sliver right at the edges. */}
+        {/* On phones the drawer floats over the page (max-md:fixed below) with this dimmed
+            backdrop behind it; tapping the backdrop closes it. It comes first in the page
+            so that, at the same z-50, the drawer and every dialog paint on top of it. */}
+        {isPhone && isSidebarOpen && (
+          <div className="md-scrim md:hidden fixed inset-0 z-50 bg-black/50" onClick={() => setSidebarOpen(false)} />
+        )}
         <div
           ref={sidebarRef}
-          className={`${isSidebarOpen ? '' : 'w-0'} shrink-0 overflow-hidden bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black elev-1 z-40 transition-[width] duration-[240ms] ease-[var(--md-standard)] relative`}
-          style={isSidebarOpen ? { width: sidebarWidth } : undefined}
+          className={`${isSidebarOpen ? '' : 'w-0'} shrink-0 overflow-hidden bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black elev-1 z-40 transition-[width] duration-[240ms] ease-[var(--md-standard)] relative max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:pt-safe max-md:pb-safe max-md:shadow-2xl`}
+          style={isSidebarOpen ? { width: drawerWidth } : undefined}
         >
           <div
             className={`h-full flex flex-col transition-opacity duration-150 ease-[var(--md-standard)] ${isSidebarOpen ? 'opacity-100' : 'opacity-0'}`}
-            style={{ width: sidebarWidth }}
+            style={{ width: drawerWidth }}
           >
           <div className="flex-1 overflow-y-auto py-2">
 
@@ -370,7 +428,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                   </p>
                   <button
                     onClick={() => setIsCreating(true)}
-                    className="md-btn p-1 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+                    className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
                     title="New playlist"
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -408,9 +466,9 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                           </div>
                         ) : (
                           <button
-                            onClick={() => setActivePlaylistId(pl.id)}
+                            onClick={() => { setActivePlaylistId(pl.id); closeDrawerOnPhone(); }}
                             onDoubleClick={() => { setRenamingId(pl.id); setRenameValue(pl.name); }}
-                            className="flex-1 flex items-center h-12 pl-4 pr-10 gap-3 rounded text-sm font-medium text-left truncate transition-colors text-gray-700 dark:text-gray-300"
+                            className="flex-1 flex items-center h-12 pl-4 pr-10 max-md:pr-24 gap-3 rounded text-sm font-medium text-left truncate transition-colors text-gray-700 dark:text-gray-300"
                             style={isActive ? { color: accentColor } : undefined}
                           >
                             <svg className="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -435,13 +493,25 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                             </span>
                           </button>
                         )}
-                        <button
-                          onClick={() => setDeletePlaylistId(pl.id)}
-                          className="md-btn absolute right-1 p-1.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
-                          title="Delete playlist"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="absolute right-1 flex items-center">
+                          {/* Phones can't double-click to rename, so they get a pencil. */}
+                          {renamingId !== pl.id && (
+                            <button
+                              onClick={() => { setRenamingId(pl.id); setRenameValue(pl.name); }}
+                              className="md-btn md:hidden p-2.5 rounded-full text-gray-400"
+                              title="Rename playlist"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setDeletePlaylistId(pl.id)}
+                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
+                            title="Delete playlist"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -462,7 +532,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                 </nav>
 
                 {/* Section: Categories */}
-                {activePlaylistId && <CategoryList playlistId={activePlaylistId} />}
+                {activePlaylistId && <CategoryList playlistId={activePlaylistId} onPick={closeDrawerOnPhone} />}
               </>
             ) : activeView === 'channels' ? (
               <>
@@ -473,7 +543,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                   </p>
                   <button
                     onClick={() => { setPoolSourceToEdit(null); setIsCreatingChannelPool(true); }}
-                    className="md-btn p-1 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+                    className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
                     title="Add channel source"
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -512,7 +582,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                           <div
                             role="button"
                             tabIndex={0}
-                            onClick={() => setActiveChannelPoolSourceId(src.id)}
+                            onClick={() => { setActiveChannelPoolSourceId(src.id); closeDrawerOnPhone(); }}
                             onDoubleClick={() => { setRenamingChannelPoolId(src.id); setRenameChannelPoolValue(src.name); }}
                             onKeyDown={(e) => {
                               if (e.target !== e.currentTarget) return;
@@ -521,7 +591,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                                 setActiveChannelPoolSourceId(src.id);
                               }
                             }}
-                            className="flex-1 flex flex-col justify-center h-14 pl-4 pr-20 gap-0 rounded text-sm font-medium text-left truncate transition-colors text-gray-700 dark:text-gray-300 cursor-pointer"
+                            className="flex-1 flex flex-col justify-center h-14 pl-4 pr-20 max-md:pr-28 gap-0 rounded text-sm font-medium text-left truncate transition-colors text-gray-700 dark:text-gray-300 cursor-pointer"
                             style={isActive ? { color: accentColor } : undefined}
                           >
                             <span className="flex items-center gap-2 truncate">
@@ -553,7 +623,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                         <div className="absolute right-1 flex items-center gap-0">
                           <button
                             onClick={(e) => { e.stopPropagation(); setPoolSourceToEdit(src); setIsCreatingChannelPool(true); }}
-                            className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all"
+                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all"
                             title="Edit channel source"
                           >
                             <Pencil className="w-3 h-3" />
@@ -561,7 +631,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                           {!isFileType && (
                             <button
                               onClick={(e) => { e.stopPropagation(); handleRefreshChannelPoolSource(src.id); }}
-                              className={`md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all ${refreshingChannelPoolId === src.id ? 'animate-spin' : ''}`}
+                              className={`md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all ${refreshingChannelPoolId === src.id ? 'animate-spin' : ''}`}
                               title="Refresh channel data"
                               disabled={refreshingChannelPoolId === src.id}
                             >
@@ -570,7 +640,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                           )}
                           <button
                             onClick={() => setDeleteChannelPoolSourceId(src.id)}
-                            className="md-btn p-1.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
+                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
                             title="Delete channel source"
                           >
                             <Trash2 className="w-3 h-3" />
@@ -604,7 +674,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                   </p>
                   <button
                     onClick={() => { setEpgSourceToEdit(null); setIsCreatingEpg(true); }}
-                    className="md-btn p-1 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+                    className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
                     title="Add EPG source"
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -642,7 +712,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                           <div
                             role="button"
                             tabIndex={0}
-                            onClick={() => setActiveEpgSourceId(src.id)}
+                            onClick={() => { setActiveEpgSourceId(src.id); closeDrawerOnPhone(); }}
                             onDoubleClick={() => { setRenamingEpgId(src.id); setRenameEpgValue(src.name); }}
                             onKeyDown={(e) => {
                               if (e.target !== e.currentTarget) return;
@@ -651,7 +721,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                                 setActiveEpgSourceId(src.id);
                               }
                             }}
-                            className="flex-1 flex flex-col justify-center h-14 pl-4 pr-20 gap-0 rounded text-sm font-medium text-left truncate transition-colors text-gray-700 dark:text-gray-300 cursor-pointer"
+                            className="flex-1 flex flex-col justify-center h-14 pl-4 pr-20 max-md:pr-28 gap-0 rounded text-sm font-medium text-left truncate transition-colors text-gray-700 dark:text-gray-300 cursor-pointer"
                             style={isActive ? { color: accentColor } : undefined}
                           >
                             <span className="flex items-center gap-2 truncate">
@@ -679,14 +749,14 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                         <div className="absolute right-1 flex items-center gap-0">
                           <button
                             onClick={(e) => { e.stopPropagation(); setEpgSourceToEdit(src); setIsCreatingEpg(true); }}
-                            className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all"
+                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all"
                             title="Edit EPG source"
                           >
                             <Pencil className="w-3 h-3" />
                           </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleRefreshEpgSource(src.id); }}
-                            className={`md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all ${refreshingEpgId === src.id ? 'animate-spin' : ''}`}
+                            className={`md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all ${refreshingEpgId === src.id ? 'animate-spin' : ''}`}
                             title="Refresh EPG data"
                             disabled={refreshingEpgId === src.id}
                           >
@@ -694,7 +764,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                           </button>
                           <button
                             onClick={() => setDeleteEpgSourceId(src.id)}
-                            className="md-btn p-1.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
+                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
                             title="Delete EPG source"
                           >
                             <Trash2 className="w-3 h-3" />
@@ -723,8 +793,8 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
           </div>
           </div>
 
-          {/* Resize handle */}
-          {isSidebarOpen && (
+          {/* Resize handle (mouse only, so not on phones) */}
+          {isSidebarOpen && !isPhone && (
             <div
               onMouseDown={startSidebarResize}
               className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-gray-300 dark:hover:bg-white/15 transition-colors z-20"
@@ -736,13 +806,21 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
         <div className="flex-1 flex flex-col min-w-0">
           {activeView === 'playlists' ? (
             activePlaylistId ? (
-              <PlaylistEditor playlistId={activePlaylistId} />
+              <PlaylistEditor playlistId={activePlaylistId} phoneMenuSlot={phoneMenuSlot} />
             ) : (
               <div className="flex-1 flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black">
-                <div className="text-center">
+                <div className="text-center px-6">
                   <FileAudio className="mx-auto h-16 w-16 text-gray-300 dark:text-gray-700 mb-4" />
                   <p className="text-base font-medium text-gray-500 dark:text-gray-400">No playlist selected</p>
                   <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">Choose a playlist from the drawer to start editing.</p>
+                  {/* Phones: the drawer is closed, so offer a clear way to open it. */}
+                  <button
+                    onClick={() => setSidebarOpen(true)}
+                    className="md-btn md:hidden mt-5 h-10 px-5 rounded text-sm font-medium text-white"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    Choose a playlist
+                  </button>
                 </div>
               </div>
             )
@@ -762,10 +840,18 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                   />
                 ) : (
                   <div className="flex-1 flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black">
-                    <div className="text-center">
+                    <div className="text-center px-6">
                       <Layers className="mx-auto h-16 w-16 text-gray-300 dark:text-gray-700 mb-4" />
                       <p className="text-base font-medium text-gray-500 dark:text-gray-400">No channel source selected</p>
                       <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">Choose a source from the drawer or add a new one.</p>
+                      {/* Phones: the drawer is closed, so offer a clear way to open it. */}
+                      <button
+                        onClick={() => setSidebarOpen(true)}
+                        className="md-btn md:hidden mt-5 h-10 px-5 rounded text-sm font-medium text-white"
+                        style={{ backgroundColor: accentColor }}
+                      >
+                        Choose a source
+                      </button>
                     </div>
                   </div>
                 )}
@@ -777,10 +863,18 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
               <EpgViewer sourceId={activeEpgSourceId} onAssignChannel={handleAssignChannel} />
             ) : (
               <div className="flex-1 flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black">
-                <div className="text-center">
+                <div className="text-center px-6">
                   <Radio className="mx-auto h-16 w-16 text-gray-300 dark:text-gray-700 mb-4" />
                   <p className="text-base font-medium text-gray-500 dark:text-gray-400">No EPG source selected</p>
                   <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">Choose an EPG source from the drawer or add a new one.</p>
+                  {/* Phones: the drawer is closed, so offer a clear way to open it. */}
+                  <button
+                    onClick={() => setSidebarOpen(true)}
+                    className="md-btn md:hidden mt-5 h-10 px-5 rounded text-sm font-medium text-white"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    Choose a guide
+                  </button>
                 </div>
               </div>
             )
@@ -985,7 +1079,8 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
         </div>
       )}
 
-      <Toast />
+      {isPhone && <MobileTabBar active={activeView === 'channels' ? 'sources' : activeView} />}
+      <Toast withTabBar />
     </div>
   );
 }

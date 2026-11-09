@@ -24,7 +24,7 @@ const SNACKBAR = 'md-snackbar-in pointer-events-auto flex items-center gap-3 w-f
  * (`undoEntry`). Both are bottom-anchored and share the same Material Design snackbar surface —
  * per MD guidelines, at most one of each is shown at a time (a new toast replaces the last).
  */
-export default function Toast() {
+export default function Toast({ withTabBar = false }: { withTabBar?: boolean }) {
   const { toast, setToast, undoEntry, setUndoEntry, accentColor } = useStore();
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -70,7 +70,9 @@ export default function Toast() {
   if (!toast && !undoEntry) return null;
 
   return (
-    <div className="fixed bottom-6 inset-x-0 z-50 flex flex-col items-center gap-2 px-4 pointer-events-none">
+    // On phones, screens with the bottom tab bar (`withTabBar`) lift the snackbar above it
+    // (the bar is 4rem plus the home-bar inset). Computers keep bottom-6 either way.
+    <div className={`fixed ${withTabBar ? 'bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-6' : 'bottom-[calc(1.5rem+env(safe-area-inset-bottom))] md:bottom-6'} inset-x-0 z-50 flex flex-col items-center gap-2 px-4 pointer-events-none`}>
       {toast && (() => {
         const { Icon, className } = TOAST_ICON[toast.type];
         return (

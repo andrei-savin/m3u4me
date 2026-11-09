@@ -7,12 +7,17 @@ import { Logo } from './Logo';
 import { useVersionInfo } from './AppInfo';
 import { contrastText, notifyError, notifyInfo, ACCENT_PRESETS, AuthExpiredError } from '../store';
 import Toast from './Toast';
+import { copyToClipboard } from '../utils/copyToClipboard';
+import MobileTopBar from './MobileTopBar';
+import MobileTabBar from './MobileTabBar';
+import { useIsPhone } from '../utils/useIsPhone';
 import SyncFieldToggles from './SyncFieldToggles';
 import Dialog from './Dialog';
 import BackupDropZone, { describeRestoredBackup, restoreErrorMessage } from './BackupDropZone';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
+  const isPhone = useIsPhone();
   const {
     isDarkMode, setDarkMode,
     isAmoledMode, setAmoledMode,
@@ -208,38 +213,25 @@ export default function SettingsPage() {
     }
   };
 
-  // Same copy-with-fallback as Home's copyLink and PlaylistEditor's copyText, kept in sync by
-  // hand. The app is usually opened over plain http://<LAN-IP>, which isn't a secure context, so
-  // navigator.clipboard doesn't exist there and the hidden-textarea execCommand path does the work.
-  const handleCopyKey = () => {
+  // Only a real copy shows the checkmark: a false "copied" here could cost someone their
+  // recovery key. The browser's own copy error is technical, so the message is plain and,
+  // since the key is still on screen, points at copying it by hand.
+  const handleCopyKey = async () => {
     if (!recoveryKey) return;
-    const key = recoveryKey;
-    const flash = () => { setCopied(true); setTimeout(() => setCopied(false), 2000); };
-    // The browser's own copy error is technical, so show a plain message instead. The key is
-    // still on screen, so point the user at copying it by hand.
-    const showCopyFailed = () => notifyError(null, "Couldn't copy the recovery key. Select the key and copy it yourself, then keep it somewhere safe.");
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(key).then(flash).catch(fallback);
+    if (await copyToClipboard(recoveryKey)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } else {
-      fallback();
-    }
-    function fallback() {
-      const el = document.createElement('textarea');
-      el.value = key;
-      el.style.cssText = 'position:fixed;opacity:0;top:0;left:0;';
-      document.body.appendChild(el);
-      el.select();
-      // execCommand returns false (rather than throwing) when the copy is refused. Only show the
-      // checkmark on a real copy, since a false "copied" here could cost someone their recovery key.
-      try { if (document.execCommand('copy')) flash(); else showCopyFailed(); } catch (e) { console.error(e); showCopyFailed(); }
-      document.body.removeChild(el);
+      notifyError(null, "Couldn't copy the recovery key. Select the key and copy it yourself, then keep it somewhere safe.");
     }
   };
 
   return (
-    <div className="md-page-in flex flex-col h-screen overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
+    <div className="md-page-in flex flex-col h-dvh overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
+      {/* Phones get the shared phone bars instead (Settings is one of the tabs there, so no Back button). */}
+      <MobileTopBar title="Settings" showSearch={false} />
       {/* Top bar */}
-      <nav className="h-16 shrink-0 z-30 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] elev-4 flex items-center px-2 gap-2">
+      <nav className="h-16 shrink-0 z-30 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] elev-4 hidden md:flex items-center px-2 gap-2">
         <button
           onClick={() => navigate(-1)}
           className="md-btn p-2 rounded-full text-gray-600 dark:text-gray-300"
@@ -733,8 +725,9 @@ export default function SettingsPage() {
         </Dialog>
       )}
 
+      {isPhone && <MobileTabBar active="settings" />}
       {/* Error/info snackbar, same as Dashboard and Home, so failures here aren't silent */}
-      <Toast />
+      <Toast withTabBar />
     </div>
   );
 }

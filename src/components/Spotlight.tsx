@@ -172,7 +172,7 @@ export default function Spotlight({ onNavigate }: {
 
   return (
     <div
-      className="md-scrim fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] px-4"
+      className="md-scrim fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] max-md:pt-[max(0.75rem,env(safe-area-inset-top))] px-4 max-md:px-2"
       style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
       onMouseDown={e => { if (e.target === e.currentTarget) close(); }}
     >
@@ -200,10 +200,17 @@ export default function Spotlight({ onNavigate }: {
           <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium font-mono bg-gray-100 dark:bg-white/10 text-gray-400 dark:text-gray-500 border border-gray-200 dark:border-white/10">
             Esc
           </kbd>
+          {/* Phones have no Esc key, so they get a visible way out. */}
+          <button
+            onClick={close}
+            className="md-btn md:hidden -mr-2 h-10 px-3 rounded text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400"
+          >
+            Cancel
+          </button>
         </div>
 
         {/* Results */}
-        <div ref={listRef} className="max-h-[54vh] overflow-y-auto overscroll-contain">
+        <div ref={listRef} className="max-h-[54vh] max-md:max-h-[45dvh] overflow-y-auto overscroll-contain">
           {!query.trim() ? (
             <div className="flex flex-col items-center justify-center py-10 text-sm text-gray-400 dark:text-gray-500 gap-2">
               <Search className="h-8 w-8 opacity-30" />
@@ -314,8 +321,9 @@ export default function Spotlight({ onNavigate }: {
         {/* Footer hint */}
         {results.length > 0 && (
           <div className="flex items-center gap-3 px-5 py-2.5 border-t border-gray-200/70 dark:border-white/8 text-[11px] text-gray-400 dark:text-gray-500">
-            <span><kbd className="font-mono">↑↓</kbd> navigate</span>
-            <span><kbd className="font-mono">↵</kbd> open</span>
+            {/* Keyboard hints mean nothing on a phone; the result count stays. */}
+            <span className="hidden md:inline"><kbd className="font-mono">↑↓</kbd> navigate</span>
+            <span className="hidden md:inline"><kbd className="font-mono">↵</kbd> open</span>
             <span className="ml-auto">{results.length} result{results.length !== 1 ? 's' : ''}</span>
           </div>
         )}

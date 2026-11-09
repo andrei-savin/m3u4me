@@ -128,11 +128,12 @@ export default function SyncLogPanel({
     }
   };
 
+  // top-14 sits below the playlist toolbar; phones have no toolbar there, so it starts at the top.
   return (
-    <div className="md-list-in absolute top-14 right-0 bottom-0 w-96 max-w-full z-30 bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] shadow-[-4px_0_24px_rgba(0,0,0,0.15)] border-l border-gray-200 dark:border-white/10 flex flex-col">
+    <div className="md-list-in absolute top-14 max-md:top-0 right-0 bottom-0 w-96 max-w-full z-30 bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] shadow-[-4px_0_24px_rgba(0,0,0,0.15)] border-l border-gray-200 dark:border-white/10 flex flex-col">
       <div className="shrink-0 h-12 flex items-center justify-between px-4 border-b border-gray-200 dark:border-white/10">
         <h2 className="text-sm font-medium text-gray-900 dark:text-white">Sync Log</h2>
-        <button onClick={onClose} className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Close sync log">
+        <button onClick={onClose} className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Close sync log">
           <X className="h-4 w-4" />
         </button>
       </div>

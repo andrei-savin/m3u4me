@@ -6,7 +6,11 @@ import { useVersionInfo } from './AppInfo';
 import { Logo } from './Logo';
 import Spotlight from './Spotlight';
 import Toast from './Toast';
+import MobileTopBar from './MobileTopBar';
+import MobileTabBar from './MobileTabBar';
+import { useIsPhone } from '../utils/useIsPhone';
 import { formatTime } from '../utils/formatTime';
+import { copyToClipboard } from '../utils/copyToClipboard';
 import { FileAudio, Layers, Radio, Download, Sparkles, Settings, ArrowUpCircle, Search, Keyboard, Copy, Check, Link2 } from 'lucide-react';
 
 const NAV_TABS: { key: string; label: string; path: string }[] = [
@@ -152,15 +156,17 @@ function StatCard({ icon, count, label, secondary, accentColor, onClick }: {
   return (
     <button
       onClick={onClick}
-      className={`md-btn text-left rounded-2xl px-6 py-6 flex flex-col gap-3 transition-transform duration-200 hover:-translate-y-1 ${GLASS}`}
+      // Phones (below sm) fit all three tiles in one row, so each is smaller there and drops its
+      // second line.
+      className={`md-btn text-left rounded-2xl px-6 py-6 max-sm:px-3 max-sm:py-4 flex flex-col gap-3 max-sm:gap-2 min-w-0 transition-transform duration-200 hover:-translate-y-1 ${GLASS}`}
     >
-      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ backgroundColor: accentAlpha(accentColor, '20') }}>
+      <div className="w-11 h-11 max-sm:w-9 max-sm:h-9 rounded-full flex items-center justify-center" style={{ backgroundColor: accentAlpha(accentColor, '20') }}>
         {icon}
       </div>
-      <div>
-        <div className="text-4xl font-bold text-gray-900 dark:text-white leading-tight tabular-nums">{animated.toLocaleString()}</div>
-        <div className="text-sm font-medium text-gray-700 dark:text-gray-200 mt-1">{label}</div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{secondary}</div>
+      <div className="min-w-0">
+        <div className="text-4xl max-sm:text-2xl font-bold text-gray-900 dark:text-white leading-tight tabular-nums">{animated.toLocaleString()}</div>
+        <div className="text-sm max-sm:text-xs font-medium text-gray-700 dark:text-gray-200 mt-1 truncate">{label}</div>
+        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 max-sm:hidden">{secondary}</div>
       </div>
     </button>
   );
@@ -175,29 +181,10 @@ function PlaylistDownloadsCard({ accentColor }: { accentColor: string }) {
   const { playlists, loading } = usePlaylists();
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Same copy-with-fallback as PlaylistEditor's export dialog — kept in sync by hand, same as
-  // the Spotlight handler above (see CLAUDE.md on frontend/backend type duplication; this is
-  // the same story one layer up, for a UI pattern instead of a data shape). The execCommand
-  // fallback covers non-HTTPS/non-secure contexts, where navigator.clipboard doesn't exist.
-  const copyLink = (url: string, id: string) => {
-    const flash = () => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(current => current === id ? null : current), 2000);
-    };
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(url).then(flash).catch(fallback);
-    } else {
-      fallback();
-    }
-    function fallback() {
-      const el = document.createElement('textarea');
-      el.value = url;
-      el.style.cssText = 'position:fixed;opacity:0;top:0;left:0;';
-      document.body.appendChild(el);
-      el.select();
-      try { document.execCommand('copy'); flash(); } catch (e) { console.error(e); notifyError(e, 'Failed to copy to clipboard.'); }
-      document.body.removeChild(el);
-    }
+  const copyLink = async (url: string, id: string) => {
+    if (!(await copyToClipboard(url))) { notifyError(null, 'Failed to copy to clipboard.'); return; }
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(current => current === id ? null : current), 2000);
   };
 
   return (
@@ -260,6 +247,7 @@ export default function Home() {
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const mod = /mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl';
+  const isPhone = useIsPhone();
 
   const additions = stats?.latestChannelPoolAdditions ?? null;
   const totalChannels = stats ? stats.playlistChannelCount + stats.channelPoolChannelCount + stats.epgChannelCount : 0;
@@ -284,7 +272,7 @@ export default function Home() {
   };
 
   return (
-    <div className="md-page-in relative flex flex-col h-screen overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
+    <div className="md-page-in relative flex flex-col h-dvh overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
       <HomeBackground logos={stats?.sampleLogos ?? []} accentColor={accentColor} />
 
       <div className="relative z-10 flex flex-col h-full">
@@ -316,11 +304,14 @@ export default function Home() {
             specific to the playlist/channel editors) — Dashboard itself already omits that
             second one on its own EPG tab. Search and Keyboard Shortcuts are fully wired up
             (Spotlight + the shortcuts dialog below), not just decorative.
-            Below ~640px this overlaps the same way Dashboard's own nav does — confirmed by
-            testing Dashboard itself at that width, not just inferred — so it's a pre-existing
-            issue shared with the main app, not something introduced here; not fixed in either
-            place for now. */}
-        <nav className="h-16 shrink-0 z-30 backdrop-blur-xl bg-white/70 dark:bg-[#1e1e1e]/60 amoled:dark:bg-black/60 border-b border-white/40 dark:border-white/10 grid grid-cols-[1fr_auto_1fr] items-center px-2 gap-1">
+            Below 768px (phones) both screens hide this bar and show MobileTopBar plus
+            MobileTabBar instead, which don't need mirroring because they're one shared
+            component each. */}
+        <MobileTopBar
+          leading={<Logo className="h-6 w-auto text-gray-900 dark:text-white shrink-0" />}
+          surfaceClassName="backdrop-blur-xl bg-white/70 dark:bg-[#1e1e1e]/60 amoled:dark:bg-black/60 border-b border-white/40 dark:border-white/10"
+        />
+        <nav className="h-16 shrink-0 z-30 backdrop-blur-xl bg-white/70 dark:bg-[#1e1e1e]/60 amoled:dark:bg-black/60 border-b border-white/40 dark:border-white/10 hidden md:grid grid-cols-[1fr_auto_1fr] items-center px-2 gap-1">
           <div className="flex items-center min-w-0">
             <button
               onClick={() => navigate('/')}
@@ -392,7 +383,7 @@ export default function Home() {
                   <div className="flex justify-center py-4 sm:py-6">
                     <div className="h-20 w-64 rounded-2xl bg-gray-300/50 dark:bg-white/10 animate-pulse" />
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                  <div className="grid grid-cols-3 gap-5 max-sm:gap-2">
                     {[0, 1, 2].map(i => <div key={i} className={`h-36 rounded-2xl animate-pulse ${GLASS}`} />)}
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -422,7 +413,7 @@ export default function Home() {
                   </div>
 
                   {/* ── Counts ────────────────────────────────────────────────── */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                  <div className="grid grid-cols-3 gap-5 max-sm:gap-2">
                     <StatCard
                       icon={<FileAudio className="h-5 w-5" style={{ color: accentColor }} />}
                       count={stats.playlistCount}
@@ -530,6 +521,12 @@ export default function Home() {
             </div>
           </div>
         </div>
+        {isPhone && (
+          <MobileTabBar
+            active="home"
+            surfaceClassName="backdrop-blur-xl bg-white/70 dark:bg-[#1e1e1e]/60 amoled:dark:bg-black/60 border-t border-white/40 dark:border-white/10"
+          />
+        )}
       </div>
 
       {/* Same dialog as Dashboard's — verbatim, so the reference stays one list instead of
@@ -578,7 +575,7 @@ export default function Home() {
       )}
 
       <Spotlight onNavigate={handleSpotlightNavigate} />
-      <Toast />
+      <Toast withTabBar />
     </div>
   );
 }

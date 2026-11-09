@@ -15,6 +15,7 @@ import Toast from './Toast';
 import AddChannelPoolSourceDialog from './AddChannelPoolSourceDialog';
 import AddEpgSourceDialog from './AddEpgSourceDialog';
 import BackupDropZone, { describeRestoredBackup, restoreErrorMessage } from './BackupDropZone';
+import { copyToClipboard } from '../utils/copyToClipboard';
 
 // The first-run setup. App.tsx shows it instead of the app until settings.onboardingDone is
 // true, which the server sets when the first playlist is made or a backup with playlists is
@@ -34,27 +35,9 @@ const STEP_LABELS: Partial<Record<Step, string>> = {
   playlist: 'Playlist',
 };
 
-// Same copy-with-fallback as Home's copyLink, SettingsPage's handleCopyKey and LockScreen's,
-// kept in sync by hand. The app is usually opened over plain http://<LAN-IP>, which isn't a
-// secure context, so navigator.clipboard doesn't exist there and the hidden-textarea
-// execCommand path does the work.
+// Copies through the shared helper (which works over plain http:// too) and reports back.
 function copyText(text: string, onCopied: () => void, onFailed: () => void) {
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).then(onCopied).catch(fallback);
-  } else {
-    fallback();
-  }
-  function fallback() {
-    const el = document.createElement('textarea');
-    el.value = text;
-    el.style.cssText = 'position:fixed;opacity:0;top:0;left:0;';
-    document.body.appendChild(el);
-    el.select();
-    // execCommand returns false (rather than throwing) when the copy is refused, so only a
-    // true counts as copied.
-    try { if (document.execCommand('copy')) onCopied(); else onFailed(); } catch (e) { console.error(e); onFailed(); }
-    document.body.removeChild(el);
-  }
+  copyToClipboard(text).then(ok => (ok ? onCopied() : onFailed()));
 }
 
 // ── Building blocks shared by the steps ────────────────────────────────────
@@ -784,7 +767,7 @@ export default function Onboarding({ onFinish }: { onFinish: () => void }) {
   };
 
   return (
-    <div className="md-page-in relative h-screen overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
+    <div className="md-page-in relative h-dvh overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
       <HomeBackground logos={[]} accentColor={accentColor} />
 
       <div ref={scrollRef} className="relative z-10 h-full overflow-y-auto">

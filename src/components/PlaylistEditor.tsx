@@ -1,12 +1,13 @@
 import React, { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { usePlaylists, useChannels, useChannelPoolSources, Channel, EpgChannel, api, triggerRefresh, triggerChannelPoolRefresh } from '../apiClient';
+import { usePlaylists, useChannels, useChannelPoolSources, Channel, SyncFieldToggles, api, triggerRefresh, triggerChannelPoolRefresh } from '../apiClient';
 import { useStore, contrastText, accentAlpha, notifyError, notifyInfo } from '../store';
 
 import {
   Download, Check, Copy,
   GripVertical, CheckSquare, Square, Trash2, Eye, EyeOff, Plus, ArrowUp, ArrowDown, Activity, X,
   Replace, Search, Wand2, ChevronLeft, ChevronRight, Layers, Link2, History, Unlink, FileDown, SlidersHorizontal,
+  FolderInput, ArrowUpDown, ListChecks,
 } from 'lucide-react';
 import BulkEpgAssignDialog from './BulkEpgAssignDialog';
 import { ChannelSyncPopover, BulkSyncSettingsDialog } from './ChannelSyncPopover';
@@ -15,7 +16,12 @@ import SyncLogPanel from './SyncLogPanel';
 import ChannelListPdf from './ChannelListPdf';
 import StreamHeadersDialog from './StreamHeadersDialog';
 import ChannelLogo from './ChannelLogo';
-import { useDebouncedValue } from '../utils/useDebouncedValue';
+import TvgIdAutocomplete from './TvgIdAutocomplete';
+import ChannelEditSheet, { type ChannelChanges } from './ChannelEditSheet';
+import OverflowMenu from './OverflowMenu';
+import { useIsPhone } from '../utils/useIsPhone';
+import { useLongPress } from '../utils/useLongPress';
+import { copyToClipboard } from '../utils/copyToClipboard';
 import { formatTime } from '../utils/formatTime';
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
@@ -29,158 +35,6 @@ import { CSS } from '@dnd-kit/utilities';
 const inlineInputCls = 'border-b-2 bg-transparent text-sm text-gray-900 dark:text-white px-0.5 py-0 focus:outline-none w-full';
 
 const restrictToVerticalAxis = ({ transform }: any) => ({ ...transform, x: 0 });
-
-/* ── TVG-ID Autocomplete ──────────────────────────────────────────────── */
-function TvgIdAutocomplete({ value, onChange, onSave, onCancel }: {
-  value: string;
-  onChange: (v: string) => void;
-  onSave: (value: string) => void;
-  onCancel: () => void;
-}) {
-  const { accentColor } = useStore();
-  const [suggestions, setSuggestions] = useState<EpgChannel[]>([]);
-  const [activeIdx, setActiveIdx] = useState(-1);
-  const [showDropdown, setShowDropdown] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  // Set once the edit has been saved or cancelled, so the blur that follows (the field unmounts
-  // or loses focus) doesn't save a second time with the typed text.
-  const finishedRef = useRef(false);
-  const debouncedValue = useDebouncedValue(value, 200);
-
-  // Clears suggestions immediately when the field is emptied, rather than waiting out
-  // the debounce below.
-  useEffect(() => {
-    if (!value.trim()) { setSuggestions([]); setShowDropdown(false); }
-  }, [value]);
-
-  useEffect(() => {
-    if (!debouncedValue.trim()) return;
-    api.searchTvgIds(debouncedValue).then(data => {
-      setSuggestions(data);
-      // Shown even with no results, so a "No matching EPG channels" line confirms the search ran.
-      setShowDropdown(true);
-      setActiveIdx(-1);
-    }).catch(e => {
-      console.error(e);
-      setSuggestions([]);
-      notifyError(e, 'Failed to search EPG channels.');
-    });
-  }, [debouncedValue]);
-
-  // The dropdown is portalled to <body> with fixed positioning because the TVG-ID cell clips
-  // its overflow, which used to hide the dropdown entirely. Placed below the field when there's
-  // room, otherwise above it, and re-placed on scroll/resize so it stays attached to the row.
-  useLayoutEffect(() => {
-    if (!showDropdown) return;
-    const place = () => {
-      const input = inputRef.current;
-      const menu = dropdownRef.current;
-      if (!input || !menu) return;
-      const margin = 8;
-      const anchor = input.getBoundingClientRect();
-      const width = Math.min(Math.max(anchor.width, 280), window.innerWidth - margin * 2);
-      const height = menu.offsetHeight;
-      let top = anchor.bottom + 4;
-      if (top + height > window.innerHeight - margin) top = Math.max(margin, anchor.top - height - 4);
-      const left = Math.max(margin, Math.min(anchor.left, window.innerWidth - width - margin));
-      menu.style.top = `${top}px`;
-      menu.style.left = `${left}px`;
-      menu.style.width = `${width}px`;
-    };
-    place();
-    window.addEventListener('scroll', place, true);
-    window.addEventListener('resize', place);
-    return () => {
-      window.removeEventListener('scroll', place, true);
-      window.removeEventListener('resize', place);
-    };
-  }, [showDropdown, suggestions]);
-
-  const finish = (save: boolean, saveValue = value) => {
-    if (finishedRef.current) return;
-    finishedRef.current = true;
-    setShowDropdown(false);
-    if (save) onSave(saveValue); else onCancel();
-  };
-
-  const selectSuggestion = (id: string) => {
-    onChange(id);
-    finish(true, id);
-  };
-
-  const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { finish(false); return; }
-    if (e.key === 'Enter') {
-      if (activeIdx >= 0 && suggestions[activeIdx]) {
-        e.preventDefault();
-        selectSuggestion(suggestions[activeIdx].id);
-      } else {
-        finish(true);
-      }
-      return;
-    }
-    if (e.key === 'ArrowDown' && showDropdown) {
-      e.preventDefault();
-      setActiveIdx(i => Math.min(i + 1, suggestions.length - 1));
-    } else if (e.key === 'ArrowUp' && showDropdown) {
-      e.preventDefault();
-      setActiveIdx(i => Math.max(i - 1, 0));
-    }
-  };
-
-  useEffect(() => {
-    if (activeIdx >= 0) {
-      dropdownRef.current?.querySelector(`[data-idx="${activeIdx}"]`)?.scrollIntoView({ block: 'nearest' });
-    }
-  }, [activeIdx]);
-
-  return (
-    <div className="w-full relative" onClick={e => e.stopPropagation()}>
-      <input
-        ref={inputRef}
-        autoFocus
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        onBlur={() => finish(true)}
-        onKeyDown={handleKey}
-        className={`${inlineInputCls} font-mono text-[11px]`}
-        style={{ borderColor: accentColor }}
-        placeholder="Type to search EPG pool…"
-      />
-      {showDropdown && createPortal(
-        <div
-          ref={dropdownRef}
-          // Keeps focus in the field when clicking the dropdown (e.g. its scrollbar), since
-          // blurring the field saves and closes the edit.
-          onMouseDown={e => e.preventDefault()}
-          className="md-menu fixed z-50 bg-white dark:bg-[#2a2a2a] amoled:dark:bg-[#1a1a1a] rounded elev-8 max-h-48 overflow-y-auto border border-gray-200 dark:border-white/10"
-        >
-          {suggestions.length === 0 && (
-            <p className="px-3 py-2 text-[11px] text-gray-400 dark:text-gray-500">No matching EPG channels</p>
-          )}
-          {suggestions.map((s, i) => (
-            <button
-              key={`${s.sourceId}-${s.id}`}
-              data-idx={i}
-              onMouseDown={e => { e.preventDefault(); selectSuggestion(s.id); }}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-left text-[11px] transition-colors ${
-                i === activeIdx ? 'dark:bg-white/10' : 'hover:bg-gray-50 dark:hover:bg-white/5'
-              }`}
-              style={i === activeIdx ? { backgroundColor: `${accentColor}15` } : undefined}
-            >
-              {s.icon && <img src={s.icon} className="w-4 h-4 rounded shrink-0" alt="" onError={e => (e.currentTarget.style.display = 'none')} />}
-              <span className="truncate text-gray-700 dark:text-gray-200">{s.displayName}</span>
-              <span className="ml-auto shrink-0 font-mono text-gray-400 dark:text-gray-500 text-[10px]">{s.id}</span>
-              <span className="shrink-0 text-gray-300 dark:text-gray-600 text-[9px]">{s.sourceName}</span>
-            </button>
-          ))}
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}
 
 /* ── Sortable channel row ─────────────────────────────────────────────────── */
 type HealthStatus = 'checking' | 'ok' | 'error' | 'timeout' | 'skipped';
@@ -293,7 +147,7 @@ function SortableChannelItem({
       {/* Drag handle */}
       <div
         {...attributes} {...listeners}
-        className="w-8 shrink-0 flex items-center justify-center cursor-grab active:cursor-grabbing text-gray-300 dark:text-gray-700"
+        className="w-8 shrink-0 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing text-gray-300 dark:text-gray-700"
       >
         <GripVertical className="h-4 w-4" />
       </div>
@@ -498,8 +352,137 @@ function SortableChannelItem({
   );
 }
 
+/* ── Phone channel row ────────────────────────────────────────────────────── */
+/**
+ * A channel row on phones (below 768px), used instead of SortableChannelItem. The desktop
+ * row's click-to-edit fields don't fit, so this one just shows the channel (logo, name,
+ * link, small status icons) and the whole row is one big target:
+ *
+ * - tap: opens the channel editor sheet (ChannelEditSheet)
+ * - long-press: selects it; while anything is selected, a tap selects/deselects instead
+ * - Reorder mode (toolbar ⋮): a grip appears on the right to drag with
+ *
+ * It's still a dnd-kit sortable item, so reordering works the same as on desktop.
+ */
+function PhoneChannelRow({
+  channel, isSelected, selectionMode, reorderMode, isHighlighted, rowIndex, healthSt, isSaving,
+  onOpen, onToggleSelect,
+}: {
+  key?: string | number;
+  channel: Channel;
+  isSelected: boolean;
+  selectionMode: boolean;
+  reorderMode: boolean;
+  isHighlighted: boolean;
+  rowIndex: number;
+  healthSt?: HealthEntry;
+  isSaving?: boolean;
+  onOpen: (id: string) => void;
+  onToggleSelect: (id: string) => void;
+}) {
+  const { logoBgColor, hideUrls, accentColor } = useStore();
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: channel.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  const longPress = useLongPress(() => { if (!reorderMode) onToggleSelect(channel.id); });
+  const hasPendingSync = !!channel.link && Object.keys(channel.link.pending).length > 0;
+  const hasHeaders = !!(channel.httpReferrer || channel.httpUserAgent);
+
+  const handleTap = () => {
+    if (reorderMode) return;
+    if (selectionMode) onToggleSelect(channel.id);
+    else onOpen(channel.id);
+  };
+
+  const isEven = rowIndex % 2 === 0;
+  const rowBg = channel.isHidden
+    ? 'bg-red-50 dark:bg-red-950/25 amoled:dark:bg-red-950/35'
+    : isHighlighted
+      ? 'bg-amber-50 dark:bg-amber-900/20 amoled:dark:bg-amber-900/25'
+      : isSelected
+        ? ''  // accent tint applied via inline style below
+        : isEven
+          ? 'bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black'
+          : 'bg-gray-50/70 dark:bg-[#222222] amoled:dark:bg-[#0d0d0d]';
+
+  return (
+    <div
+      id={`ch-${channel.id}`}
+      ref={setNodeRef}
+      style={{ ...style, ...(isSelected ? { backgroundColor: `${accentColor}18` } : {}) }}
+      // select-none and no callout: a long-press selects the row instead of selecting text or
+      // opening the phone's own link/image menu. preventDefault stops Android's long-press
+      // from also opening the desktop right-click menu.
+      className={`relative flex items-center h-16 pl-3 border-b border-gray-100 dark:border-white/6 select-none [-webkit-touch-callout:none] ${reorderMode ? '' : 'cursor-pointer active:bg-black/5 dark:active:bg-white/5'} ${rowBg}`}
+      onContextMenu={e => e.preventDefault()}
+      onClick={handleTap}
+      {...(reorderMode ? {} : longPress)}
+    >
+      {selectionMode && (
+        <span className="shrink-0 mr-3" style={isSelected ? { color: accentColor } : undefined}>
+          {isSelected
+            ? <CheckSquare className="h-5 w-5" />
+            : <Square className="h-5 w-5 text-gray-400 dark:text-gray-600" />}
+        </span>
+      )}
+
+      <ChannelLogo
+        logo={channel.logo}
+        name={channel.name}
+        logoBgColor={logoBgColor}
+        className="shrink-0 w-11 h-8 rounded border border-gray-200 dark:border-white/10"
+      />
+
+      <div className="flex-1 min-w-0 ml-3 pr-2 flex flex-col justify-center gap-0.5">
+        <p
+          className={`text-sm font-medium truncate ${isSelected ? '' : channel.isHidden ? 'text-gray-500 dark:text-gray-400' : 'text-gray-900 dark:text-white'}`}
+          style={isSelected ? { color: accentColor } : undefined}
+        >
+          {channel.name || 'Unnamed'}
+        </p>
+        {!hideUrls && (
+          <p className="text-[11px] font-mono text-gray-400 dark:text-gray-500 truncate">{channel.url || '— no url —'}</p>
+        )}
+      </div>
+
+      {/* Small status icons: what the desktop row shows as chips and buttons. */}
+      <div className="shrink-0 flex items-center gap-2 pr-3 text-gray-400 dark:text-gray-500">
+        {healthSt && <HealthDot status={healthSt.status} />}
+        {hasHeaders && <SlidersHorizontal className="h-3.5 w-3.5" aria-label="Has stream headers" />}
+        {channel.isHidden && <EyeOff className="h-4 w-4 text-amber-500" aria-label="Hidden" />}
+        {channel.link?.lost && (
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 text-gray-600 dark:bg-white/10 dark:text-gray-300">Lost</span>
+        )}
+        {channel.link && <Link2 className="h-4 w-4" style={{ color: accentColor }} aria-label="Kept in sync" />}
+        {hasPendingSync && (
+          <span className="block w-2 h-2 rounded-full" style={{ backgroundColor: accentColor }} aria-label="Changes from the source are waiting" />
+        )}
+      </div>
+
+      {reorderMode && (
+        // touch-none lets a finger drag the grip instead of scrolling the list.
+        <div
+          {...attributes} {...listeners}
+          onClick={e => e.stopPropagation()}
+          className="shrink-0 self-stretch w-12 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing text-gray-400 dark:text-gray-500"
+          aria-label="Drag to reorder"
+        >
+          <GripVertical className="h-5 w-5" />
+        </div>
+      )}
+
+      {isSaving && (
+        <div className="md-progress" style={{ color: accentColor, backgroundColor: accentAlpha(accentColor, '20') }} />
+      )}
+    </div>
+  );
+}
+
 /* ── Main editor ──────────────────────────────────────────────────────────── */
-export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
+/**
+ * `phoneMenuSlot`: the spot in Dashboard's phone top bar where this editor puts its ⋮ menu.
+ * On phones there's no toolbar of its own; every playlist action lives in that one menu.
+ */
+export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlistId: string; phoneMenuSlot?: HTMLElement | null }) {
   const { playlists } = usePlaylists();
   const playlist = playlists.find(p => p.id === playlistId);
   const { channels, loading, error: channelsError, refetch: refetchChannels } = useChannels(playlistId);
@@ -555,6 +538,14 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
   const [showPdf, setShowPdf] = useState(false);
   const [showBulkSyncSettings, setShowBulkSyncSettings] = useState(false);
 
+  // Phones: the channel editor sheet (tap a row) and Reorder mode (toolbar ⋮). See PhoneChannelRow.
+  const isPhone = useIsPhone();
+  const [editSheetChannelId, setEditSheetChannelId] = useState<string | null>(null);
+  // A channel being added on a phone. It only exists in this form until Add is pressed, so
+  // Cancel leaves nothing behind. `insert` is set when it came from "Insert above/below".
+  const [newChannelDraft, setNewChannelDraft] = useState<{ insert?: { anchorId: string; position: 'above' | 'below' } } | null>(null);
+  const [reorderMode, setReorderMode] = useState(false);
+
   // Resolved tvg-id labels: maps tvgId -> { displayName, sourceName }
   const [tvgIdLabels, setTvgIdLabels] = useState<Record<string, { displayName: string; sourceName: string }>>({});
 
@@ -574,7 +565,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     api.resolveTvgIds(unique).then(setTvgIdLabels).catch(e => { console.error(e); notifyError(e, 'Failed to resolve EPG channel names.'); });
   }, [channels]);
 
-  const { activeCategory, setActiveCategory, accentColor, setUndoEntry, scrollTarget, setScrollTarget, syncLogOpenFor, setSyncLogOpenFor } = useStore();
+  const { activeCategory, setActiveCategory, accentColor, setUndoEntry, scrollTarget, setScrollTarget, syncLogOpenFor, setSyncLogOpenFor, hideUrls, setHideUrls } = useStore();
 
   // Sync panels belong to one playlist, so switching playlists closes them. This runs before the
   // effect below, so a sync log requested for the playlist being opened still opens.
@@ -582,7 +573,22 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     setShowSyncLog(false);
     setSyncPopover(null);
     setLinkDialogChannelId(null);
+    setEditSheetChannelId(null);
+    setNewChannelDraft(null);
+    setReorderMode(false);
   }, [playlistId]);
+
+  // The phone channel editor follows its channel in the live list, and closes once the
+  // channel is gone (deleted).
+  const editSheetChannel = editSheetChannelId ? channels.find(c => c.id === editSheetChannelId) : undefined;
+  useEffect(() => {
+    if (editSheetChannelId && !editSheetChannel) setEditSheetChannelId(null);
+  }, [editSheetChannelId, editSheetChannel]);
+
+  // Growing past phone size (a tablet rotated, a window widened) ends the phone-only modes.
+  useEffect(() => {
+    if (!isPhone) { setEditSheetChannelId(null); setNewChannelDraft(null); setReorderMode(false); }
+  }, [isPhone]);
 
   // Home's "Sync updates waiting" card asks for this playlist's sync log.
   useEffect(() => {
@@ -658,22 +664,36 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // Whether most of the selection is hidden. Counted across the whole playlist, because the
+  // selection survives switching category; the phone selection bar's eye icon and what it
+  // does both come from this, so they can't disagree.
+  const selectedChannels = channels.filter(c => selectedIds.has(c.id));
+  const selectionMostlyHidden = selectedChannels.length > 0
+    && selectedChannels.filter(c => c.isHidden).length >= selectedChannels.length / 2;
+
+  // Hides every selected channel, or shows them again if most are already hidden. Used by the
+  // Space shortcut and by the phone selection bar's eye button.
+  const toggleSelectedHidden = async () => {
+    try {
+      await api.bulkUpdateChannels(playlistId, Array.from(selectedIds), { isHidden: !selectionMostlyHidden });
+      triggerRefresh();
+    } catch (e) { console.error(e); notifyError(e, 'Failed to update channels.'); }
+  };
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const typing = document.activeElement instanceof HTMLInputElement
         || document.activeElement instanceof HTMLTextAreaElement;
-      // While a sync dialog or popover is open, Space/Delete/Escape belong to it (e.g. Space toggles a
-      // focused checkbox there), not to the selected channels behind it.
-      if (typing || contextMenu || syncPopover || linkDialogChannelId || showBulkSyncSettings || headersChannelId) return;
+      // While a sync dialog, popover or the phone channel editor is open, Space/Delete/Escape
+      // belong to it (e.g. Space toggles a focused checkbox there), not to the selected channels behind it.
+      if (typing || contextMenu || syncPopover || linkDialogChannelId || showBulkSyncSettings || headersChannelId || editSheetChannelId || newChannelDraft) return;
       if (e.key === 'Escape' && selectedIds.size > 0) {
         setSelectedIds(new Set()); setLastSelectedId(null);
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
         e.preventDefault(); setShowBulkDeleteConfirm(true);
       } else if (e.key === ' ' && selectedIds.size > 0) {
         e.preventDefault();
-        const selected = displayedChannels.filter(c => selectedIds.has(c.id));
-        const shouldHide = selected.filter(c => c.isHidden).length < selected.length / 2;
-        api.bulkUpdateChannels(playlistId, Array.from(selectedIds), { isHidden: shouldHide }).then(triggerRefresh);
+        toggleSelectedHidden();
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
         e.preventDefault();
         setSelectedIds(new Set(displayedChannels.map(c => c.id)));
@@ -681,7 +701,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [selectedIds, displayedChannels, playlistId, contextMenu, syncPopover, linkDialogChannelId, showBulkSyncSettings, headersChannelId]);
+  }, [selectedIds, channels, displayedChannels, playlistId, contextMenu, syncPopover, linkDialogChannelId, showBulkSyncSettings, headersChannelId, editSheetChannelId, newChannelDraft]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -750,24 +770,14 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
 
   /* ── Handlers ──────────────────────────────────────────────────────────── */
 
-  const copyText = (text: string, setFlag: (v: boolean) => void) => {
-    const write = () => { setFlag(true); setTimeout(() => setFlag(false), 2000); };
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(write).catch(fallback);
-    } else { fallback(); }
-    function fallback() {
-      const el = document.createElement('textarea');
-      el.value = text;
-      el.style.cssText = 'position:fixed;opacity:0;top:0;left:0;';
-      document.body.appendChild(el);
-      el.select();
-      try { document.execCommand('copy'); write(); } catch (e) { console.error(e); notifyError(e, 'Failed to copy to clipboard.'); }
-      document.body.removeChild(el);
-    }
+  const copyText = async (text: string, setFlag: (v: boolean) => void) => {
+    if (!(await copyToClipboard(text))) { notifyError(null, 'Failed to copy to clipboard.'); return; }
+    setFlag(true);
+    setTimeout(() => setFlag(false), 2000);
   };
 
-  const copyToClipboard = () => copyText(exportUrl, setCopied);
-  const copyEpgToClipboard = () => copyText(epgUrl, setCopiedEpg);
+  const copyPlaylistUrl = () => copyText(exportUrl, setCopied);
+  const copyEpgUrl = () => copyText(epgUrl, setCopiedEpg);
 
   const toggleSelection = (id: string, shiftKey: boolean) => {
     const next = new Set(selectedIds);
@@ -788,17 +798,36 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
       : new Set(displayedChannels.map(c => c.id)));
   };
 
-  const handleChannelUpdate = async (id: string, field: string, value: string) => {
+  // Saves changed fields of one channel. Shared by the desktop row's click-to-edit fields,
+  // the Stream headers dialog and the phone channel editor. Throws if the save failed, so
+  // each caller can show its own message and keep its form open.
+  const handleChannelSave = async (id: string, changes: Record<string, unknown>) => {
     markSaving(id);
     try {
-      await api.updateChannel(playlistId, id, { [field]: value.trim() || null });
+      await api.updateChannel(playlistId, id, changes);
       // Wait for this component's own channels to actually refetch — not just fire the
       // event and move on — so the saving indicator stays up until the row has the new
       // value to show, rather than clearing early onto stale data.
       await refetchChannels();
       triggerRefresh();
-    } catch (e) { console.error(e); notifyError(e, 'Failed to save channel.'); }
-    finally { clearSaving(id); }
+    } finally { clearSaving(id); }
+  };
+
+  const handleChannelUpdate = async (id: string, field: string, value: string) => {
+    try { await handleChannelSave(id, { [field]: value.trim() || null }); }
+    catch (e) { console.error(e); notifyError(e, 'Failed to save channel.'); }
+  };
+
+  // Save in the phone channel editor: the channel's own fields, then its sync settings if
+  // those checkboxes changed too.
+  const handleSheetSave = async (id: string, changes: ChannelChanges, syncFields?: SyncFieldToggles) => {
+    try {
+      if (Object.keys(changes).length > 0) await handleChannelSave(id, changes);
+      if (syncFields) {
+        await api.updateChannelLink(playlistId, id, syncFields);
+        triggerRefresh();
+      }
+    } catch (e) { console.error(e); notifyError(e, 'Failed to save channel.'); throw e; }
   };
 
   const handleToggleHide = async (id: string, current: boolean) => {
@@ -851,6 +880,8 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
   // From the sync log: show the channel's category and let the existing scroll-to-row flow
   // (the same one Spotlight uses) find its page, scroll to it and highlight it.
   const jumpToChannel = (channel: Channel) => {
+    // On a phone the log covers the list, so get it out of the way.
+    if (isPhone) setShowSyncLog(false);
     setActiveCategory(channel.category);
     setScrollTarget({ kind: 'playlist', id: channel.id });
   };
@@ -956,6 +987,46 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     } catch (e) { console.error(e); notifyError(e, 'Failed to add channel.'); }
   };
 
+  // Phones: adds the channel typed into the new-channel sheet. Nothing is created before this,
+  // so cancelling the sheet leaves the playlist untouched. Positioned like "Insert above/below"
+  // on a computer, as long as it stays in the category being viewed.
+  const handleCreateChannel = async (values: ChannelChanges, insert?: { anchorId: string; position: 'above' | 'below' }) => {
+    const category = values.category || activeCategory || 'General';
+    const targetIndex = insert ? displayedChannels.findIndex(c => c.id === insert.anchorId) : -1;
+    try {
+      const resp = await api.bulkAddChannels(playlistId, [{
+        name: values.name || 'New Channel',
+        url: values.url || '',
+        logo: values.logo || '',
+        tvgId: values.tvgId || '',
+        // Stream headers are only stored when set (see "Stream headers" in CLAUDE.md).
+        ...(values.httpReferrer ? { httpReferrer: values.httpReferrer } : {}),
+        ...(values.httpUserAgent ? { httpUserAgent: values.httpUserAgent } : {}),
+        category,
+        order: channels.length,
+      }]);
+      const data = await resp.json();
+      const newId: string | undefined = data.ids?.[0];
+      if (newId) {
+        if (insert && targetIndex !== -1 && category === activeCategory) {
+          pendingInsert.current = { newId, insertAfterIndex: insert.position === 'above' ? targetIndex - 1 : targetIndex };
+        } else {
+          pendingScrollId.current = newId;
+        }
+      }
+      triggerRefresh();
+    } catch (e) {
+      console.error(e);
+      notifyError(e, 'Failed to add channel.');
+      throw e;
+    }
+  };
+
+  const openFindReplace = () => {
+    setShowFindReplace(true); setFrSearch(''); setFrReplace(''); setFrResult(null);
+    setFrScope(selectedIds.size > 0 ? 'selected' : 'category');
+  };
+
   const runHealthCheck = async (toCheck: Channel[]) => {
     if (healthProgress) return;
     setShowHealthMenu(false);
@@ -1020,8 +1091,9 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
     <div className="flex flex-col h-full bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black relative">
 
       {/* ── Toolbar ──────────────────────────────────────────────────────── */}
-      <header className="shrink-0 z-20 elev-4" style={{ backgroundColor: accentColor }}>
-        <div className="flex items-center h-14 px-6 gap-3">
+      {/* Computers only: on phones these actions are in the top bar's ⋮ menu (see phoneMenu below). */}
+      <header className="shrink-0 z-20 elev-4 hidden md:block" style={{ backgroundColor: accentColor }}>
+        <div className="hidden md:flex items-center h-14 px-6 gap-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <h2 className="text-base font-medium truncate" style={{ color: onAccent }}>
               {playlist.name}
@@ -1063,7 +1135,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
             </button>
 
             <button
-              onClick={() => { setShowFindReplace(true); setFrSearch(''); setFrReplace(''); setFrResult(null); if (selectedIds.size > 0) setFrScope('selected'); else setFrScope('category'); }}
+              onClick={openFindReplace}
               disabled={channels.length === 0}
               className={`${toolbarBtn} disabled:opacity-40`}
               style={{ color: onAccent }}
@@ -1171,7 +1243,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
       {/* ── Bulk-selection bar ────────────────────────────────────────────── */}
       {selectedIds.size > 0 && (
         <div
-          className="shrink-0 h-12 border-b px-6 flex items-center justify-between gap-4 transition-colors"
+          className="shrink-0 h-12 border-b px-6 hidden md:flex items-center justify-between gap-4 transition-colors"
           style={{ backgroundColor: accentAlpha(accentColor, '15'), borderColor: accentAlpha(accentColor, '30') }}
         >
           <span className="text-sm font-medium" style={{ color: accentColor }}>
@@ -1224,8 +1296,85 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
         </div>
       )}
 
+      {/* ── Phones: every playlist action, in the top bar's ⋮ ─────────────── */}
+      {isPhone && phoneMenuSlot && createPortal(
+        <OverflowMenu
+          label="Playlist actions"
+          dotColor={unreadSyncLogCount > 0 ? accentColor : undefined}
+          items={[
+            channels.length > 0 && { label: 'Playlist link & download', icon: <Download className="h-4 w-4" />, onClick: () => setShowExportDialog(true) },
+            {
+              label: 'Sync log', icon: <History className="h-4 w-4" />,
+              hint: unreadSyncLogCount > 0 ? `${unreadSyncLogCount > 99 ? '99+' : unreadSyncLogCount} new` : undefined,
+              onClick: () => setShowSyncLog(true),
+            },
+            displayedChannels.length > 0 && {
+              label: 'Select channels', icon: <ListChecks className="h-4 w-4" />,
+              onClick: () => { setReorderMode(false); setSelectedIds(new Set(displayedChannels.map(c => c.id))); },
+            },
+            displayedChannels.length > 1 && {
+              label: 'Reorder channels', icon: <ArrowUpDown className="h-4 w-4" />,
+              onClick: () => { setSelectedIds(new Set()); setReorderMode(true); },
+            },
+            channels.length > 0 && { label: 'Find & Replace', icon: <Replace className="h-4 w-4" />, onClick: openFindReplace },
+            channels.length > 0 && { label: 'Assign EPG automatically', icon: <Wand2 className="h-4 w-4" />, onClick: () => setShowBulkEpg(true) },
+            !healthProgress && displayedChannels.length > 0 && {
+              label: 'Check streams in this category', icon: <Activity className="h-4 w-4" />,
+              hint: String(displayedChannels.length), onClick: () => runHealthCheck(displayedChannels),
+            },
+            !healthProgress && channels.length > 0 && {
+              label: 'Check the whole playlist', icon: <Activity className="h-4 w-4" />,
+              hint: String(channels.length), onClick: () => runHealthCheck(channels),
+            },
+            !healthProgress && healthStatus.size > 0 && { label: 'Clear check results', icon: <X className="h-4 w-4" />, onClick: () => setHealthStatus(new Map()) },
+            channels.some(c => !c.isHidden) && { label: 'Channel list PDF', icon: <FileDown className="h-4 w-4" />, onClick: () => setShowPdf(true) },
+            {
+              label: hideUrls ? 'Show stream links' : 'Hide stream links',
+              icon: hideUrls ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />,
+              onClick: () => setHideUrls(!hideUrls),
+            },
+          ]}
+        />,
+        phoneMenuSlot,
+      )}
+
+      {/* ── Phones: stream check progress (on computers it's in the toolbar) ── */}
+      {healthProgress && (
+        <div
+          className="md:hidden shrink-0 flex items-center gap-3 h-12 pl-4 pr-2 border-b"
+          style={{ backgroundColor: accentAlpha(accentColor, '15'), borderColor: accentAlpha(accentColor, '30') }}
+        >
+          <Activity className="h-4 w-4 shrink-0 animate-pulse" style={{ color: accentColor }} />
+          <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+            Checking streams… {healthProgress.done}/{healthProgress.total}
+          </span>
+          <button onClick={cancelHealthCheck} className="md-btn h-10 px-4 rounded-full text-sm font-medium text-gray-600 dark:text-gray-300">
+            Stop
+          </button>
+        </div>
+      )}
+
+      {/* ── Phone Reorder mode ───────────────────────────────────────────── */}
+      {reorderMode && (
+        <div
+          className="md:hidden shrink-0 flex items-center gap-3 h-14 pl-4 pr-2 border-b"
+          style={{ backgroundColor: accentAlpha(accentColor, '15'), borderColor: accentAlpha(accentColor, '30') }}
+        >
+          <ArrowUpDown className="h-4 w-4 shrink-0" style={{ color: accentColor }} />
+          <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-200">Drag the handles to reorder</span>
+          <button
+            onClick={() => setReorderMode(false)}
+            className="md-btn h-10 px-5 rounded-full text-sm font-medium text-white"
+            style={{ backgroundColor: accentColor }}
+          >
+            Done
+          </button>
+        </div>
+      )}
+
       {/* ── Channel list ─────────────────────────────────────────────────── */}
-      <div ref={listScrollRef} className="flex-1 overflow-y-auto">
+      {/* max-md:pb-24 keeps the last row clear of the phone's + button. */}
+      <div ref={listScrollRef} className="flex-1 overflow-y-auto max-md:pb-24">
         {loading ? (
           <div className="flex items-center justify-center py-20 text-sm text-gray-400 dark:text-gray-500 animate-pulse">
             Loading channels…
@@ -1249,7 +1398,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
             <p className="text-base font-medium text-gray-700 dark:text-gray-300">No channels yet</p>
             <p className="mt-1 text-sm text-gray-400 dark:text-gray-500 max-w-xs">Add channels manually or import them from the Sources tab.</p>
             <button
-              onClick={handleAddChannel}
+              onClick={isPhone ? () => setNewChannelDraft({}) : handleAddChannel}
               className="mt-5 md-btn flex items-center gap-1.5 h-9 px-4 rounded text-sm font-medium text-white elev-1"
               style={{ backgroundColor: accentColor }}
             >
@@ -1261,7 +1410,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
           <div className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black">
 
             {/* Column header */}
-            <div className="sticky top-0 z-10 flex items-center h-11 bg-gray-50 dark:bg-[#242424] amoled:dark:bg-[#111] border-b border-gray-200 dark:border-white/8 select-none">
+            <div className="sticky top-0 z-10 hidden md:flex items-center h-11 bg-gray-50 dark:bg-[#242424] amoled:dark:bg-[#111] border-b border-gray-200 dark:border-white/8 select-none">
               {/* drag + checkbox placeholders */}
               <div className="w-8 shrink-0" />
               <div className="w-8 shrink-0 flex items-center justify-center">
@@ -1297,7 +1446,21 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
             {/* Rows */}
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis]}>
               <SortableContext items={paginatedChannels.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                {paginatedChannels.map((channel, i) => (
+                {paginatedChannels.map((channel, i) => isPhone ? (
+                  <PhoneChannelRow
+                    key={channel.id}
+                    channel={channel}
+                    isSelected={selectedIds.has(channel.id)}
+                    selectionMode={selectedIds.size > 0}
+                    reorderMode={reorderMode}
+                    isHighlighted={channel.id === highlightedId}
+                    rowIndex={i}
+                    healthSt={healthStatus.get(channel.id)}
+                    isSaving={savingIds.has(channel.id)}
+                    onOpen={setEditSheetChannelId}
+                    onToggleSelect={id => toggleSelection(id, false)}
+                  />
+                ) : (
                   <SortableChannelItem
                     key={channel.id}
                     channel={channel}
@@ -1327,7 +1490,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
 
       {/* Pagination controls */}
       {totalPages > 1 && (
-        <div className="shrink-0 flex items-center justify-between px-6 py-1.5 border-t border-gray-200 dark:border-white/8 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black">
+        <div className="shrink-0 flex items-center justify-between px-6 max-md:px-3 py-1.5 max-md:py-0.5 border-t border-gray-200 dark:border-white/8 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black">
           <span className="text-xs text-gray-500 dark:text-gray-400">
             Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, displayedChannels.length)} of {displayedChannels.length} channels
           </span>
@@ -1335,7 +1498,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
             <button
               onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
-              className="md-btn p-1 rounded-full text-gray-600 dark:text-gray-400 disabled:opacity-30 hover:bg-black/5 dark:hover:bg-white/5 disabled:hover:bg-transparent transition-colors"
+              className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-600 dark:text-gray-400 disabled:opacity-30 hover:bg-black/5 dark:hover:bg-white/5 disabled:hover:bg-transparent transition-colors"
               title="Previous Page"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -1368,7 +1531,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
             <button
               onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
-              className="md-btn p-1 rounded-full text-gray-600 dark:text-gray-400 disabled:opacity-30 hover:bg-black/5 dark:hover:bg-white/5 disabled:hover:bg-transparent transition-colors"
+              className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-600 dark:text-gray-400 disabled:opacity-30 hover:bg-black/5 dark:hover:bg-white/5 disabled:hover:bg-transparent transition-colors"
               title="Next Page"
             >
               <ChevronRight className="w-4 h-4" />
@@ -1377,6 +1540,21 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
         </div>
       )}
 
+
+      {/* ── Phones: the "add a channel" button (Android's floating action button). It opens an
+          empty channel editor; nothing is created until Add is pressed there. Hidden while
+          selecting or reordering, and lifted above the page buttons when there are pages. */}
+      {isPhone && channels.length > 0 && selectedIds.size === 0 && !reorderMode && (
+        <button
+          onClick={() => setNewChannelDraft({})}
+          className={`md-btn md:hidden absolute right-4 ${totalPages > 1 ? 'bottom-16' : 'bottom-4'} z-20 w-14 h-14 flex items-center justify-center rounded-2xl elev-8`}
+          style={{ backgroundColor: accentColor, color: onAccent }}
+          aria-label="Add channel"
+          title="Add channel"
+        >
+          <Plus className="h-6 w-6" />
+        </button>
+      )}
 
       {/* ── Context menu ─────────────────────────────────────────────────── */}
       {contextMenu && (
@@ -1457,11 +1635,12 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
       {/* ── Dialog: Export / Download ────────────────────────────────────── */}
       {showExportDialog && (
         <div
-          className="md-scrim fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          className="md-scrim fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/50 px-4 py-4"
           onClick={() => setShowExportDialog(false)}
         >
+          {/* Scrolls like the shared Dialog on a short screen; my-auto keeps it centered when it fits. */}
           <div
-            className="md-dialog w-full max-w-md bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24 overflow-hidden"
+            className="md-dialog my-auto w-full max-w-md bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24 overflow-hidden"
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
@@ -1484,7 +1663,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
                     {exportUrl}
                   </span>
                   <button
-                    onClick={copyToClipboard}
+                    onClick={copyPlaylistUrl}
                     className="md-btn shrink-0 p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white transition-colors"
                     title="Copy playlist link"
                   >
@@ -1509,7 +1688,7 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
                     {epgUrl}
                   </span>
                   <button
-                    onClick={copyEpgToClipboard}
+                    onClick={copyEpgUrl}
                     className="md-btn shrink-0 p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white transition-colors"
                     title="Copy EPG link"
                   >
@@ -1575,21 +1754,111 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
         />
       )}
 
+      {/* Phones: while channels are selected (long-press a row), this bar covers the tab bar
+          with what to do with them; the rest is under ⋮. The desktop bar above doesn't fit. */}
+      {isPhone && selectedIds.size > 0 && (() => {
+        const selected = selectedChannels;
+        const mostlyHidden = selectionMostlyHidden;
+        const iconBtn = 'md-btn relative w-11 h-11 shrink-0 flex items-center justify-center rounded-full';
+        return (
+          <div className="md:hidden fixed inset-x-0 bottom-0 z-40 pb-safe bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] border-t border-gray-200 dark:border-white/10 elev-8">
+            <div className="h-16 flex items-center gap-0.5 px-1">
+              <button onClick={() => { setSelectedIds(new Set()); setLastSelectedId(null); }} className={`${iconBtn} text-gray-600 dark:text-gray-300`} aria-label="Clear selection">
+                <X className="h-5 w-5" />
+              </button>
+              <span className="flex-1 min-w-0 truncate px-1 text-sm font-medium" style={{ color: accentColor }}>
+                {selectedIds.size} selected
+              </span>
+              {/* An invisible native picker laid over the icon, so the phone shows its own list. */}
+              <label className={`${iconBtn} text-gray-600 dark:text-gray-300`} title="Move to category">
+                <FolderInput className="h-5 w-5" />
+                <select
+                  value={bulkCategory}
+                  onChange={e => handleBulkMove(e.target.value)}
+                  className="absolute inset-0 w-full h-full opacity-0"
+                  aria-label="Move to category"
+                >
+                  <option value="">Move to…</option>
+                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  <option value="NEW_CATEGORY">+ New category…</option>
+                </select>
+              </label>
+              <button
+                onClick={toggleSelectedHidden}
+                className={`${iconBtn} text-gray-600 dark:text-gray-300`}
+                aria-label={mostlyHidden ? 'Show in playlist' : 'Hide from playlist'}
+                title={mostlyHidden ? 'Show in playlist' : 'Hide from playlist'}
+              >
+                {mostlyHidden ? <Eye className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
+              </button>
+              <button onClick={() => setShowBulkDeleteConfirm(true)} className={`${iconBtn} text-red-600 dark:text-red-400`} aria-label="Delete" title="Delete">
+                <Trash2 className="h-5 w-5" />
+              </button>
+              <OverflowMenu
+                openUp
+                items={[
+                  {
+                    label: selectedIds.size === displayedChannels.length ? 'Deselect all' : 'Select all in this category',
+                    icon: <ListChecks className="h-4 w-4" />, onClick: selectAll,
+                  },
+                  !healthProgress && { label: 'Check streams', icon: <Activity className="h-4 w-4" />, hint: String(selected.length), onClick: () => runHealthCheck(selected) },
+                  selectedLinkedChannels.length > 0 && { label: 'Sync settings…', icon: <Link2 className="h-4 w-4" />, onClick: () => setShowBulkSyncSettings(true) },
+                  selectedLinkedChannels.length > 0 && { label: 'Unlink', icon: <Unlink className="h-4 w-4" />, onClick: handleBulkUnlink },
+                  { label: 'Find & Replace in selection', icon: <Replace className="h-4 w-4" />, onClick: openFindReplace },
+                ]}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Phones: the channel editor. Before the dialogs below so that, at the same z-50, the
+          Stream headers and Link to Source dialogs it opens appear on top of it. Keyed by
+          channel so a newly inserted channel starts with a fresh form. */}
+      {newChannelDraft && (
+        <ChannelEditSheet
+          isNew
+          playlistId={playlistId}
+          channel={{
+            id: '', playlistId, name: '', url: '', logo: null, tvgId: null,
+            category: activeCategory || categories[0] || 'General',
+            order: 0, createdAt: 0, updatedAt: 0,
+          }}
+          categories={categories}
+          onSave={values => handleCreateChannel(values, newChannelDraft.insert)}
+          onClose={() => setNewChannelDraft(null)}
+        />
+      )}
+
+      {editSheetChannel && !newChannelDraft && (
+        <React.Fragment key={editSheetChannel.id}>
+          <ChannelEditSheet
+            playlistId={playlistId}
+            channel={editSheetChannel}
+            categories={categories}
+            tvgIdLabel={editSheetChannel.tvgId ? tvgIdLabels[editSheetChannel.tvgId] : undefined}
+            sourceName={poolSources.find(s => s.id === editSheetChannel.link?.sourceId)?.name || 'its source'}
+            onSave={(changes, syncFields) => handleSheetSave(editSheetChannel.id, changes, syncFields)}
+            onLinkToSource={() => setLinkDialogChannelId(editSheetChannel.id)}
+            onInsert={position => { setEditSheetChannelId(null); setNewChannelDraft({ insert: { anchorId: editSheetChannel.id, position } }); }}
+            onDelete={() => { setEditSheetChannelId(null); handleSingleDelete(editSheetChannel.id); }}
+            onClose={() => setEditSheetChannelId(null)}
+          />
+        </React.Fragment>
+      )}
+
       {headersChannel && (
         <StreamHeadersDialog
           channel={headersChannel}
           onClose={() => setHeadersChannelId(null)}
           onSave={async headers => {
-            markSaving(headersChannel.id);
             try {
-              await api.updateChannel(playlistId, headersChannel.id, headers);
-              await refetchChannels();
-              triggerRefresh();
+              await handleChannelSave(headersChannel.id, headers);
             } catch (e) {
               console.error(e);
               notifyError(e, 'Failed to save the stream headers.');
               throw e;
-            } finally { clearSaving(headersChannel.id); }
+            }
           }}
         />
       )}
@@ -1656,8 +1925,8 @@ export default function PlaylistEditor({ playlistId }: { playlistId: string }) {
         };
 
         return (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24 max-w-md w-full">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-start justify-center overflow-y-auto overscroll-contain p-4">
+            <div className="my-auto bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24 max-w-md w-full">
               <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-4 flex items-center gap-2">
                 <Replace className="h-5 w-5" />
                 Find & Replace
