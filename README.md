@@ -1,5 +1,5 @@
 <p align="center">
-<img src="design/readme_banner.jpg" width="1920" height="1256">
+<img src="design/readme_banner.jpg" width="1920" height="1128">
 </p>
 <h3 align="center">m3u4me: Self-hosted M3U playlist manager</h3>
 <p align="center">
