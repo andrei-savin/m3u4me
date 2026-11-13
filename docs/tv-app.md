@@ -15,7 +15,7 @@ The number at the end is the playlist's number: `/1` for your first playlist, `/
 
 ## Where to find your links
 
-- **On Home:** the **Download Playlists** card lists every playlist, with a **Copy playlist link** button.
+- **On Home:** under **Your playlists**, each playlist has a card with its link, a copy button and a download button.
 - **In the playlist itself:** open it in **My Playlists** and press **Link & download** above the channel list (on a phone, under **⋮**). You get both the **Playlist (M3U)** link and the **TV guide (XMLTV)** link, each with a copy button.
 
 > [!IMPORTANT]
