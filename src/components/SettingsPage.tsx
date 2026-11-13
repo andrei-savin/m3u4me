@@ -166,7 +166,7 @@ export default function SettingsPage() {
   };
 
   const handleSetPassword = async () => {
-    if (password.length < 4) { setSecurityError('Password must be at least 4 characters'); return; }
+    if (password.length < 8) { setSecurityError('Password must be at least 8 characters'); return; }
     if (password !== confirmPassword) { setSecurityError('Passwords do not match'); return; }
     setSavingPassword(true);
     setSecurityError('');

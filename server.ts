@@ -1204,6 +1204,54 @@ interface AuthData {
 
 const activeSessions = new Set<string>();
 
+// ── Slowing down password guessing ──
+// Without this, a program on the network could try dozens of passwords a second until one
+// fits. Each device (by network address) gets 5 tries at the password or recovery key. After
+// that it has to wait before each further try: 30 seconds, then 1 minute, 2, 4… up to 15
+// minutes. Getting it right clears the count. Kept in memory only, so a restart clears it too.
+// It's per device rather than for everyone at once, so someone guessing from one device can't
+// keep the owner locked out on another. (Behind a reverse proxy every visitor shares the
+// proxy's address, so there they share one count.)
+const MIN_PASSWORD_LENGTH = 8;
+const FREE_LOGIN_ATTEMPTS = 5;
+const FIRST_LOGIN_WAIT_MS = 30_000;
+const LONGEST_LOGIN_WAIT_MS = 15 * 60_000;
+const loginAttempts = new Map<string, { count: number; lastTryAt: number; blockedUntil: number }>();
+
+// Call before checking a password or recovery key. Returns true when the request may go
+// ahead. Otherwise it has already answered with "wait…" and the caller must stop.
+// The try is counted here, before the password is checked, so sending many guesses at the
+// same moment can't slip them all past the limit.
+function allowLoginAttempt(req: express.Request, res: express.Response): boolean {
+  const now = Date.now();
+  // Forget a device an hour after its last try (or after its wait ended, if that's later), so
+  // a few typos spread over weeks never add up, and the list can't grow forever.
+  for (const [address, entry] of loginAttempts) {
+    if (now - Math.max(entry.lastTryAt, entry.blockedUntil) > 60 * 60_000) loginAttempts.delete(address);
+  }
+  const address = req.ip || 'unknown';
+  const entry = loginAttempts.get(address) || { count: 0, lastTryAt: now, blockedUntil: 0 };
+  if (now < entry.blockedUntil) {
+    const seconds = Math.ceil((entry.blockedUntil - now) / 1000);
+    const wait = seconds > 90 ? `${Math.ceil(seconds / 60)} minutes` : `${seconds} seconds`;
+    res.status(429).json({ error: `Too many wrong attempts. Wait ${wait}, then try again.` });
+    return false;
+  }
+  entry.count++;
+  entry.lastTryAt = now;
+  if (entry.count >= FREE_LOGIN_ATTEMPTS) {
+    const wait = FIRST_LOGIN_WAIT_MS * 2 ** (entry.count - FREE_LOGIN_ATTEMPTS);
+    entry.blockedUntil = now + Math.min(wait, LONGEST_LOGIN_WAIT_MS);
+  }
+  loginAttempts.set(address, entry);
+  return true;
+}
+
+// Call once the password or recovery key turned out right.
+function clearLoginAttempts(req: express.Request) {
+  loginAttempts.delete(req.ip || 'unknown');
+}
+
 // Shown on the lock screen while auth.json is 'damaged' (see readAuth).
 const AUTH_DAMAGED_MESSAGE = "m3u4me can't read its password file, so it stays locked. To get back in, delete auth.json from m3u4me's data folder on the server (this removes the password), then set a new password in Settings.";
 
@@ -1364,6 +1412,20 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 8080;
 
+  // Safety net, part 1. Many routes below are `async`, and this version of Express (4) doesn't
+  // notice when one of those fails: Node then stops the whole app, which logs everyone out.
+  // So every route handler registered from here on is wrapped: if it fails, the error is
+  // passed to the error handler at the very end of startServer(), and only that one request
+  // gets an error answer.
+  for (const method of ['get', 'post', 'put', 'delete'] as const) {
+    const register = app[method].bind(app) as (...args: any[]) => any;
+    (app as any)[method] = (route: any, ...handlers: any[]) => register(route, ...handlers.map(handler =>
+      typeof handler !== 'function' ? handler : (req: any, res: any, next: any) => {
+        Promise.resolve().then(() => handler(req, res, next)).catch(next);
+      }
+    ));
+  }
+
   app.use(express.json({ limit: '50mb' }));
 
   loadAndRefreshAllSources();
@@ -1426,11 +1488,13 @@ async function startServer() {
     if (auth === 'damaged') return refuseDamagedAuth(res);
     const { password } = req.body;
     if (!password) return res.status(400).json({ error: 'Password required' });
+    if (!allowLoginAttempt(req, res)) return;
     try {
       const { hash } = await hashPassword(password, auth.passwordSalt);
       if (hash !== auth.passwordHash) {
         return res.status(401).json({ error: 'Incorrect password' });
       }
+      clearLoginAttempts(req);
       const token = generateToken();
       activeSessions.add(token);
       res.json({ token });
@@ -1446,8 +1510,8 @@ async function startServer() {
     // the checks below only ever see a real password record.
     if (auth === 'damaged') return refuseDamagedAuth(res);
     const { password, currentPassword } = req.body;
-    if (!password || password.length < 4) {
-      return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
     }
     // If a password is already set, verify the current one
     if (auth) {
@@ -1462,6 +1526,9 @@ async function startServer() {
       const recoveryKey = generateRecoveryKey();
       const { hash: recoveryKeyHash, salt: recoveryKeySalt } = await hashPassword(recoveryKey);
       writeAuth({ passwordHash, passwordSalt, recoveryKeyHash, recoveryKeySalt });
+      // Changing the password signs every other device out, like /auth/recover does. Otherwise
+      // a device that should no longer have access would stay signed in until the next restart.
+      activeSessions.clear();
       // Signs this browser in, like /auth/recover does. Without a session, the very next request
       // after turning a password on would bounce to the lock screen, in the middle of Settings
       // or of the first-run setup.
@@ -1484,9 +1551,10 @@ async function startServer() {
     if (!recoveryKey || !newPassword) {
       return res.status(400).json({ error: 'Recovery key and new password required' });
     }
-    if (newPassword.length < 4) {
-      return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
     }
+    if (!allowLoginAttempt(req, res)) return;
     try {
       // Strip formatting dashes from recovery key
       const cleanKey = recoveryKey.replace(/-/g, '').toUpperCase();
@@ -1494,6 +1562,7 @@ async function startServer() {
       if (hash !== auth.recoveryKeyHash) {
         return res.status(401).json({ error: 'Invalid recovery key' });
       }
+      clearLoginAttempts(req);
       const { hash: passwordHash, salt: passwordSalt } = await hashPassword(newPassword);
       const newRecoveryKey = generateRecoveryKey();
       const { hash: recoveryKeyHash, salt: recoveryKeySalt } = await hashPassword(newRecoveryKey);
@@ -2704,8 +2773,9 @@ async function startServer() {
     if (!Array.isArray(channels)) return res.status(400).json({ error: 'Invalid input' });
     const TIMEOUT_MS = 8000;
     const results = await Promise.all(
-      channels.map(async ({ id, url, referrer, userAgent }) => {
-        if (!url) return { id, ok: false, code: null, skipped: true };
+      channels.map(async (channel) => {
+        const { id, url, referrer, userAgent } = channel || {};
+        if (!url || typeof url !== 'string') return { id, ok: false, code: null, skipped: true };
         if (!/^https?:\/\//i.test(url)) return { id, ok: false, code: null, skipped: true };
         // Sent like a player would, so channels whose provider needs them don't show as offline.
         const headers: Record<string, string> = {};
@@ -2818,21 +2888,6 @@ async function startServer() {
     serveM3U(playlist, db, res);
   });
 
-  // Proxy endpoint for downloading external M3U Links
-  app.get("/api/proxy", async (req, res) => {
-    const targetUrl = req.query.url as string;
-    if (!targetUrl) return res.status(400).send("Missing URL");
-    try {
-      const response = await fetch(targetUrl);
-      if (!response.ok) throw new Error("Failed to fetch");
-      const text = await response.text();
-      res.setHeader("Content-Type", "text/plain");
-      res.send(text);
-    } catch (e) {
-      res.status(500).send("Error fetching URL");
-    }
-  });
-
   // EPG XMLTV Server
   app.get(/^\/(\d+)\/epg$/, (req, res) => {
     const shortId = parseInt(req.params[0], 10);
@@ -2893,6 +2948,21 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  // Safety net, part 2: where failed requests end up (see part 1 near the top of startServer).
+  // Express recognises an error handler by its four parameters, so `_next` has to stay.
+  // The answer is JSON with a plain message, which the app shows as a toast.
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    // Problems with the request itself (not valid JSON, too large) carry their own 4xx status.
+    const status = err?.status >= 400 && err?.status < 500 ? err.status : 500;
+    if (status === 500) console.error(err);
+    if (res.headersSent) return;
+    const message = status === 413 ? "That's too large for m3u4me to accept."
+      : status !== 500 ? "m3u4me couldn't understand that request. Reload the page and try again."
+      : err?.message?.startsWith("Can't read ") ? err.message // readDb()'s own explanation
+      : "Something went wrong on the server. Try again, and check m3u4me's logs if it keeps happening.";
+    res.status(status).json({ error: message });
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);

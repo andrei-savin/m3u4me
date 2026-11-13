@@ -15,7 +15,7 @@ Without a password, anyone on your home network can open m3u4me in a browser and
 - During the first-time setup, at **Lock m3u4me with a password?**, or
 - Later, in **Settings → Security → Enable Password**.
 
-Passwords need at least 4 characters.
+Passwords need at least 8 characters. A password you already have keeps working, however short.
 
 ## Your recovery key
 
@@ -40,6 +40,12 @@ Open **Settings → Security**:
 
 - **Change Password** asks for your current password, then the new one.
 - **Remove Password** asks for your current password, then turns protection off.
+
+Changing the password signs out every other device that was signed in. Sign in on them again with the new password.
+
+## Too many wrong attempts
+
+After 5 wrong passwords (or recovery keys) in a row, m3u4me makes that device wait before the next try: 30 seconds at first, then longer each time, up to 15 minutes. This stops someone on your network from guessing the password by trying thousands of them. Wait for the time shown, then type the right password. Restarting m3u4me also clears the wait.
 
 ## Being signed out
 

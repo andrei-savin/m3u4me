@@ -468,7 +468,7 @@ function PasswordStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
 
   // Same checks and messages as Settings' handleSetPassword.
   const handleSetPassword = async () => {
-    if (password.length < 4) { setError('Password must be at least 4 characters'); return; }
+    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
     if (password !== confirmPassword) { setError('Passwords do not match'); return; }
     setSaving(true);
     setError('');
@@ -761,7 +761,8 @@ export default function Onboarding({ onFinish }: { onFinish: () => void }) {
                     </div>
                   ))}
                 </div>
-                <p className="mt-3 text-label-md text-on-surface-variant">
+                {/* Not shown on screen (the bar says it), but read out by screen readers, which skip the bar. */}
+                <p className="sr-only">
                   Step {index + 1} of {sequence.length} · {STEP_LABELS[step]}
                 </p>
               </div>

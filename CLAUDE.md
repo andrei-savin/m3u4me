@@ -33,6 +33,8 @@ All backend code lives in `server.ts`: no router modules, no ORM, no shared code
 
 **New non-API routes must be registered before that final block**, or the catch-all swallows them.
 
+**Failed requests don't stop the app.** Express 4 doesn't catch errors from `async` handlers, and Node would exit. At the top of `startServer()`, `app.get/post/put/delete` are wrapped so any handler's error goes to the error handler registered last (just before `listen`), which answers with JSON `{ error }` in plain language. Keep that error handler last, and register routes with those four methods so they're covered.
+
 **Runtime constraints (production runs plain `node server.ts`):**
 - Use only *erasable* TypeScript syntax: no `enum`, `namespace`, constructor parameter properties, or `import x = require()`. `tsx` in dev accepts these, so a violation only breaks in production.
 - `vite` is imported at the top of the file, so it's a runtime dependency even in production. That's why the Dockerfile and install script use `npm ci`, not `--omit=dev`.
@@ -112,7 +114,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 | Backup | `/backup` GET (the whole db as a download), `/backup/restore` POST (raw file body, replaces the db, see Persistence) |
 | Other | `/search?q=` (all three surfaces, capped at 50 per kind), `/stats` (homescreen), `/health-check` (HEAD, then GET fallback, 8s timeout), `/version` (reads `package.json`; gated like the rest, so `api.getVersion()` sends the token) |
 
-`/api/proxy`, `/api/epg-sources/:id/programs/:channelId` (`api.getEpgPrograms`) and `api.logout` exist, but nothing in the frontend currently calls them.
+`/api/epg-sources/:id/programs/:channelId` (`api.getEpgPrograms`) and `api.logout` exist, but nothing in the frontend currently calls them.
 
 ### Auth (bespoke)
 
@@ -122,7 +124,9 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
   - Deleting the file by hand is the only way back in.
   - Never treat a damaged file as "no password". That used to switch protection off silently.
 - `writeAuth()` uses the same tmp-file-plus-rename save as `writeDb()`.
-- Login issues a random token kept in an in-memory `Set` (`activeSessions`), so **every server restart logs everyone out**. `set-password` and `recover` also return a fresh token, so turning a password on (in Settings or the first-run setup) doesn't bounce the current browser to the lock screen.
+- Login issues a random token kept in an in-memory `Set` (`activeSessions`), so **every server restart logs everyone out**. `set-password` and `recover` also return a fresh token, so turning a password on (in Settings or the first-run setup) doesn't bounce the current browser to the lock screen. Both clear every other session first, so a password change signs other devices out.
+- **Guessing limit:** `allowLoginAttempt()` gates `/auth/login` and `/auth/recover` per network address (`req.ip`): 5 tries, then a wait that doubles from 30 seconds up to 15 minutes, answered as 429 with a plain message the lock screen shows. The try is counted before the password is checked. `clearLoginAttempts()` runs on success. In memory only.
+- Passwords need `MIN_PASSWORD_LENGTH` (8) characters when set; the same number is in `SettingsPage.tsx`, `Onboarding.tsx` and `docs/password.md`. Existing shorter passwords still log in.
 - The frontend keeps the token in `sessionStorage` and sends it via `authFetch()`. A 401 fires a window `auth-expired` event, and `App.tsx` responds by showing `LockScreen`.
 - `src/contexts/AuthContext.tsx` is a **vestigial stub** unrelated to this. `AuthProvider` still wraps `<App>`, but nothing calls `useAuth()`. Ignore it when working on auth.
 
