@@ -70,7 +70,7 @@ Not on Linux, or prefer Docker? See [all the ways to install m3u4me](docs/instal
 - **[Backup & restore](docs/backup.md)**: everything in one file, ready to move to a new server.
 - **[Search everything at once](docs/features.md#search-and-shortcuts)**, with keyboard shortcuts for the busy bits.
 - **[Works on your phone too](docs/features.md#on-your-phone)**, with a layout made for touch screens.
-- **[Light, dark and AMOLED themes](docs/features.md#look-and-feel)**, Material You style: the whole app is coloured from your favourite accent colour.
+- **[Light, dark and AMOLED themes](docs/features.md#look-and-feel)** that follow your device's light/dark setting, Material You style: the whole app is coloured from your favourite accent colour.
 
 Everything saves by itself, and an accidental delete can be undone.
 

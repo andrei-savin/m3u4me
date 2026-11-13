@@ -38,8 +38,18 @@ interface AppState {
   setLogoBgColor: (color: string) => void;
   accentColor: string;
   setAccentColor: (color: string) => void;
+  /** The theme picked in Settings: 'auto' follows the device's light/dark setting. */
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => void;
+  /**
+   * Whether the app is dark right now. Not a setting of its own: it's worked out from
+   * themeMode (and, in 'auto', the device), and kept current when the device switches.
+   */
   isDarkMode: boolean;
-  setDarkMode: (isDark: boolean) => void;
+  /**
+   * AMOLED black: an add-on to dark mode. While it's on, the app is pure black every time it's
+   * dark (picked Dark, or Auto on a dark device). Only its own switch turns it off.
+   */
   isAmoledMode: boolean;
   setAmoledMode: (isAmoled: boolean) => void;
   hideUrls: boolean;
@@ -72,6 +82,14 @@ interface AppState {
 
 export type FontFamily = 'geist' | 'system';
 
+export type ThemeMode = 'auto' | 'light' | 'dark';
+
+// The browser reports the device's light/dark setting through this media query, and fires a
+// `change` event on it when the device switches (by hand, or automatically at sunset).
+const DARK_QUERY = '(prefers-color-scheme: dark)';
+const systemPrefersDark = () => typeof window !== 'undefined' && window.matchMedia(DARK_QUERY).matches;
+const resolveDark = (mode: ThemeMode) => mode === 'dark' || (mode === 'auto' && systemPrefersDark());
+
 /** The accent colour swatches offered in Settings and on the first-run setup's welcome screen.
  * The first one is the default accentColor below. */
 export const ACCENT_PRESETS = [
@@ -103,8 +121,9 @@ export const useStore = create<AppState>()(
       setLogoBgColor: (color) => set({ logoBgColor: color }),
       accentColor: '#FF2960',
       setAccentColor: (color) => set({ accentColor: color }),
-      isDarkMode: false,
-      setDarkMode: (isDark) => set({ isDarkMode: isDark }),
+      themeMode: 'auto',
+      setThemeMode: (mode) => set({ themeMode: mode, isDarkMode: resolveDark(mode) }),
+      isDarkMode: resolveDark('auto'),
       isAmoledMode: false,
       setAmoledMode: (isAmoled) => set({ isAmoledMode: isAmoled }),
       hideUrls: false,
@@ -127,7 +146,7 @@ export const useStore = create<AppState>()(
       partialize: (state) => ({
         logoBgColor: state.logoBgColor,
         accentColor: state.accentColor,
-        isDarkMode: state.isDarkMode,
+        themeMode: state.themeMode,
         isAmoledMode: state.isAmoledMode,
         is24Hour: state.is24Hour,
         fontFamily: state.fontFamily,
@@ -141,9 +160,33 @@ export const useStore = create<AppState>()(
         activeEpgSourceId: state.activeEpgSourceId,
         activeChannelPoolSourceId: state.activeChannelPoolSourceId,
       }),
+      // Version 1 replaced the saved Light/Dark choice (`isDarkMode`) with `themeMode`. Everyone
+      // who had the old setting starts on Auto; AMOLED stays on for whoever had it.
+      version: 1,
+      migrate: (saved, version) => {
+        const state = { ...(saved as Record<string, unknown>) };
+        if (version < 1) {
+          delete state.isDarkMode;
+          state.themeMode = 'auto';
+        }
+        return state as unknown as AppState;
+      },
+      // isDarkMode isn't saved, so work it out again from the saved themeMode as the settings load.
+      merge: (saved, current) => {
+        const merged = { ...current, ...(saved as Partial<AppState>) };
+        return { ...merged, isDarkMode: resolveDark(merged.themeMode) };
+      },
     }
   )
 );
+
+// Follow the device live: when it switches between light and dark while the app is open,
+// update isDarkMode (it only changes anything while themeMode is 'auto').
+if (typeof window !== 'undefined') {
+  window.matchMedia(DARK_QUERY).addEventListener('change', () => {
+    useStore.setState({ isDarkMode: resolveDark(useStore.getState().themeMode) });
+  });
+}
 
 let nextToastId = 0;
 

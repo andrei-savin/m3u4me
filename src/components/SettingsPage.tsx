@@ -23,7 +23,7 @@ export default function SettingsPage() {
   const location = useLocation();
   const isPhone = useIsPhone();
   const {
-    isDarkMode, setDarkMode,
+    themeMode, setThemeMode, isDarkMode,
     isAmoledMode, setAmoledMode,
     logoBgColor, setLogoBgColor,
     accentColor, setAccentColor,
@@ -232,11 +232,6 @@ export default function SettingsPage() {
     }
   };
 
-  const theme: 'light' | 'dark' | 'amoled' = isAmoledMode ? 'amoled' : isDarkMode ? 'dark' : 'light';
-  const setTheme = (t: 'light' | 'dark' | 'amoled') => {
-    setDarkMode(t !== 'light');
-    setAmoledMode(t === 'amoled');
-  };
   const passwordInputCls = 'field h-12 pr-12 max-md:text-base';
   const eyeButton = (
     <button type="button" onClick={() => setShowPasswordVis(p => !p)} className="md-btn icon-btn absolute right-1 top-1/2 -translate-y-1/2" tabIndex={-1} aria-label={showPassword ? 'Hide password' : 'Show password'}>
@@ -268,17 +263,23 @@ export default function SettingsPage() {
 
           {/* ── Appearance ────────────────────────────────────────────────── */}
           <SettingsSection icon={<Icon name="palette" className="text-[24px]" />} title="Appearance">
-            <SettingsRow title="Theme" description="AMOLED black keeps the background pure black, for OLED screens.">
+            <SettingsRow title="Theme" description="Auto follows your device's light or dark setting.">
               <SegmentedButtons
                 className="w-full sm:w-80"
                 options={[
+                  { value: 'auto', label: 'Auto' },
                   { value: 'light', label: 'Light' },
                   { value: 'dark', label: 'Dark' },
-                  { value: 'amoled', label: 'AMOLED' },
                 ]}
-                value={theme}
-                onChange={setTheme}
+                value={themeMode}
+                onChange={setThemeMode}
               />
+            </SettingsRow>
+
+            {/* An add-on to dark mode rather than a theme of its own: it stays on (and usable)
+                while the theme is Light, and kicks in whenever the app is dark. */}
+            <SettingsRow title="AMOLED black" description="Pure black background whenever the app is dark, for OLED screens." inline>
+              <Switch checked={isAmoledMode} onChange={setAmoledMode} label="AMOLED black" />
             </SettingsRow>
 
             <SettingsRow title="Font" description="Geist is the app's own font. System uses your device's font.">

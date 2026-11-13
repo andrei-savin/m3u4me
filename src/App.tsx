@@ -9,7 +9,7 @@ import SettingsPage from './components/SettingsPage';
 import { useStore, notifyError, AuthExpiredError } from './store';
 import { api, getSessionToken } from './apiClient';
 import { updateFavicon } from './utils/favicon';
-import { applyMaterialTheme } from './utils/materialTheme';
+import { applyMaterialTheme, applyColorScheme } from './utils/materialTheme';
 
 function AppContent() {
   const { isDarkMode, isAmoledMode, accentColor, colorStyle, fontFamily } = useStore();
@@ -30,19 +30,9 @@ function AppContent() {
     document.documentElement.dataset.font = fontFamily;
   }, [fontFamily]);
 
+  // isDarkMode also changes on its own when the theme is Auto and the device switches (store.ts).
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-      document.documentElement.style.colorScheme = 'dark';
-    } else {
-      document.documentElement.classList.remove('dark');
-      document.documentElement.style.colorScheme = 'light';
-    }
-    if (isAmoledMode) {
-      document.documentElement.classList.add('amoled');
-    } else {
-      document.documentElement.classList.remove('amoled');
-    }
+    applyColorScheme(isDarkMode, isAmoledMode);
   }, [isDarkMode, isAmoledMode]);
 
   // Check auth status on mount

@@ -124,7 +124,7 @@ const inputClasses = "field h-12 max-md:text-base";
 // ── Steps ──────────────────────────────────────────────────────────────────
 
 function WelcomeStep({ onStartFresh, onRestore }: { onStartFresh: () => void; onRestore: () => void }) {
-  const { accentColor, setAccentColor, isDarkMode, setDarkMode, setAmoledMode } = useStore();
+  const { accentColor, setAccentColor, themeMode, setThemeMode } = useStore();
 
   return (
     <>
@@ -135,7 +135,7 @@ function WelcomeStep({ onStartFresh, onRestore }: { onStartFresh: () => void; on
         </p>
       </div>
 
-      {/* Make it yours: the same accent colours and light/dark choice as in Settings, applied
+      {/* Make it yours: the same accent colours and Auto/Light/Dark choice as in Settings, applied
           right away so the rest of the setup already looks the way the user picked. */}
       <div className="mt-8 flex flex-col items-center gap-3">
         <span className="text-label-lg text-on-surface-variant">Make it yours</span>
@@ -160,17 +160,17 @@ function WelcomeStep({ onStartFresh, onRestore }: { onStartFresh: () => void; on
           </div>
           <div className="inline-flex rounded-full p-1 bg-surface-container-highest">
             {([
-              { dark: false, label: 'Light', icon: <Icon name="light_mode" className="text-[18px]" /> },
-              { dark: true, label: 'Dark', icon: <Icon name="dark_mode" className="text-[18px]" /> },
-            ]).map(option => (
+              { mode: 'auto', label: 'Auto', icon: <Icon name="brightness_auto" className="text-[18px]" /> },
+              { mode: 'light', label: 'Light', icon: <Icon name="light_mode" className="text-[18px]" /> },
+              { mode: 'dark', label: 'Dark', icon: <Icon name="dark_mode" className="text-[18px]" /> },
+            ] as const).map(option => (
               <button
                 key={option.label}
-                // Leaving dark mode turns AMOLED off too, like the switches in Settings do.
-                onClick={() => { setDarkMode(option.dark); if (!option.dark) setAmoledMode(false); }}
+                onClick={() => setThemeMode(option.mode)}
                 className={`md-btn inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-label-lg transition-colors ${
-                  isDarkMode === option.dark ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant'
+                  themeMode === option.mode ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant'
                 }`}
-                aria-pressed={isDarkMode === option.dark}
+                aria-pressed={themeMode === option.mode}
               >
                 {option.icon}
                 {option.label}

@@ -111,7 +111,8 @@ m3u4me works on your phone's browser too: open the same address you use on your 
 
 ## Look and feel
 
-- **Light, Dark or AMOLED.** AMOLED keeps the background pure black, for OLED screens.
+- **Auto, Light or Dark.** Auto (the default) follows your device: the app turns dark when your phone or computer does, and back again.
+- **AMOLED black.** Turn it on and the background is pure black whenever the app is dark, for OLED screens. It stays on until you turn it off, even if you switch to Light for a while.
 - **Your colour everywhere.** Pick an accent colour and the whole app is coloured from it, background included, the way Android's Material You does it. Even the browser tab's icon matches.
 - **Colour style.** Nine ways to build the app's colours from your accent, from calm (**Tonal spot**, the default) to bold (**Vibrant**, **Expressive**, **Fruit salad**) or plain grey (**Monochrome**). Each shows a small preview.
 - **Font.** Geist (the default), or your device's own font.

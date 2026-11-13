@@ -147,7 +147,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 | --- | --- |
 | `/` | `Home.tsx`: flat cards on the tinted page, like the rest of the app. "Your playlists" first (a card each: link for a TV app with copy/download, Open, a chip when sync suggestions wait, plus New playlist), then Overview (the total-channels card in `primary-container` and three count tiles), then Recent activity (last playlist fetch, newest pool channels) |
 | `/playlists`, `/sources`, `/epg` | `Dashboard.tsx` with `activeView` prop `'playlists' \| 'channels' \| 'epg'` (note: **`'channels'` means the Sources tab**) |
-| `/settings` | `SettingsPage.tsx`: appearance, channel sync defaults, password/recovery key, backup (download, restore dialog), about + version |
+| `/settings` | `SettingsPage.tsx`: appearance (theme Auto/Light/Dark plus an AMOLED black switch), channel sync defaults, password/recovery key, backup (download, restore dialog), about + version |
 | `*` | redirect to `/` |
 
 **Data fetching (no query library):**
@@ -158,7 +158,8 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 
 **UI state: one Zustand store (`src/store.ts`):**
 - It holds active playlist/category/EPG source/pool source, `scrollTarget`, `isSidebarOpen` (starts closed below 1024px), `channelPoolLogOpen` (opens the phone update-log sheet), `syncLogOpenFor` (Home asks PlaylistEditor to open a sync log), `hideUrls`, `undoEntry`, `toast`, and the cosmetic settings.
-- Only `logoBgColor`, `accentColor`, `colorStyle`, `isDarkMode`, `isAmoledMode`, `is24Hour`, `fontFamily` (`'geist'` | `'system'`) `nameColumnWidth` (the playlist editor's dragged name-column width; null = automatic), and what was open last (`activePlaylistId`, `activeCategory`, `activeChannelPoolSourceId`, `activeEpgSourceId`) are persisted to localStorage. Everything else resets on reload.
+- Only `logoBgColor`, `accentColor`, `colorStyle`, `themeMode` (`'auto'` | `'light'` | `'dark'`), `isAmoledMode`, `is24Hour`, `fontFamily` (`'geist'` | `'system'`) `nameColumnWidth` (the playlist editor's dragged name-column width; null = automatic), and what was open last (`activePlaylistId`, `activeCategory`, `activeChannelPoolSourceId`, `activeEpgSourceId`) are persisted to localStorage. Everything else resets on reload.
+- **Theme:** `isDarkMode` is derived, never saved: `resolveDark(themeMode)`, recomputed by `setThemeMode`, by persist's `merge` on load, and by a module-level `prefers-color-scheme` listener (so Auto follows the device live). `isAmoledMode` is an add-on to dark, not a theme: only its own switch changes it, and the `amoled` class stays on in light mode (the CSS only uses `:root.amoled.dark`). `applyColorScheme()` (`materialTheme.ts`) sets the classes; `main.tsx` calls it before first paint, `App.tsx` on changes. Persist `version: 1`'s `migrate` moved everyone from the old saved `isDarkMode` to Auto.
 - **Something is always open.** Dashboard's fallback effects open the first playlist/source/guide when the remembered one is missing or none is set, so a tab never lands on an empty pane behind the closed drawer. They run only when a list *arrives* (reading the current id with `useStore.getState()`), never when the selection changes, because a newly created item becomes active before the refetched list contains it. `NothingSelected` therefore only shows for an empty list (with an Add button) or a failed load (Try again), and nothing while loading.
 - The sidebar *width* is local state in `Dashboard.tsx`, not in the store.
 - **Errors and notifications:** in a mutation's catch block, call `console.error(e)` plus `notifyError(e, 'fallback message')`. For non-error feedback, use `notifyWarning` or `notifyInfo`. `AuthExpiredError` is ignored on purpose (the lock screen covers it). One toast shows at a time.
@@ -175,7 +176,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 ### Feature surfaces
 
 - **First-run setup** (`Onboarding.tsx`, one file with all steps)
-  - Welcome ("make it yours": accent presets + light/dark), then two paths:
+  - Welcome ("make it yours": accent presets + Auto/Light/Dark), then two paths:
     - Start fresh: Sources → Password → Playlist → Done
     - Restore a backup: Backup → Password → Done (plus the Playlist step if the backup had no playlist)
   - Naming a playlist can't be skipped. The server finishes the setup when the playlist is made, so leaving mid-way or reloading brings the setup back from Welcome.

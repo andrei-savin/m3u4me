@@ -84,6 +84,19 @@ export function applyMaterialTheme(accent: string, style: ColorStyle): { light: 
   return { light: hexFromArgb(light.primary), dark: hexFromArgb(dark.primary) };
 }
 
+/**
+ * Switches the page between the light and dark palette (the `dark` class on <html>) and turns
+ * AMOLED black on or off. The `amoled` class can stay on while the app is light: index.css only
+ * uses it together with `dark` (`:root.amoled.dark`), so it simply waits for the next dark spell.
+ */
+export function applyColorScheme(isDark: boolean, isAmoled: boolean) {
+  const root = document.documentElement;
+  root.classList.toggle('dark', isDark);
+  root.classList.toggle('amoled', isAmoled);
+  // Tells the browser too, so its own bits (scrollbars, form controls) match.
+  root.style.colorScheme = isDark ? 'dark' : 'light';
+}
+
 /** A few colours of a style's palette, for the little previews in Settings. */
 export function previewColorStyle(accent: string, style: ColorStyle, isDark: boolean): string[] {
   const scheme = buildScheme(accent, style, isDark);
