@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { Menu, Search } from 'lucide-react';
 import OverflowMenu, { type OverflowMenuItem } from './OverflowMenu';
+import Icon from './Icon';
 
 /** Opens Spotlight search, the same way the desktop Search button does (Spotlight listens for Cmd/Ctrl+K). */
 export function openSpotlight() {
@@ -30,7 +30,7 @@ export default function MobileTopBar({
   menuItems = [],
   menuSlotRef,
   showSearch = true,
-  surfaceClassName = 'bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] elev-4',
+  surfaceClassName = 'bg-page',
 }: {
   title?: string;
   overline?: string;
@@ -46,34 +46,34 @@ export default function MobileTopBar({
   // menu drops down over them instead of behind. Still under the drawer, sheets and dialogs (z-50).
   return (
     <header className={`md:hidden shrink-0 z-40 pt-safe ${surfaceClassName}`}>
-      <div className="h-14 flex items-center gap-1 px-1">
+      <div className="h-16 flex items-center gap-0.5 px-1">
         {onMenu && (
           <button
             onClick={onMenu}
-            className="md-btn w-12 h-12 flex items-center justify-center rounded-full text-gray-600 dark:text-gray-300 shrink-0"
+            className="md-btn icon-btn w-12 h-12 text-on-surface"
             aria-label="Open the list"
           >
-            <Menu className="h-6 w-6" />
+            <Icon name="menu" className="text-[24px]" />
           </button>
         )}
         <div className={`flex-1 min-w-0 flex flex-col justify-center ${onMenu ? '' : 'pl-3'}`}>
           {leading ?? (
             <>
-              {overline && <p className="text-xs leading-4 text-gray-500 dark:text-gray-400 truncate">{overline}</p>}
-              <h1 className={`${overline ? 'text-base leading-6' : 'text-lg'} font-medium text-gray-900 dark:text-white truncate`}>{title}</h1>
+              {overline && <p className="text-label-md text-on-surface-variant truncate">{overline}</p>}
+              <h1 className={`${overline ? 'text-xl leading-[26px] font-medium' : 'text-title-lg'} tracking-[-0.01em] text-on-surface truncate`}>{title}</h1>
             </>
           )}
         </div>
         {showSearch && (
           <button
             onClick={openSpotlight}
-            className="md-btn w-10 h-10 flex items-center justify-center rounded-full text-gray-600 dark:text-gray-300 shrink-0"
+            className="md-btn icon-btn w-12 h-12 text-on-surface"
             aria-label="Search"
           >
-            <Search className="h-5 w-5" />
+            <Icon name="search" className="text-[24px]" />
           </button>
         )}
-        <OverflowMenu items={menuItems} />
+        <OverflowMenu items={menuItems} buttonClassName="w-12 h-12 text-on-surface" />
         {menuSlotRef && <div ref={menuSlotRef} className="flex shrink-0" />}
       </div>
     </header>

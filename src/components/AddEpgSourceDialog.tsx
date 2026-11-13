@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
 import { api, triggerEpgRefresh, EpgSource } from '../apiClient';
-import { useStore, notifyError } from '../store';
+import { notifyError } from '../store';
 import Dialog from './Dialog';
+import Icon from './Icon';
 
 interface AddEpgSourceDialogProps {
   open: boolean;
@@ -11,7 +11,6 @@ interface AddEpgSourceDialogProps {
 }
 
 export default function AddEpgSourceDialog({ open, onClose, editingSource }: AddEpgSourceDialogProps) {
-  const { accentColor } = useStore();
   const [tab, setTab] = useState<'xml' | 'xtream'>('xml');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -122,72 +121,66 @@ export default function AddEpgSourceDialog({ open, onClose, editingSource }: Add
     return xtreamName.trim() !== '' && xtreamUrl.trim() !== '' && xtreamUser.trim() !== '' && xtreamPass.trim() !== '';
   };
 
-  const inputClasses = "w-full border border-gray-400 dark:border-gray-500 rounded px-3 py-2.5 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400";
+  const inputClasses = "field max-md:text-base";
 
   return (
     <Dialog onClose={onClose}>
-        <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-4">
-          {editingSource ? 'Edit EPG Source' : 'Add EPG Source'}
+        <h2 className="text-headline-sm text-on-surface px-6 pt-6 pb-3">
+          {editingSource ? 'Edit EPG source' : 'Add EPG source'}
         </h2>
 
         {/* Tabs */}
-        <div className="flex px-6 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex mx-6 border-b border-outline-variant">
           <button
             onClick={() => setTab('xml')}
-            className={`flex-1 pb-2 text-sm font-medium ${tab === 'xml' ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'} relative`}
+            className={`md-btn flex-1 h-12 text-title-sm relative ${tab === 'xml' ? 'text-primary font-semibold' : 'text-on-surface-variant'}`}
             disabled={!!editingSource && editingSource.type !== 'xml'}
             style={editingSource && editingSource.type !== 'xml' ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
           >
             EPG Link
             {tab === 'xml' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ backgroundColor: accentColor }} />
+              <div className="absolute bottom-0 left-4 right-4 h-[3px] rounded-t-full bg-primary" />
             )}
           </button>
           <button
             onClick={() => setTab('xtream')}
-            className={`flex-1 pb-2 text-sm font-medium ${tab === 'xtream' ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'} relative`}
+            className={`md-btn flex-1 h-12 text-title-sm relative ${tab === 'xtream' ? 'text-primary font-semibold' : 'text-on-surface-variant'}`}
             disabled={!!editingSource && editingSource.type !== 'xtream'}
             style={editingSource && editingSource.type !== 'xtream' ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
           >
             Xtream Codes API
             {tab === 'xtream' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ backgroundColor: accentColor }} />
+              <div className="absolute bottom-0 left-4 right-4 h-[3px] rounded-t-full bg-primary" />
             )}
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4">
+        <form onSubmit={handleSubmit} className="px-6 pt-5 pb-6 flex flex-col gap-4">
           {tab === 'xml' ? (
             <>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
+                <label className="field-label">Name</label>
                 <input
                   type="text"
                   placeholder="My EPG Source"
                   value={xmlName}
                   onChange={(e) => setXmlName(e.target.value)}
                   className={inputClasses}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">URL</label>
+                <label className="field-label">URL</label>
                 <input
                   type="url"
                   placeholder="https://example.com/epg.xml.gz"
                   value={xmlUrl}
                   onChange={(e) => setXmlUrl(e.target.value)}
                   className={inputClasses}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
                 />
-                <p className="text-[10px] text-gray-500 mt-1">Supports .xml and .gz compressed files</p>
+                <p className="text-body-sm text-on-surface-variant mt-1.5">Supports .xml and .gz compressed files</p>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Refresh Interval</label>
+                <label className="field-label">Refresh Interval</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
@@ -195,70 +188,55 @@ export default function AddEpgSourceDialog({ open, onClose, editingSource }: Add
                     value={xmlInterval}
                     onChange={(e) => setXmlInterval(parseInt(e.target.value) || 1)}
                     className={inputClasses + " w-24"}
-                    style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                    onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                    onBlur={(e) => (e.target.style.borderColor = '')}
                   />
-                  <span className="text-sm text-gray-600 dark:text-gray-400">hours</span>
+                  <span className="text-body-md text-on-surface-variant">hours</span>
                 </div>
               </div>
             </>
           ) : (
             <>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
+                <label className="field-label">Name</label>
                 <input
                   type="text"
                   placeholder="My Xtream Source"
                   value={xtreamName}
                   onChange={(e) => setXtreamName(e.target.value)}
                   className={inputClasses}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Server URL</label>
+                <label className="field-label">Server URL</label>
                 <input
                   type="url"
                   placeholder="http://example.com:8080"
                   value={xtreamUrl}
                   onChange={(e) => setXtreamUrl(e.target.value)}
                   className={inputClasses}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
                 />
               </div>
               <div className="flex gap-4">
                 <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Username</label>
+                  <label className="field-label">Username</label>
                   <input
                     type="text"
                     value={xtreamUser}
                     onChange={(e) => setXtreamUser(e.target.value)}
                     className={inputClasses}
-                    style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                    onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                    onBlur={(e) => (e.target.style.borderColor = '')}
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Password</label>
+                  <label className="field-label">Password</label>
                   <input
                     type="password"
                     value={xtreamPass}
                     onChange={(e) => setXtreamPass(e.target.value)}
                     className={inputClasses}
-                    style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                    onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                    onBlur={(e) => (e.target.style.borderColor = '')}
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Refresh Interval</label>
+                <label className="field-label">Refresh Interval</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
@@ -266,33 +244,29 @@ export default function AddEpgSourceDialog({ open, onClose, editingSource }: Add
                     value={xtreamInterval}
                     onChange={(e) => setXtreamInterval(parseInt(e.target.value) || 1)}
                     className={inputClasses + " w-24"}
-                    style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                    onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                    onBlur={(e) => (e.target.style.borderColor = '')}
                   />
-                  <span className="text-sm text-gray-600 dark:text-gray-400">hours</span>
+                  <span className="text-body-md text-on-surface-variant">hours</span>
                 </div>
-                <p className="text-[10px] text-gray-500 mt-1">Will fetch EPG from the server's XMLTV endpoint</p>
+                <p className="text-body-sm text-on-surface-variant mt-1.5">Will fetch EPG from the server's XMLTV endpoint</p>
               </div>
             </>
           )}
 
-          <div className="flex justify-end gap-1 mt-2">
+          <div className="flex justify-end gap-2 mt-2">
             <button
               type="button"
               onClick={onClose}
-              className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300"
+              className="md-btn btn btn-text"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!isFormValid() || isSubmitting}
-              className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40 flex items-center gap-2"
-              style={{ color: accentColor }}
+              className="md-btn btn btn-filled"
             >
-              {isSubmitting && <Loader2 className="w-3 h-3 animate-spin" />}
-              {editingSource ? 'Save Changes' : 'Add Source'}
+              {isSubmitting && <Icon name="progress_activity" className="text-[20px] animate-spin" />}
+              {editingSource ? 'Save changes' : 'Add source'}
             </button>
           </div>
         </form>

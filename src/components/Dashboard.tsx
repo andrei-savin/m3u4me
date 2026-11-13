@@ -1,13 +1,11 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlaylists, useEpgSources, useChannelPoolSources, api, triggerRefresh, triggerEpgRefresh, triggerChannelPoolRefresh, SearchResult } from '../apiClient';
-import { useStore, accentAlpha, notifyError, notifyInfo } from '../store';
-import { Plus, Settings, FileAudio, Menu, Trash2, Eye, EyeOff, Keyboard, Search, ArrowUpCircle, Radio, RefreshCw, Clock, Layers, Pencil, AlertTriangle, History } from 'lucide-react';
+import { useStore, notifyError, notifyInfo } from '../store';
 import PlaylistEditor from './PlaylistEditor';
 import NewPlaylistDialog from './NewPlaylistDialog';
 import CategoryList from './CategoryList';
 import Spotlight from './Spotlight';
-import { useVersionInfo } from './AppInfo';
 import { Logo } from './Logo';
 import EpgViewer from './EpgViewer';
 import AddEpgSourceDialog from './AddEpgSourceDialog';
@@ -18,7 +16,194 @@ import ChannelPoolUpdateLog from './ChannelPoolUpdateLog';
 import Toast from './Toast';
 import MobileTopBar from './MobileTopBar';
 import MobileTabBar from './MobileTabBar';
-import { useIsPhone } from '../utils/useIsPhone';
+import DesktopTopBar from './DesktopTopBar';
+import UpdateBanner from './UpdateBanner';
+import KeyboardShortcutsDialog from './KeyboardShortcutsDialog';
+import ConfirmDialog from './ConfirmDialog';
+import { useIsPhone, useIsNarrow, canHover } from '../utils/useIsPhone';
+import SortableNavRow from './SortableNavRow';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import Icon from './Icon';
+
+// Keeps a dragged row moving straight up and down.
+const restrictToVerticalAxis = ({ transform }: any) => ({ ...transform, x: 0 });
+
+/* ── List pane pieces ─────────────────────────────────────────────────────── */
+
+/**
+ * "Playlists", "Categories", "Channel sources"…: a section title with its + button. On touch
+ * screens (`onToggleEdit` given) there's also an Edit / Done button: the rows stay plain names
+ * to tap until Edit shows their grips and buttons, the way iPhone and iPad lists work.
+ */
+export function PaneSectionHeader({ title, addLabel, onAdd, editing = false, onToggleEdit }: {
+  title: string;
+  addLabel: string;
+  onAdd: () => void;
+  editing?: boolean;
+  onToggleEdit?: () => void;
+}) {
+  const touch = !!onToggleEdit;
+  return (
+    <div className={`flex items-center gap-1 ${touch ? 'h-14' : 'h-10'} pl-5 pr-1`}>
+      <p className="flex-1 text-title-sm text-on-surface-variant">{title}</p>
+      {onToggleEdit && (
+        <button
+          onClick={onToggleEdit}
+          className={`md-btn btn h-10 px-4 ${editing ? 'btn-tonal' : 'btn-text'}`}
+          aria-pressed={editing}
+        >
+          {editing ? 'Done' : 'Edit'}
+        </button>
+      )}
+      <button onClick={onAdd} className={`md-btn icon-btn ${touch ? 'w-12 h-12' : 'w-9 h-9'}`} title={addLabel} aria-label={addLabel}>
+        <Icon name="add" className="text-[24px]" />
+      </button>
+    </div>
+  );
+}
+
+/** The inline text box that replaces a row's name while it's being renamed. */
+function RenameInput({ value, onChange, onConfirm, onCancel }: { value: string; onChange: (v: string) => void; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <input
+      autoFocus
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      onBlur={onConfirm}
+      onKeyDown={e => {
+        if (e.key === 'Enter') onConfirm();
+        if (e.key === 'Escape') onCancel();
+      }}
+      className="flex-1 min-w-0 text-label-lg max-md:text-base bg-transparent border-b-2 border-primary focus:outline-none text-on-surface px-0.5"
+    />
+  );
+}
+
+/**
+ * One source or guide in the list pane: icon, name, and a small line with its channel count and
+ * refresh interval. Edit / refresh / delete appear on hover, or on touch screens (`touch`)
+ * in the list's Edit mode (`showActions`), the same way as playlist and category rows.
+ */
+function SourceRow({
+  icon, name, meta, isActive, failedReason, isRenaming, renameValue, onRenameChange, onRenameConfirm, onRenameCancel,
+  onPick, onRenameStart, onEdit, onRefresh, isRefreshing, onDelete, touch, showActions, kindLabel,
+}: {
+  key?: string | number;
+  icon: React.ReactNode;
+  name: string;
+  meta: React.ReactNode;
+  isActive: boolean;
+  failedReason?: string | null;
+  isRenaming: boolean;
+  renameValue: string;
+  onRenameChange: (v: string) => void;
+  onRenameConfirm: () => void;
+  onRenameCancel: () => void;
+  onPick: () => void;
+  onRenameStart: () => void;
+  onEdit: () => void;
+  onRefresh?: () => void;
+  isRefreshing: boolean;
+  onDelete: () => void;
+  touch: boolean;
+  showActions: boolean;
+  kindLabel: string;
+}) {
+  return (
+    <div className={`nav-item md-btn group ${isActive ? 'nav-item-on' : ''}`}>
+      {isRenaming ? (
+        <div className="flex-1 flex items-center h-14 pl-5 pr-3 gap-3 min-w-0">
+          {icon}
+          <RenameInput value={renameValue} onChange={onRenameChange} onConfirm={onRenameConfirm} onCancel={onRenameCancel} />
+        </div>
+      ) : (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={onPick}
+          onDoubleClick={onRenameStart}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onPick();
+            }
+          }}
+          className={`flex-1 min-w-0 flex items-center gap-3 ${touch ? 'h-16' : 'h-14'} pl-5 ${showActions ? 'pr-36' : touch ? 'pr-4' : 'pr-3 group-hover:pr-28'} cursor-pointer`}
+        >
+          {/* A failed download swaps the source's icon for a warning sign instead of adding a
+              badge, so the row stays as quiet as a working one. */}
+          {failedReason ? (
+            <span className="shrink-0 flex" title={`Last refresh failed: ${failedReason}`}>
+              <Icon name="warning" className="text-[24px] text-error" />
+            </span>
+          ) : icon}
+          <span className="flex-1 min-w-0 flex flex-col">
+            <span className={`truncate ${isActive ? 'font-semibold' : 'text-on-surface'}`}>{name}</span>
+            <span className="flex items-center gap-1.5 text-label-sm font-normal opacity-80 whitespace-nowrap overflow-hidden">{meta}</span>
+          </span>
+        </div>
+      )}
+      {!isRenaming && (showActions || !touch) && (
+        <div className={`absolute right-1 items-center ${showActions ? 'flex' : 'hidden group-hover:flex'}`}>
+          <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className={`md-btn icon-btn ${touch ? 'w-11 h-11' : 'w-9 h-9'}`} title={`Edit ${kindLabel}`}>
+            <Icon name="edit" className="text-[20px]" />
+          </button>
+          {onRefresh && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRefresh(); }}
+              className={`md-btn icon-btn ${touch ? 'w-11 h-11' : 'w-9 h-9'} ${isRefreshing ? 'animate-spin' : ''}`}
+              title={`Refresh ${kindLabel}`}
+              disabled={isRefreshing}
+            >
+              <Icon name="refresh" className="text-[20px]" />
+            </button>
+          )}
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className={`md-btn icon-btn ${touch ? 'w-11 h-11' : 'w-9 h-9'} hover:text-error`} title={`Delete ${kindLabel}`}>
+            <Icon name="delete" className="text-[20px]" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Shown in the list pane when it has nothing in it, or when loading it failed. */
+function PaneEmpty({ error, onRetry, text }: { error: string | null; onRetry: () => void; text: string }) {
+  return error ? (
+    <div className="px-4 py-4 text-center">
+      <p className="text-body-md text-error">{error}</p>
+      <button onClick={onRetry} className="md-btn btn btn-text mt-1">Retry</button>
+    </div>
+  ) : (
+    <p className="text-body-md text-on-surface-variant px-4 py-4 text-center">{text}</p>
+  );
+}
+
+/**
+ * The big empty state in the content pane. Dashboard opens the first playlist, source or guide
+ * by itself, so this only shows when there are none yet (or the list couldn't be loaded), and
+ * its button does the one thing that helps: add one (or try loading again).
+ * Nothing shows while the list is still loading, so it never flashes up for a moment.
+ */
+function NothingSelected({ icon, title, text, buttonLabel, onButton, loading }: { icon: React.ReactNode; title: string; text: string; buttonLabel: string; onButton: () => void; loading: boolean }) {
+  if (loading) return <div className="flex-1" />;
+  return (
+    <div className="flex-1 flex items-center justify-center">
+      <div className="text-center px-6">
+        <div className="mx-auto mb-5 w-16 h-16 rounded-full flex items-center justify-center bg-secondary-container text-on-secondary-container">
+          {icon}
+        </div>
+        <p className="text-title-md text-on-surface">{title}</p>
+        <p className="mt-1 text-body-md text-on-surface-variant">{text}</p>
+        <button onClick={onButton} className="md-btn btn btn-filled mt-6">
+          {buttonLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function Dashboard({ activeView }: { activeView: 'playlists' | 'channels' | 'epg' }) {
   const navigate = useNavigate();
@@ -30,7 +215,6 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
     activeEpgSourceId, setActiveEpgSourceId,
     activeChannelPoolSourceId, setActiveChannelPoolSourceId,
     isSidebarOpen, setSidebarOpen,
-    accentColor,
     hideUrls, setHideUrls,
     setUndoEntry,
     activeCategory, setActiveCategory,
@@ -38,37 +222,62 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
     setChannelPoolLogOpen,
   } = useStore();
   const isPhone = useIsPhone();
+  // Below 1024px (phones, upright tablets) the list floats over the page as a drawer.
+  const isNarrow = useIsNarrow();
+  // Touch screens (and the drawer) show each row's buttons all the time; a mouse reveals them on hover.
+  const touchRows = isNarrow || !canHover;
+  // Touch only: which list in the pane is in Edit mode (showing grips and row buttons).
+  // Switching tab or closing the drawer ends it.
+  const [editingList, setEditingList] = useState<'playlists' | 'categories' | 'sources' | null>(null);
+  useEffect(() => { setEditingList(null); }, [activeView, isSidebarOpen]);
+  const toggleEditing = (list: 'playlists' | 'categories' | 'sources') => setEditingList(current => current === list ? null : list);
   // The empty spot in the phone top bar where the playlist editor puts its own ⋮ menu.
   const [phoneMenuSlot, setPhoneMenuSlot] = useState<HTMLDivElement | null>(null);
 
-  // On a phone the drawer floats over the whole screen, so it starts closed (also when
+  // On narrow screens the drawer floats over the page, so it starts closed (also when
   // arriving from another screen) and closes again as soon as anything is picked or created
   // in it: a playlist, a category, a source or a guide. Managing things in it (rename,
   // delete, hide) leaves it open.
   useEffect(() => {
-    if (isPhone) setSidebarOpen(false);
-  }, [isPhone, setSidebarOpen]);
-  const closeDrawerOnPhone = () => { if (isPhone) setSidebarOpen(false); };
+    if (isNarrow) setSidebarOpen(false);
+  }, [isNarrow, setSidebarOpen]);
+  const closeDrawerIfFloating = () => { if (isNarrow) setSidebarOpen(false); };
+
+  // Something is always open when there's something to open: the playlist, source or guide
+  // that was open last (remembered across reloads) if it still exists, otherwise the first one
+  // in the list. The "nothing selected" screen only shows while a list is empty. Without this,
+  // every tab on a phone or upright tablet opened on an empty screen behind the closed drawer.
+  //
+  // These run only when a list arrives, not when the selection changes: a newly created
+  // playlist is made the active one before the refetched list includes it, and it must not be
+  // swapped for the first playlist in that moment. The current id is read straight from the
+  // store for the same reason.
+  useEffect(() => {
+    if (loading || playlistsError) return;
+    const current = useStore.getState().activePlaylistId;
+    if (current && playlists.some(p => p.id === current)) return;
+    const next = playlists[0]?.id ?? null;
+    if (next !== current) setActivePlaylistId(next);
+  }, [playlists, loading, playlistsError, setActivePlaylistId]);
+  useEffect(() => {
+    if (channelPoolLoading || channelPoolSourcesError) return;
+    const current = useStore.getState().activeChannelPoolSourceId;
+    if (current && channelPoolSources.some(s => s.id === current)) return;
+    const next = channelPoolSources[0]?.id ?? null;
+    if (next !== current) setActiveChannelPoolSourceId(next);
+  }, [channelPoolSources, channelPoolLoading, channelPoolSourcesError, setActiveChannelPoolSourceId]);
+  useEffect(() => {
+    if (epgLoading || epgSourcesError) return;
+    const current = useStore.getState().activeEpgSourceId;
+    if (current && epgSources.some(s => s.id === current)) return;
+    const next = epgSources[0]?.id ?? null;
+    if (next !== current) setActiveEpgSourceId(next);
+  }, [epgSources, epgLoading, epgSourcesError, setActiveEpgSourceId]);
   const activePlaylist = playlists.find(p => p.id === activePlaylistId);
+  const activePoolSource = channelPoolSources.find(s => s.id === activeChannelPoolSourceId);
+  const activeEpgSource = epgSources.find(s => s.id === activeEpgSourceId);
   const [isCreating, setIsCreating] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const [updateDismissed, setUpdateDismissed] = useState(false);
-  const versionInfo = useVersionInfo();
-  const mod = /mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl';
-
-  // Sliding nav-tab indicator: measures the active tab button and animates the
-  // underline to it, instead of each tab mounting/unmounting its own static bar.
-  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
-  useLayoutEffect(() => {
-    const updateIndicator = () => {
-      const el = tabRefs.current[activeView];
-      if (el) setTabIndicator({ left: el.offsetLeft + 12, width: el.offsetWidth - 24 });
-    };
-    updateIndicator();
-    window.addEventListener('resize', updateIndicator);
-    return () => window.removeEventListener('resize', updateIndicator);
-  }, [activeView]);
 
   // EPG-specific state
   const [isCreatingEpg, setIsCreatingEpg] = useState(false);
@@ -170,9 +379,10 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
     }
     finally { setRefreshingChannelPoolId(null); }
   };
-  const [sidebarWidth, setSidebarWidth] = useState(256);
-  // A phone's drawer is a fixed share of the screen instead of the draggable width.
-  const drawerWidth = isPhone ? 'min(320px, 85vw)' : sidebarWidth;
+  // A little wider on touch screens, where rows and buttons are bigger.
+  const [sidebarWidth, setSidebarWidth] = useState(canHover ? 272 : 320);
+  // The floating drawer is a fixed share of the screen instead of the draggable width.
+  const drawerWidth = isNarrow ? 'min(320px, 85vw)' : sidebarWidth;
   const sidebarRef = useRef<HTMLDivElement>(null);
   const sidebarResizing = useRef<{ startX: number; startW: number } | null>(null);
   const startSidebarResize = (e: React.MouseEvent) => {
@@ -181,7 +391,7 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
     sidebarResizing.current = { startX: e.clientX, startW: sidebarWidth };
     const onMove = (ev: MouseEvent) => {
       if (!sidebarResizing.current) return;
-      const w = Math.max(160, Math.min(480, sidebarResizing.current.startW + ev.clientX - sidebarResizing.current.startX));
+      const w = Math.max(200, Math.min(480, sidebarResizing.current.startW + ev.clientX - sidebarResizing.current.startX));
       setSidebarWidth(w);
     };
     const onUp = () => {
@@ -205,15 +415,96 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
     } catch (e) { console.error(e); notifyError(e); }
   };
 
+  // ── Playlist order ──
+  // Shown in the new order straight away, while the save and the refetch that follows are
+  // still on their way (the same trick as dragging channels and categories).
+  const [localPlaylistOrder, setLocalPlaylistOrder] = useState<string[] | null>(null);
+  useEffect(() => { setLocalPlaylistOrder(null); }, [playlists]);
+  const orderedPlaylists = localPlaylistOrder
+    ? localPlaylistOrder.map(id => playlists.find(p => p.id === id)!).filter(Boolean)
+    : playlists;
+  const sortSensors = useSensors(
+    // 5px of movement before a drag starts, so a plain click still selects the row.
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const handlePlaylistDragEnd = async (event: any) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids: string[] = orderedPlaylists.map(p => p.id);
+    const newOrder = arrayMove(ids, ids.indexOf(active.id), ids.indexOf(over.id));
+    setLocalPlaylistOrder(newOrder);
+    try {
+      await api.reorderPlaylists(newOrder);
+      triggerRefresh();
+    } catch (e) {
+      console.error(e);
+      notifyError(e, 'Failed to save the playlist order.');
+      setLocalPlaylistOrder(null);
+    }
+  };
+
   const handlePlaylistCreated = (playlistId: string) => {
     setIsCreating(false);
     triggerRefresh();
     setActivePlaylistId(playlistId);
-    closeDrawerOnPhone();
+    closeDrawerIfFloating();
   };
 
+  const handleDeletePlaylist = async () => {
+    const id = deletePlaylistId;
+    if (!id) return;
+    const pl = playlists.find(p => p.id === id);
+    setDeletePlaylistId(null);
+    try {
+      const channels = await api.getChannels(id);
+      await api.deletePlaylist(id);
+      if (activePlaylistId === id) setActivePlaylistId(null);
+      triggerRefresh();
+      setUndoEntry({
+        description: `Deleted playlist "${pl?.name}"`,
+        restore: async () => {
+          const newPl = await api.createPlaylist(pl?.name || 'Restored Playlist');
+          if (channels.length > 0) {
+            const restoreData = channels.map(({ id: _id, playlistId: _pid, createdAt: _c, updatedAt: _u, ...rest }: any) => rest);
+            await api.bulkAddChannels(newPl.id, restoreData);
+          }
+          if (pl?.categories?.length) await api.updatePlaylist(newPl.id, { categories: pl.categories });
+          triggerRefresh();
+          setActivePlaylistId(newPl.id);
+        },
+      });
+    } catch (e) { console.error(e); notifyError(e, 'Failed to delete playlist.'); }
+  };
+
+  const handleDeleteChannelPoolSource = async () => {
+    const id = deleteChannelPoolSourceId;
+    if (!id) return;
+    setDeleteChannelPoolSourceId(null);
+    try {
+      await api.deleteChannelPoolSource(id);
+      if (activeChannelPoolSourceId === id) setActiveChannelPoolSourceId(null);
+      triggerChannelPoolRefresh();
+      // Channels linked to the source were unlinked, so playlists need to refetch.
+      triggerRefresh();
+    } catch (e) { console.error(e); notifyError(e, 'Failed to delete channel source.'); }
+  };
+
+  const handleDeleteEpgSource = async () => {
+    const id = deleteEpgSourceId;
+    if (!id) return;
+    setDeleteEpgSourceId(null);
+    try {
+      await api.deleteEpgSource(id);
+      if (activeEpgSourceId === id) setActiveEpgSourceId(null);
+      triggerEpgRefresh();
+    } catch (e) { console.error(e); notifyError(e, 'Failed to delete EPG source.'); }
+  };
+
+  const listIconClass = 'text-[24px]';
+
   return (
-    <div className="md-page-in flex flex-col h-dvh overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
+    <div className="md-page-in flex flex-col h-dvh overflow-hidden bg-page text-on-surface">
 
       {/* ── Phone top bar (below 768px; the desktop bar further down is hidden there) ── */}
       <MobileTopBar
@@ -226,566 +517,229 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
               title: activeView === 'playlists'
                 ? 'My Playlists'
                 : activeView === 'channels'
-                  ? channelPoolSources.find(s => s.id === activeChannelPoolSourceId)?.name ?? 'Sources'
-                  : epgSources.find(s => s.id === activeEpgSourceId)?.name ?? 'EPG',
+                  ? activePoolSource?.name ?? 'Sources'
+                  : activeEpgSource?.name ?? 'EPG',
             })}
         onMenu={() => setSidebarOpen(!isSidebarOpen)}
         // An open playlist fills this spot with the editor's own ⋮ menu (Hide stream links included).
         menuSlotRef={setPhoneMenuSlot}
         menuItems={activeView === 'playlists' && activePlaylist ? [] : [
-          (activeView === 'playlists' || activeView === 'channels') && {
-            label: hideUrls ? 'Show stream links' : 'Hide stream links',
-            icon: hideUrls ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />,
-            onClick: () => setHideUrls(!hideUrls),
+          // The open source's or guide's own actions (bigger screens have them next to its
+          // title). Uploaded files never download again, so they get no Refresh and no log.
+          activeView === 'channels' && activePoolSource && activePoolSource.type !== 'playlist-file' && {
+            label: refreshingChannelPoolId === activePoolSource.id ? 'Downloading…' : 'Refresh source',
+            icon: <Icon name="refresh" className="text-[24px]" />,
+            onClick: () => { if (!refreshingChannelPoolId) handleRefreshChannelPoolSource(activePoolSource.id); },
+          },
+          activeView === 'channels' && activePoolSource && {
+            label: 'Edit source',
+            icon: <Icon name="edit" className="text-[24px]" />,
+            onClick: () => { setPoolSourceToEdit(activePoolSource); setIsCreatingChannelPool(true); },
           },
           // Same rule as ChannelPoolUpdateLog: uploaded files never refresh, so they have no log.
-          activeView === 'channels' && channelPoolSources.find(s => s.id === activeChannelPoolSourceId)?.type !== 'playlist-file' && {
+          activeView === 'channels' && activePoolSource && activePoolSource.type !== 'playlist-file' && {
             label: 'Update log',
-            icon: <History className="h-4 w-4" />,
+            icon: <Icon name="history" className="text-[24px]" />,
             onClick: () => setChannelPoolLogOpen(true),
+          },
+          activeView === 'epg' && activeEpgSource && {
+            label: refreshingEpgId === activeEpgSource.id ? 'Downloading…' : 'Refresh guide',
+            icon: <Icon name="refresh" className="text-[24px]" />,
+            onClick: () => { if (!refreshingEpgId) handleRefreshEpgSource(activeEpgSource.id); },
+          },
+          activeView === 'epg' && activeEpgSource && {
+            label: 'Edit guide',
+            icon: <Icon name="edit" className="text-[24px]" />,
+            onClick: () => { setEpgSourceToEdit(activeEpgSource); setIsCreatingEpg(true); },
+          },
+          // Last, as in the playlist's own ⋮.
+          (activeView === 'playlists' || activeView === 'channels') && {
+            label: hideUrls ? 'Show stream links' : 'Hide stream links',
+            icon: hideUrls ? <Icon name="visibility" className="text-[24px]" /> : <Icon name="visibility_off" className="text-[24px]" />,
+            onClick: () => setHideUrls(!hideUrls),
           },
         ]}
       />
 
-      {/* ── Top App Bar ─────────────────────────────────────────────────── */}
-      {/* ── Update Banner ───────────────────────────────────────────────── */}
-      {versionInfo.updateAvailable && !updateDismissed && versionInfo.releaseUrl && (
-        <div className="shrink-0 z-30 flex items-center justify-center gap-3 px-4 py-2 text-sm font-medium text-white" style={{ backgroundColor: accentColor }}>
-          <ArrowUpCircle className="h-4 w-4 shrink-0" />
-          <span>A new version of m3u4me is available: <strong>v{versionInfo.latest}</strong></span>
-          <a
-            href={versionInfo.releaseUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:opacity-80 transition-opacity"
-          >
-            View release
-          </a>
-          <button onClick={() => setUpdateDismissed(true)} className="ml-auto p-0.5 rounded hover:bg-white/20 transition-colors" aria-label="Dismiss">
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-      )}
+      <UpdateBanner />
 
-      <nav className="h-16 shrink-0 z-50 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] elev-4 hidden md:grid grid-cols-[1fr_auto_1fr] items-center px-2 gap-1 relative">
-        {/* Left group and right group are both `1fr` tracks, so the grid keeps
-            them equal width and the middle (tabs) track dead-centered on the
-            bar's full width — regardless of which right-side buttons the
-            current tab shows. A plain flex-1 sandwiched between the two used
-            to recenter itself in whatever's left over, so the tabs visibly
-            slid sideways ("waddled") each time a tab with a different set of
-            right-side buttons was selected. */}
-        <div className="flex items-center min-w-0">
-          <button
-            onClick={() => setSidebarOpen(!isSidebarOpen)}
-            className="md-btn p-2 rounded-full text-gray-600 dark:text-gray-300"
-            aria-label="Toggle navigation drawer"
-          >
-            <Menu className="h-6 w-6" />
-          </button>
-
-          <button
-            onClick={() => navigate('/')}
-            className="md-btn flex items-center ml-2 shrink-0 p-1 -m-1 rounded"
-            aria-label="Home"
-            title="Home"
-          >
-            <Logo className="h-6 w-auto text-gray-900 dark:text-white shrink-0" />
-          </button>
-        </div>
-
-        {/* ── Centered navigation tabs ──────────────────────────────── */}
-        <div className="relative flex items-center gap-1 justify-self-center">
-          <button
-            ref={el => { tabRefs.current.playlists = el; }}
-            onClick={() => navigate('/playlists')}
-            className={`md-btn relative h-10 px-5 rounded-lg text-sm font-medium transition-colors ${
-              activeView === 'playlists'
-                ? 'text-gray-900 dark:text-white'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-            }`}
-          >
-            My Playlists
-            {/* Absolutely positioned so it never shifts the tabs (mirrored in Home.tsx). */}
-            {pendingSyncTotal > 0 && (
-              <span
-                className="absolute top-2 right-2 w-2 h-2 rounded-full"
-                style={{ backgroundColor: accentColor }}
-                title={`${pendingSyncTotal} channel${pendingSyncTotal !== 1 ? 's have' : ' has'} changes from a source waiting for you`}
-              />
-            )}
-          </button>
-          <button
-            ref={el => { tabRefs.current.channels = el; }}
-            onClick={() => navigate('/sources')}
-            className={`md-btn relative h-10 px-5 rounded-lg text-sm font-medium transition-colors ${
-              activeView === 'channels'
-                ? 'text-gray-900 dark:text-white'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-            }`}
-          >
-            Sources
-          </button>
-          <button
-            ref={el => { tabRefs.current.epg = el; }}
-            onClick={() => navigate('/epg')}
-            className={`md-btn relative h-10 px-5 rounded-lg text-sm font-medium transition-colors ${
-              activeView === 'epg'
-                ? 'text-gray-900 dark:text-white'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-            }`}
-          >
-            EPG
-          </button>
-          {/* Single indicator that slides/resizes to the active tab instead of each tab
-              popping its own underline in and out. */}
-          <div
-            className="absolute bottom-0 h-0.5 rounded-full transition-[left,width] duration-[250ms] ease-[var(--md-standard)]"
-            style={{ backgroundColor: accentColor, left: tabIndicator.left, width: tabIndicator.width }}
-          />
-        </div>
-
-        {/* ── Right side buttons ──────────────────────────────────── */}
-        <div className="flex items-center gap-1 justify-self-end min-w-0">
-        {/* Shown on every tab — Spotlight indexes playlists, sources, and EPG alike. */}
-        <button
-          onClick={() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true })); }}
-          className="md-btn hidden sm:flex items-center gap-2 h-9 px-3 lg:px-4 rounded text-xs font-medium border border-gray-300 dark:border-white/15 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-          title={`Search (${mod}+K)`}
-        >
-          <Search className="h-4 w-4" />
-          {/* Text/shortcut hint collapses first at tablet widths so this button
-              doesn't compete for space with the centered nav tabs — the icon
-              plus title tooltip still make it discoverable and usable. */}
-          <span className="hidden lg:inline text-gray-400 dark:text-gray-500">Search…</span>
-          <kbd className="hidden lg:inline ml-1 font-mono text-[10px] text-gray-400 dark:text-gray-500">{mod}+K</kbd>
-        </button>
-
-        {(activeView === 'playlists' || activeView === 'channels') && (
-          <button
-            onClick={() => setHideUrls(!hideUrls)}
-            className="md-btn hidden sm:flex items-center gap-2 h-9 px-3 lg:px-4 rounded text-xs font-medium uppercase tracking-wider border border-gray-300 dark:border-white/15 text-gray-600 dark:text-gray-300"
-            title={hideUrls ? 'Show stream URLs' : 'Hide stream URLs'}
-          >
-            {hideUrls ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-            <span className="hidden lg:inline">{hideUrls ? 'Show URLs' : 'Hide URLs'}</span>
-          </button>
-        )}
-
-        {/* Keyboard shortcuts */}
-        <button
-          onClick={() => setShowShortcuts(true)}
-          className="md-btn p-2 rounded-full text-gray-600 dark:text-gray-400"
-          aria-label="Keyboard shortcuts"
-          title="Keyboard shortcuts"
-        >
-          <Keyboard className="h-5 w-5" />
-        </button>
-
-
-        {/* Settings */}
-        <button
-          onClick={() => navigate('/settings')}
-          className="md-btn p-2 rounded-full text-gray-600 dark:text-gray-400 ml-1"
-          aria-label="Settings"
-        >
-          <Settings className="h-5 w-5" />
-        </button>
-        </div>
-      </nav>
+      <DesktopTopBar
+        active={activeView}
+        onMenu={() => setSidebarOpen(!isSidebarOpen)}
+        onShortcuts={() => setShowShortcuts(true)}
+        pendingSyncCount={pendingSyncTotal}
+      />
 
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ── Navigation Drawer ────────────────────────────────────────────── */}
+        {/* ── List pane / drawer ───────────────────────────────────────────── */}
         {/* The outer box's width does the sliding — it's always overflow-hidden, so it clips
-            rather than reflows. The inner content below stays a fixed sidebarWidth the whole
-            time, so labels never re-wrap or re-truncate mid-animation; they just get covered
-            or uncovered as the box widens, and cross-fade in/out a bit faster than the slide
-            so nothing looks squeezed into a paper-thin sliver right at the edges. */}
-        {/* On phones the drawer floats over the page (max-md:fixed below) with this dimmed
+            rather than reflows. The inner content below stays a fixed width the whole time, so
+            labels never re-wrap mid-animation; they just get covered or uncovered as the box
+            widens, and cross-fade a bit faster than the slide. */}
+        {/* Below 1024px the list floats over the page (max-lg:fixed below) with this dimmed
             backdrop behind it; tapping the backdrop closes it. It comes first in the page
             so that, at the same z-50, the drawer and every dialog paint on top of it. */}
-        {isPhone && isSidebarOpen && (
-          <div className="md-scrim md:hidden fixed inset-0 z-50 bg-black/50" onClick={() => setSidebarOpen(false)} />
+        {isNarrow && isSidebarOpen && (
+          <div className="md-scrim lg:hidden fixed inset-0 z-50 bg-black/40" onClick={() => setSidebarOpen(false)} />
         )}
         <div
           ref={sidebarRef}
-          className={`${isSidebarOpen ? '' : 'w-0'} shrink-0 overflow-hidden bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black elev-1 z-40 transition-[width] duration-[240ms] ease-[var(--md-standard)] relative max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:pt-safe max-md:pb-safe max-md:shadow-2xl`}
+          className={`${isSidebarOpen ? 'max-lg:shadow-level-3' : 'w-0'} shrink-0 overflow-hidden z-40 transition-[width] duration-[240ms] ease-[var(--md-standard)] relative max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-50 max-lg:pt-safe max-lg:pb-safe max-lg:bg-drawer max-lg:rounded-r-2xl`}
           style={isSidebarOpen ? { width: drawerWidth } : undefined}
         >
           <div
             className={`h-full flex flex-col transition-opacity duration-150 ease-[var(--md-standard)] ${isSidebarOpen ? 'opacity-100' : 'opacity-0'}`}
             style={{ width: drawerWidth }}
           >
-          <div className="flex-1 overflow-y-auto py-2">
+          {/* The floating drawer gets the logo on top, like the phone's. */}
+          {isNarrow && (
+            <div className="shrink-0 px-7 pt-5 pb-2">
+              <Logo className="h-5 w-auto text-on-surface" />
+            </div>
+          )}
+          <div className="flex-1 overflow-y-auto py-1 pl-2 pr-3 max-lg:px-3">
 
             {activeView === 'playlists' ? (
               <>
-                {/* Section: Playlists */}
-                <div className="flex items-center px-4 pt-3 pb-2">
-                  <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-gray-500 dark:text-gray-400 flex-1">
-                    Playlists
-                  </p>
-                  <button
-                    onClick={() => setIsCreating(true)}
-                    className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
-                    title="New playlist"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+                <PaneSectionHeader title="Playlists" addLabel="New playlist" onAdd={() => setIsCreating(true)} editing={editingList === 'playlists'} onToggleEdit={touchRows ? () => toggleEditing('playlists') : undefined} />
 
-                <nav className="space-y-0.5 px-2">
-                  {playlists.map((pl) => {
-                    const isActive = activePlaylistId === pl.id;
-                    return (
-                      <div key={pl.id} className="relative group flex items-center rounded hover:bg-gray-100 dark:hover:bg-white/6" style={isActive ? { backgroundColor: accentAlpha(accentColor, '18') } : undefined}>
-                        {isActive && (
-                          <div
-                            className="absolute left-0 top-1 bottom-1 w-0.5 rounded-r"
-                            style={{ backgroundColor: accentColor }}
-                          />
-                        )}
-                        {renamingId === pl.id ? (
-                          <div className="flex-1 flex items-center h-12 pl-4 pr-10 gap-3">
-                            <svg className="w-4 h-4 shrink-0 opacity-60 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                            </svg>
-                            <input
-                              autoFocus
-                              value={renameValue}
-                              onChange={e => setRenameValue(e.target.value)}
-                              onBlur={confirmRenamePlaylist}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') confirmRenamePlaylist();
-                                if (e.key === 'Escape') setRenamingId(null);
-                              }}
-                              className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b-2 focus:outline-none text-gray-900 dark:text-white px-0.5"
-                              style={{ borderColor: accentColor }}
-                            />
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => { setActivePlaylistId(pl.id); closeDrawerOnPhone(); }}
-                            onDoubleClick={() => { setRenamingId(pl.id); setRenameValue(pl.name); }}
-                            className="flex-1 flex items-center h-12 pl-4 pr-10 max-md:pr-24 gap-3 rounded text-sm font-medium text-left truncate transition-colors text-gray-700 dark:text-gray-300"
-                            style={isActive ? { color: accentColor } : undefined}
-                          >
-                            <svg className="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                            </svg>
-                            <span className="flex-1 truncate">{pl.name}</span>
-                            {(pl.unreadSyncLogCount || 0) > 0 && (
-                              <span
-                                className="shrink-0 min-w-5 h-5 px-1.5 rounded-full text-[10px] font-semibold leading-5 text-center"
-                                style={{ backgroundColor: accentAlpha(accentColor, '20'), color: accentColor }}
-                                title="New entries in this playlist's sync log"
-                              >
-                                {pl.unreadSyncLogCount! > 99 ? '99+' : pl.unreadSyncLogCount}
-                              </span>
-                            )}
-                            {/* Same look as the channel count on categories (CategoryList.tsx) */}
-                            <span
-                              className={`shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded ${!isActive ? 'bg-gray-100 dark:bg-white/8 text-gray-500 dark:text-gray-400' : ''}`}
-                              style={isActive ? { backgroundColor: accentAlpha(accentColor, '22'), color: accentColor } : undefined}
-                            >
-                              {pl.channelCount ?? 0}
+                <nav className="space-y-0.5">
+                  {/* Drag to reorder. The order is only how playlists are listed; a playlist's
+                      link keeps its number. */}
+                  <DndContext sensors={sortSensors} collisionDetection={closestCenter} onDragEnd={handlePlaylistDragEnd} modifiers={[restrictToVerticalAxis]}>
+                    <SortableContext items={orderedPlaylists.map(pl => pl.id)} strategy={verticalListSortingStrategy}>
+                      {orderedPlaylists.map((pl) => (
+                        <SortableNavRow
+                          key={pl.id}
+                          id={pl.id}
+                          label={pl.name}
+                          kind="playlist"
+                          isActive={activePlaylistId === pl.id}
+                          count={pl.channelCount ?? 0}
+                          badge={(pl.unreadSyncLogCount || 0) > 0 && (
+                            <span className="badge" title="New entries in this playlist's sync log">
+                              {pl.unreadSyncLogCount! > 99 ? '99+' : pl.unreadSyncLogCount}
                             </span>
-                          </button>
-                        )}
-                        <div className="absolute right-1 flex items-center">
-                          {/* Phones can't double-click to rename, so they get a pencil. */}
-                          {renamingId !== pl.id && (
-                            <button
-                              onClick={() => { setRenamingId(pl.id); setRenameValue(pl.name); }}
-                              className="md-btn md:hidden p-2.5 rounded-full text-gray-400"
-                              title="Rename playlist"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
                           )}
-                          <button
-                            onClick={() => setDeletePlaylistId(pl.id)}
-                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
-                            title="Delete playlist"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                          onPick={() => { setActivePlaylistId(pl.id); closeDrawerIfFloating(); }}
+                          onDelete={() => setDeletePlaylistId(pl.id)}
+                          touch={touchRows}
+                          showActions={touchRows && editingList === 'playlists'}
+                          isRenaming={renamingId === pl.id}
+                          renameValue={renameValue}
+                          onRenameStart={() => { setRenamingId(pl.id); setRenameValue(pl.name); }}
+                          onRenameChange={setRenameValue}
+                          onRenameConfirm={confirmRenamePlaylist}
+                          onRenameCancel={() => setRenamingId(null)}
+                        />
+                      ))}
+                    </SortableContext>
+                  </DndContext>
                   {playlists.length === 0 && !loading && (
-                    playlistsError ? (
-                      <div className="px-2 py-4 text-center">
-                        <p className="text-sm text-red-500 dark:text-red-400">{playlistsError}</p>
-                        <button onClick={() => refetchPlaylists()} className="md-btn mt-1 text-xs font-medium underline" style={{ color: accentColor }}>
-                          Retry
-                        </button>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-gray-400 dark:text-gray-500 px-2 py-4 text-center">
-                        No playlists yet
-                      </p>
-                    )
+                    <PaneEmpty error={playlistsError} onRetry={refetchPlaylists} text="No playlists yet" />
                   )}
                 </nav>
 
                 {/* Section: Categories */}
-                {activePlaylistId && <CategoryList playlistId={activePlaylistId} onPick={closeDrawerOnPhone} />}
+                {activePlaylistId && <CategoryList
+                  playlistId={activePlaylistId}
+                  onPick={closeDrawerIfFloating}
+                  touch={touchRows}
+                  editing={editingList === 'categories'}
+                  onToggleEdit={() => toggleEditing('categories')}
+                />}
               </>
             ) : activeView === 'channels' ? (
               <>
-                {/* Section: Channel Pool Sources */}
-                <div className="flex items-center px-4 pt-3 pb-2">
-                  <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-gray-500 dark:text-gray-400 flex-1">
-                    Channel Sources
-                  </p>
-                  <button
-                    onClick={() => { setPoolSourceToEdit(null); setIsCreatingChannelPool(true); }}
-                    className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
-                    title="Add channel source"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+                <PaneSectionHeader title="Channel sources" addLabel="Add channel source" onAdd={() => { setPoolSourceToEdit(null); setIsCreatingChannelPool(true); }} editing={editingList === 'sources'} onToggleEdit={touchRows ? () => toggleEditing('sources') : undefined} />
 
-                <nav className="space-y-0.5 px-2">
+                <nav className="space-y-0.5">
                   {channelPoolSources.map((src) => {
-                    const isActive = activeChannelPoolSourceId === src.id;
                     const isFileType = src.type === 'playlist-file';
                     return (
-                      <div key={src.id} className="relative group flex items-center rounded hover:bg-gray-100 dark:hover:bg-white/6" style={isActive ? { backgroundColor: accentAlpha(accentColor, '18') } : undefined}>
-                        {isActive && (
-                          <div
-                            className="absolute left-0 top-1 bottom-1 w-0.5 rounded-r"
-                            style={{ backgroundColor: accentColor }}
-                          />
-                        )}
-                        {renamingChannelPoolId === src.id ? (
-                          <div className="flex-1 flex items-center h-12 pl-4 pr-10 gap-3">
-                            <Layers className="w-4 h-4 shrink-0 opacity-60 text-gray-700 dark:text-gray-300" />
-                            <input
-                              autoFocus
-                              value={renameChannelPoolValue}
-                              onChange={e => setRenameChannelPoolValue(e.target.value)}
-                              onBlur={confirmRenameChannelPoolSource}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') confirmRenameChannelPoolSource();
-                                if (e.key === 'Escape') setRenamingChannelPoolId(null);
-                              }}
-                              className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b-2 focus:outline-none text-gray-900 dark:text-white px-0.5"
-                              style={{ borderColor: accentColor }}
-                            />
-                          </div>
-                        ) : (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => { setActiveChannelPoolSourceId(src.id); closeDrawerOnPhone(); }}
-                            onDoubleClick={() => { setRenamingChannelPoolId(src.id); setRenameChannelPoolValue(src.name); }}
-                            onKeyDown={(e) => {
-                              if (e.target !== e.currentTarget) return;
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                setActiveChannelPoolSourceId(src.id);
-                              }
-                            }}
-                            className="flex-1 flex flex-col justify-center h-14 pl-4 pr-20 max-md:pr-28 gap-0 rounded text-sm font-medium text-left truncate transition-colors text-gray-700 dark:text-gray-300 cursor-pointer"
-                            style={isActive ? { color: accentColor } : undefined}
-                          >
-                            <span className="flex items-center gap-2 truncate">
-                              {/* A failed download swaps the source's icon for a red warning sign instead of
-                                  adding a badge, so the row stays as quiet as a working one. */}
-                              {src.lastFetchError ? (
-                                <span className="shrink-0 flex" title={`Last refresh failed: ${src.lastFetchError}`}>
-                                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 dark:text-red-400" />
+                      <SourceRow
+                        key={src.id}
+                        kindLabel="channel source"
+                        icon={<Icon name="stacks" className={listIconClass} />}
+                        name={src.name}
+                        meta={
+                          <>
+                            <span>{src.channelCount} ch</span>
+                            {!isFileType && (
+                              <>
+                                <span>·</span>
+                                <span className="flex items-center gap-0.5" title="Refresh interval">
+                                  <Icon name="schedule" className="text-[16px]" />
+                                  {src.refreshIntervalHours}h
                                 </span>
-                              ) : (
-                                <Layers className="w-3.5 h-3.5 shrink-0 opacity-60" />
-                              )}
-                              <span className="truncate">{src.name}</span>
-                            </span>
-                            <span className="flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500 ml-5.5 font-normal">
-                              <span>{src.channelCount} ch</span>
-                              {!isFileType && (
-                                <>
-                                  <span>·</span>
-                                  <span className="flex items-center gap-0.5" title="Refresh interval">
-                                    <Clock className="w-2.5 h-2.5" />
-                                    {src.refreshIntervalHours}h
-                                  </span>
-                                </>
-                              )}
-                            </span>
-                          </div>
-                        )}
-                        <div className="absolute right-1 flex items-center gap-0">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setPoolSourceToEdit(src); setIsCreatingChannelPool(true); }}
-                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all"
-                            title="Edit channel source"
-                          >
-                            <Pencil className="w-3 h-3" />
-                          </button>
-                          {!isFileType && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleRefreshChannelPoolSource(src.id); }}
-                              className={`md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all ${refreshingChannelPoolId === src.id ? 'animate-spin' : ''}`}
-                              title="Refresh channel data"
-                              disabled={refreshingChannelPoolId === src.id}
-                            >
-                              <RefreshCw className="w-3 h-3" />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setDeleteChannelPoolSourceId(src.id)}
-                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
-                            title="Delete channel source"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
+                              </>
+                            )}
+                          </>
+                        }
+                        isActive={activeChannelPoolSourceId === src.id}
+                        failedReason={src.lastFetchError}
+                        isRenaming={renamingChannelPoolId === src.id}
+                        renameValue={renameChannelPoolValue}
+                        onRenameChange={setRenameChannelPoolValue}
+                        onRenameConfirm={confirmRenameChannelPoolSource}
+                        onRenameCancel={() => setRenamingChannelPoolId(null)}
+                        onPick={() => { setActiveChannelPoolSourceId(src.id); closeDrawerIfFloating(); }}
+                        onRenameStart={() => { setRenamingChannelPoolId(src.id); setRenameChannelPoolValue(src.name); }}
+                        onEdit={() => { setPoolSourceToEdit(src); setIsCreatingChannelPool(true); }}
+                        onRefresh={isFileType ? undefined : () => handleRefreshChannelPoolSource(src.id)}
+                        isRefreshing={refreshingChannelPoolId === src.id}
+                        onDelete={() => setDeleteChannelPoolSourceId(src.id)}
+                        touch={touchRows}
+                        showActions={touchRows && editingList === 'sources'}
+                      />
                     );
                   })}
                   {channelPoolSources.length === 0 && !channelPoolLoading && (
-                    channelPoolSourcesError ? (
-                      <div className="px-2 py-4 text-center">
-                        <p className="text-sm text-red-500 dark:text-red-400">{channelPoolSourcesError}</p>
-                        <button onClick={() => refetchChannelPoolSources()} className="md-btn mt-1 text-xs font-medium underline" style={{ color: accentColor }}>
-                          Retry
-                        </button>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-gray-400 dark:text-gray-500 px-2 py-4 text-center">
-                        No channel sources yet
-                      </p>
-                    )
+                    <PaneEmpty error={channelPoolSourcesError} onRetry={refetchChannelPoolSources} text="No channel sources yet" />
                   )}
                 </nav>
               </>
             ) : (
               <>
-                {/* Section: EPG Sources */}
-                <div className="flex items-center px-4 pt-3 pb-2">
-                  <p className="text-[10px] font-medium uppercase tracking-[0.15em] text-gray-500 dark:text-gray-400 flex-1">
-                    EPG Sources
-                  </p>
-                  <button
-                    onClick={() => { setEpgSourceToEdit(null); setIsCreatingEpg(true); }}
-                    className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
-                    title="Add EPG source"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+                <PaneSectionHeader title="EPG sources" addLabel="Add EPG source" onAdd={() => { setEpgSourceToEdit(null); setIsCreatingEpg(true); }} editing={editingList === 'sources'} onToggleEdit={touchRows ? () => toggleEditing('sources') : undefined} />
 
-                <nav className="space-y-0.5 px-2">
-                  {epgSources.map((src) => {
-                    const isActive = activeEpgSourceId === src.id;
-                    return (
-                      <div key={src.id} className="relative group flex items-center rounded hover:bg-gray-100 dark:hover:bg-white/6" style={isActive ? { backgroundColor: accentAlpha(accentColor, '18') } : undefined}>
-                        {isActive && (
-                          <div
-                            className="absolute left-0 top-1 bottom-1 w-0.5 rounded-r"
-                            style={{ backgroundColor: accentColor }}
-                          />
-                        )}
-                        {renamingEpgId === src.id ? (
-                          <div className="flex-1 flex items-center h-12 pl-4 pr-10 gap-3">
-                            <Radio className="w-4 h-4 shrink-0 opacity-60 text-gray-700 dark:text-gray-300" />
-                            <input
-                              autoFocus
-                              value={renameEpgValue}
-                              onChange={e => setRenameEpgValue(e.target.value)}
-                              onBlur={confirmRenameEpgSource}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') confirmRenameEpgSource();
-                                if (e.key === 'Escape') setRenamingEpgId(null);
-                              }}
-                              className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b-2 focus:outline-none text-gray-900 dark:text-white px-0.5"
-                              style={{ borderColor: accentColor }}
-                            />
-                          </div>
-                        ) : (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => { setActiveEpgSourceId(src.id); closeDrawerOnPhone(); }}
-                            onDoubleClick={() => { setRenamingEpgId(src.id); setRenameEpgValue(src.name); }}
-                            onKeyDown={(e) => {
-                              if (e.target !== e.currentTarget) return;
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                setActiveEpgSourceId(src.id);
-                              }
-                            }}
-                            className="flex-1 flex flex-col justify-center h-14 pl-4 pr-20 max-md:pr-28 gap-0 rounded text-sm font-medium text-left truncate transition-colors text-gray-700 dark:text-gray-300 cursor-pointer"
-                            style={isActive ? { color: accentColor } : undefined}
-                          >
-                            <span className="flex items-center gap-2 truncate">
-                              {/* A failed download swaps the source's icon for a red warning sign instead of
-                                  adding a badge, so the row stays as quiet as a working one. */}
-                              {src.lastFetchError ? (
-                                <span className="shrink-0 flex" title={`Last refresh failed: ${src.lastFetchError}`}>
-                                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 dark:text-red-400" />
-                                </span>
-                              ) : (
-                                <Radio className="w-3.5 h-3.5 shrink-0 opacity-60" />
-                              )}
-                              <span className="truncate">{src.name}</span>
-                            </span>
-                            <span className="flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500 ml-5.5 font-normal">
-                              <span>{src.channelCount} ch</span>
-                              <span>·</span>
-                              <span className="flex items-center gap-0.5" title="Refresh interval">
-                                <Clock className="w-2.5 h-2.5" />
-                                {src.refreshIntervalHours}h
-                              </span>
-                            </span>
-                          </div>
-                        )}
-                        <div className="absolute right-1 flex items-center gap-0">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setEpgSourceToEdit(src); setIsCreatingEpg(true); }}
-                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all"
-                            title="Edit EPG source"
-                          >
-                            <Pencil className="w-3 h-3" />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleRefreshEpgSource(src.id); }}
-                            className={`md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-all ${refreshingEpgId === src.id ? 'animate-spin' : ''}`}
-                            title="Refresh EPG data"
-                            disabled={refreshingEpgId === src.id}
-                          >
-                            <RefreshCw className="w-3 h-3" />
-                          </button>
-                          <button
-                            onClick={() => setDeleteEpgSourceId(src.id)}
-                            className="md-btn p-1.5 max-md:p-2.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-all"
-                            title="Delete EPG source"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <nav className="space-y-0.5">
+                  {epgSources.map((src) => (
+                    <SourceRow
+                      key={src.id}
+                      kindLabel="EPG source"
+                      icon={<Icon name="live_tv" className={listIconClass} />}
+                      name={src.name}
+                      meta={
+                        <>
+                          <span>{src.channelCount} ch</span>
+                          <span>·</span>
+                          <span className="flex items-center gap-0.5" title="Refresh interval">
+                            <Icon name="schedule" className="text-[16px]" />
+                            {src.refreshIntervalHours}h
+                          </span>
+                        </>
+                      }
+                      isActive={activeEpgSourceId === src.id}
+                      failedReason={src.lastFetchError}
+                      isRenaming={renamingEpgId === src.id}
+                      renameValue={renameEpgValue}
+                      onRenameChange={setRenameEpgValue}
+                      onRenameConfirm={confirmRenameEpgSource}
+                      onRenameCancel={() => setRenamingEpgId(null)}
+                      onPick={() => { setActiveEpgSourceId(src.id); closeDrawerIfFloating(); }}
+                      onRenameStart={() => { setRenamingEpgId(src.id); setRenameEpgValue(src.name); }}
+                      onEdit={() => { setEpgSourceToEdit(src); setIsCreatingEpg(true); }}
+                      onRefresh={() => handleRefreshEpgSource(src.id)}
+                      isRefreshing={refreshingEpgId === src.id}
+                      onDelete={() => setDeleteEpgSourceId(src.id)}
+                      touch={touchRows}
+                        showActions={touchRows && editingList === 'sources'}
+                    />
+                  ))}
                   {epgSources.length === 0 && !epgLoading && (
-                    epgSourcesError ? (
-                      <div className="px-2 py-4 text-center">
-                        <p className="text-sm text-red-500 dark:text-red-400">{epgSourcesError}</p>
-                        <button onClick={() => refetchEpgSources()} className="md-btn mt-1 text-xs font-medium underline" style={{ color: accentColor }}>
-                          Retry
-                        </button>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-gray-400 dark:text-gray-500 px-2 py-4 text-center">
-                        No EPG sources yet
-                      </p>
-                    )
+                    <PaneEmpty error={epgSourcesError} onRetry={refetchEpgSources} text="No EPG sources yet" />
                   )}
                 </nav>
               </>
@@ -793,36 +747,30 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
           </div>
           </div>
 
-          {/* Resize handle (mouse only, so not on phones) */}
-          {isSidebarOpen && !isPhone && (
+          {/* Resize handle (mouse only, so not on the floating drawer) */}
+          {isSidebarOpen && !isNarrow && (
             <div
               onMouseDown={startSidebarResize}
-              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-gray-300 dark:hover:bg-white/15 transition-colors z-20"
+              className="absolute right-0 top-0 bottom-2 w-1.5 cursor-col-resize rounded-full hover:bg-outline-variant transition-colors z-20"
             />
           )}
         </div>
 
-        {/* ── Main content ─────────────────────────────────────────────────── */}
-        <div className="flex-1 flex flex-col min-w-0">
+        {/* ── Content pane ─────────────────────────────────────────────────── */}
+        {/* A rounded panel on the tinted page. Next to the open list on wide screens it touches
+            the list's edge; otherwise it keeps an 8px margin on both sides. */}
+        <div className={`flex-1 flex flex-col min-w-0 mb-2 mr-2 ${isSidebarOpen && !isNarrow ? '' : 'ml-2'} rounded-2xl max-md:rounded-[20px] bg-pane border border-pane-border overflow-hidden`}>
           {activeView === 'playlists' ? (
             activePlaylistId ? (
               <PlaylistEditor playlistId={activePlaylistId} phoneMenuSlot={phoneMenuSlot} />
             ) : (
-              <div className="flex-1 flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black">
-                <div className="text-center px-6">
-                  <FileAudio className="mx-auto h-16 w-16 text-gray-300 dark:text-gray-700 mb-4" />
-                  <p className="text-base font-medium text-gray-500 dark:text-gray-400">No playlist selected</p>
-                  <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">Choose a playlist from the drawer to start editing.</p>
-                  {/* Phones: the drawer is closed, so offer a clear way to open it. */}
-                  <button
-                    onClick={() => setSidebarOpen(true)}
-                    className="md-btn md:hidden mt-5 h-10 px-5 rounded text-sm font-medium text-white"
-                    style={{ backgroundColor: accentColor }}
-                  >
-                    Choose a playlist
-                  </button>
-                </div>
-              </div>
+              <NothingSelected
+                loading={loading}
+                icon={<Icon name="queue_music" className="text-[28px]" />}
+                {...(playlistsError
+                  ? { title: "Couldn't load your playlists", text: playlistsError, buttonLabel: 'Try again', onButton: refetchPlaylists }
+                  : { title: 'No playlists yet', text: 'Make a playlist, then fill it with channels from your sources.', buttonLabel: 'New playlist', onButton: () => setIsCreating(true) })}
+              />
             )
           ) : activeView === 'channels' ? (
             <div className="flex-1 flex overflow-hidden">
@@ -839,44 +787,36 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
                     }}
                   />
                 ) : (
-                  <div className="flex-1 flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black">
-                    <div className="text-center px-6">
-                      <Layers className="mx-auto h-16 w-16 text-gray-300 dark:text-gray-700 mb-4" />
-                      <p className="text-base font-medium text-gray-500 dark:text-gray-400">No channel source selected</p>
-                      <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">Choose a source from the drawer or add a new one.</p>
-                      {/* Phones: the drawer is closed, so offer a clear way to open it. */}
-                      <button
-                        onClick={() => setSidebarOpen(true)}
-                        className="md-btn md:hidden mt-5 h-10 px-5 rounded text-sm font-medium text-white"
-                        style={{ backgroundColor: accentColor }}
-                      >
-                        Choose a source
-                      </button>
-                    </div>
-                  </div>
+                  <NothingSelected
+                    loading={channelPoolLoading}
+                    icon={<Icon name="stacks" className="text-[28px]" />}
+                    {...(channelPoolSourcesError
+                      ? { title: "Couldn't load your sources", text: channelPoolSourcesError, buttonLabel: 'Try again', onButton: refetchChannelPoolSources }
+                      : { title: 'No channel sources yet', text: 'Add your provider’s login or playlist link to browse its channels.', buttonLabel: 'Add channel source', onButton: () => { setPoolSourceToEdit(null); setIsCreatingChannelPool(true); } })}
+                  />
                 )}
               </div>
               <ChannelPoolUpdateLog />
             </div>
           ) : (
             activeEpgSourceId ? (
-              <EpgViewer sourceId={activeEpgSourceId} onAssignChannel={handleAssignChannel} />
+              <EpgViewer
+                sourceId={activeEpgSourceId}
+                onAssignChannel={handleAssignChannel}
+                sourceName={activeEpgSource?.name}
+                fetchError={activeEpgSource?.lastFetchError}
+                onRefresh={() => handleRefreshEpgSource(activeEpgSourceId)}
+                isRefreshing={refreshingEpgId === activeEpgSourceId}
+                onEdit={() => { setEpgSourceToEdit(activeEpgSource || null); setIsCreatingEpg(true); }}
+              />
             ) : (
-              <div className="flex-1 flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black">
-                <div className="text-center px-6">
-                  <Radio className="mx-auto h-16 w-16 text-gray-300 dark:text-gray-700 mb-4" />
-                  <p className="text-base font-medium text-gray-500 dark:text-gray-400">No EPG source selected</p>
-                  <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">Choose an EPG source from the drawer or add a new one.</p>
-                  {/* Phones: the drawer is closed, so offer a clear way to open it. */}
-                  <button
-                    onClick={() => setSidebarOpen(true)}
-                    className="md-btn md:hidden mt-5 h-10 px-5 rounded text-sm font-medium text-white"
-                    style={{ backgroundColor: accentColor }}
-                  >
-                    Choose a guide
-                  </button>
-                </div>
-              </div>
+              <NothingSelected
+                loading={epgLoading}
+                icon={<Icon name="live_tv" className="text-[28px]" />}
+                {...(epgSourcesError
+                  ? { title: "Couldn't load your TV guides", text: epgSourcesError, buttonLabel: 'Try again', onButton: refetchEpgSources }
+                  : { title: 'No EPG sources yet', text: 'Add a TV guide link to see what’s on and match it to your channels.', buttonLabel: 'Add EPG source', onButton: () => { setEpgSourceToEdit(null); setIsCreatingEpg(true); } })}
+              />
             )
           )}
         </div>
@@ -889,55 +829,10 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
         onCreated={handlePlaylistCreated}
       />
 
-      {/* ── Dialog: Delete Playlist ──────────────────────────────────────── */}
       {deletePlaylistId && (
-        <div className="md-scrim fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24">
-            <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-2">
-              Delete Playlist
-            </h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 px-6 pb-6">
-              Are you sure? All channels in this playlist will be permanently deleted.
-            </p>
-            <div className="flex justify-end gap-1 px-4 pb-4">
-              <button
-                onClick={() => setDeletePlaylistId(null)}
-                className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  const id = deletePlaylistId;
-                  const pl = playlists.find(p => p.id === id);
-                  setDeletePlaylistId(null);
-                  try {
-                    const channels = await api.getChannels(id);
-                    await api.deletePlaylist(id);
-                    if (activePlaylistId === id) setActivePlaylistId(null);
-                    triggerRefresh();
-                    setUndoEntry({
-                      description: `Deleted playlist "${pl?.name}"`,
-                      restore: async () => {
-                        const newPl = await api.createPlaylist(pl?.name || 'Restored Playlist');
-                        if (channels.length > 0) {
-                          const restoreData = channels.map(({ id: _id, playlistId: _pid, createdAt: _c, updatedAt: _u, ...rest }: any) => rest);
-                          await api.bulkAddChannels(newPl.id, restoreData);
-                        }
-                        if (pl?.categories?.length) await api.updatePlaylist(newPl.id, { categories: pl.categories });
-                        triggerRefresh();
-                        setActivePlaylistId(newPl.id);
-                      },
-                    });
-                  } catch (e) { console.error(e); notifyError(e, 'Failed to delete playlist.'); }
-                }}
-                className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-red-600 dark:text-red-400"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog title="Delete playlist" confirmLabel="Delete" danger onConfirm={handleDeletePlaylist} onClose={() => setDeletePlaylistId(null)}>
+          All channels in this playlist will be deleted.
+        </ConfirmDialog>
       )}
 
       <Spotlight onNavigate={handleSpotlightNavigate} />
@@ -956,128 +851,27 @@ export default function Dashboard({ activeView }: { activeView: 'playlists' | 'c
         epgDisplayName={assignEpgDisplayName}
       />
 
-      {/* ── Dialog: Delete Channel Pool Source ───────────────────────────── */}
       {deleteChannelPoolSourceId && (
-        <div className="md-scrim fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24">
-            <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-2">
-              Delete Channel Source
-            </h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 px-6 pb-6">
-              Are you sure? All cached channel data and logs for this source will be removed.
-            </p>
-            {deletingPoolSourceLinkedCount > 0 && (
-              <div className="mx-6 mb-6 -mt-2 flex gap-2.5 rounded border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
-                <p className="text-sm text-amber-800 dark:text-amber-200">
-                  {deletingPoolSourceLinkedCount} channel{deletingPoolSourceLinkedCount !== 1 ? 's' : ''} in your playlists {deletingPoolSourceLinkedCount !== 1 ? 'are' : 'is'} kept in sync with this source. {deletingPoolSourceLinkedCount !== 1 ? "They'll" : "It'll"} stay in your playlists but stop syncing. Adding this source again later won't reconnect {deletingPoolSourceLinkedCount !== 1 ? 'them' : 'it'}.
-                </p>
-              </div>
-            )}
-            <div className="flex justify-end gap-1 px-4 pb-4">
-              <button
-                onClick={() => setDeleteChannelPoolSourceId(null)}
-                className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  const id = deleteChannelPoolSourceId;
-                  setDeleteChannelPoolSourceId(null);
-                  try {
-                    await api.deleteChannelPoolSource(id);
-                    if (activeChannelPoolSourceId === id) setActiveChannelPoolSourceId(null);
-                    triggerChannelPoolRefresh();
-                    // Channels linked to the source were unlinked, so playlists need to refetch.
-                    triggerRefresh();
-                  } catch (e) { console.error(e); notifyError(e, 'Failed to delete channel source.'); }
-                }}
-                className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-red-600 dark:text-red-400"
-              >
-                Delete
-              </button>
+        <ConfirmDialog title="Delete channel source" confirmLabel="Delete" danger onConfirm={handleDeleteChannelPoolSource} onClose={() => setDeleteChannelPoolSourceId(null)}>
+          <p>All cached channel data and logs for this source will be removed.</p>
+          {deletingPoolSourceLinkedCount > 0 && (
+            <div className="mt-4 flex gap-3 rounded-xl bg-tertiary-container text-on-tertiary-container p-3">
+              <Icon name="warning" className="text-[24px] shrink-0" />
+              <p>
+                {deletingPoolSourceLinkedCount} channel{deletingPoolSourceLinkedCount !== 1 ? 's' : ''} in your playlists {deletingPoolSourceLinkedCount !== 1 ? 'are' : 'is'} kept in sync with this source. {deletingPoolSourceLinkedCount !== 1 ? "They'll" : "It'll"} stay in your playlists but stop syncing. Adding this source again later won't reconnect {deletingPoolSourceLinkedCount !== 1 ? 'them' : 'it'}.
+              </p>
             </div>
-          </div>
-        </div>
+          )}
+        </ConfirmDialog>
       )}
 
-      {/* ── Dialog: Delete EPG Source ─────────────────────────────────────── */}
       {deleteEpgSourceId && (
-        <div className="md-scrim fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24">
-            <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-2">
-              Delete EPG Source
-            </h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 px-6 pb-6">
-              Are you sure? All cached EPG data for this source will be removed.
-            </p>
-            <div className="flex justify-end gap-1 px-4 pb-4">
-              <button
-                onClick={() => setDeleteEpgSourceId(null)}
-                className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  const id = deleteEpgSourceId;
-                  setDeleteEpgSourceId(null);
-                  try {
-                    await api.deleteEpgSource(id);
-                    if (activeEpgSourceId === id) setActiveEpgSourceId(null);
-                    triggerEpgRefresh();
-                  } catch (e) { console.error(e); notifyError(e, 'Failed to delete EPG source.'); }
-                }}
-                className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-red-600 dark:text-red-400"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog title="Delete EPG source" confirmLabel="Delete" danger onConfirm={handleDeleteEpgSource} onClose={() => setDeleteEpgSourceId(null)}>
+          All cached EPG data for this source will be removed.
+        </ConfirmDialog>
       )}
 
-      {/* ── Dialog: Keyboard Shortcuts ──────────────────────────────────── */}
-      {showShortcuts && (
-        <div className="md-scrim fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={() => setShowShortcuts(false)}>
-          <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100 dark:border-white/10">
-              <h2 className="text-xl font-medium text-gray-900 dark:text-white">Keyboard Shortcuts</h2>
-              <button onClick={() => setShowShortcuts(false)} className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <div className="px-6 py-4 space-y-1">
-              {([
-                [[mod, 'K'], 'Open search'],
-                [[mod, 'A'], 'Select all channels in category'],
-                [['Esc'], 'Clear selection'],
-                [['Del'], 'Delete selected channels'],
-                [['Space'], 'Toggle visibility of selected channels'],
-                [[mod, 'Z'], 'Undo last destructive action'],
-              ] as [string[], string][]).map(([keys, label]) => (
-                <div key={label} className="flex items-center justify-between py-2.5 border-b border-gray-100 dark:border-white/8 last:border-0">
-                  <span className="text-sm text-gray-700 dark:text-gray-300">{label}</span>
-                  <div className="flex items-center gap-1 shrink-0 ml-4">
-                    {keys.map((k, i) => (
-                      <React.Fragment key={k}>
-                        {i > 0 && <span className="text-xs text-gray-400">+</span>}
-                        <kbd className="inline-flex items-center px-2 py-1 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-white/10 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-white/15 shadow-sm">
-                          {k}
-                        </kbd>
-                      </React.Fragment>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="px-6 pb-5 pt-1">
-              <p className="text-xs text-gray-400 dark:text-gray-500">Shortcuts are active when no text field is focused.</p>
-            </div>
-          </div>
-        </div>
-      )}
+      <KeyboardShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
 
       {isPhone && <MobileTabBar active={activeView === 'channels' ? 'sources' : activeView} />}
       <Toast withTabBar />

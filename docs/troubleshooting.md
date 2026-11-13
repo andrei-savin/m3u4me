@@ -82,7 +82,7 @@ The channel is [synced](features.md#channel-sync) with a source, and that source
 
 ## The TV guide is empty after a restart
 
-m3u4me downloads your TV guides again every time it starts. Big guides take a few minutes. Wait a little, or press **Refresh EPG data** on the guide in the **EPG** tab.
+m3u4me downloads your TV guides again every time it starts. Big guides take a few minutes. Wait a little, or open the guide in the **EPG** tab and press the refresh button next to its name (on a phone, **Refresh guide** under **⋮**).
 
 ## I forgot my password
 

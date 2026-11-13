@@ -9,17 +9,26 @@ import SettingsPage from './components/SettingsPage';
 import { useStore, notifyError, AuthExpiredError } from './store';
 import { api, getSessionToken } from './apiClient';
 import { updateFavicon } from './utils/favicon';
+import { applyMaterialTheme } from './utils/materialTheme';
 
 function AppContent() {
-  const { isDarkMode, isAmoledMode, accentColor } = useStore();
+  const { isDarkMode, isAmoledMode, accentColor, colorStyle, fontFamily } = useStore();
   const [authChecked, setAuthChecked] = useState(false);
   const [locked, setLocked] = useState(false);
   // Whether to show the first-run setup instead of the app. null until the server has answered.
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
 
+  // The app's palette is generated from the accent colour and the colour style (main.tsx
+  // applies it before the first paint; this keeps it current when either changes).
   useEffect(() => {
-    updateFavicon(accentColor);
-  }, [accentColor]);
+    const primary = applyMaterialTheme(accentColor, colorStyle);
+    // The browser tab's icon gets the shade the logo in the top bar has right now.
+    updateFavicon(isDarkMode ? primary.dark : primary.light);
+  }, [accentColor, colorStyle, isDarkMode]);
+
+  useEffect(() => {
+    document.documentElement.dataset.font = fontFamily;
+  }, [fontFamily]);
 
   useEffect(() => {
     if (isDarkMode) {

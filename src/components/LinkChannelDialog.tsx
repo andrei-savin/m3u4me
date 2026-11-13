@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, AlertTriangle, ChevronLeft } from 'lucide-react';
 import {
   api, Channel, LinkCandidate, SyncField, SYNC_FIELDS, SyncFieldToggles as Toggles,
   triggerRefresh, triggerChannelPoolRefresh,
@@ -9,6 +8,7 @@ import { useDebouncedValue } from '../utils/useDebouncedValue';
 import Dialog from './Dialog';
 import ChannelLogo from './ChannelLogo';
 import SyncFieldToggles, { SYNC_FIELD_LABELS, anySyncFieldOn } from './SyncFieldToggles';
+import Icon from './Icon';
 
 const lettersAndDigits = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 // Words of 4+ characters, so short filler like "not", "the" or "hd" doesn't count as the two
@@ -40,7 +40,7 @@ export default function LinkChannelDialog({
   channel: Channel;
   onClose: () => void;
 }) {
-  const { accentColor, logoBgColor } = useStore();
+  const { logoBgColor } = useStore();
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 300);
   const [candidates, setCandidates] = useState<LinkCandidate[]>([]);
@@ -102,14 +102,14 @@ export default function LinkChannelDialog({
     }
   };
 
-  const inputCls = 'w-full pl-9 pr-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white focus:outline-none';
+  const inputCls = 'field h-12 pl-11 rounded-full bg-surface-container-highest border-transparent max-md:text-base';
 
   return (
-    <Dialog onClose={onClose} dismissible={!saving} maxWidth="max-w-lg" panelClassName="rounded max-h-[85vh]">
-      <div className="px-6 pt-5 pb-3 border-b border-gray-100 dark:border-white/10">
-        <h2 className="text-lg font-medium text-gray-900 dark:text-white">{channel.link ? 'Link to Another Channel' : 'Link to Source'}</h2>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">
-          Keep <span className="font-medium text-gray-700 dark:text-gray-300">{channel.name || 'Unnamed'}</span> in sync with a channel from one of your sources.
+    <Dialog onClose={onClose} dismissible={!saving} maxWidth="max-w-lg" panelClassName="max-h-[85vh]">
+      <div className="px-6 pt-6 pb-2">
+        <h2 className="text-headline-sm text-on-surface">{channel.link ? 'Link to another channel' : 'Link to source'}</h2>
+        <p className="text-body-md text-on-surface-variant mt-1">
+          Keep <span className="font-semibold text-on-surface">{channel.name || 'Unnamed'}</span> in sync with a channel from one of your sources.
         </p>
       </div>
 
@@ -117,26 +117,24 @@ export default function LinkChannelDialog({
         <div className="flex flex-col min-h-0 flex-1">
           <div className="px-6 pt-4 pb-2">
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Icon name="search" className="absolute left-4 top-1/2 -translate-y-1/2 text-[24px] text-on-surface-variant" />
               <input
                 autoFocus
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder="Search your sources by name or link…"
                 className={inputCls}
-                onFocus={e => (e.target.style.borderColor = accentColor)}
-                onBlur={e => (e.target.style.borderColor = '')}
               />
             </div>
             {!query && (
-              <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1.5">Suggestions: same stream link first, then similar names.</p>
+              <p className="text-body-sm text-on-surface-variant mt-2 px-4">Suggestions: same stream link first, then similar names.</p>
             )}
           </div>
           <div className="flex-1 min-h-[12rem] overflow-y-auto px-3 pb-3">
             {loading ? (
-              <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+              <div className="flex justify-center py-10"><Icon name="progress_activity" className="text-[24px] animate-spin text-on-surface-variant" /></div>
             ) : candidates.length === 0 ? (
-              <p className="text-sm text-gray-500 dark:text-gray-400 text-center px-6 py-10">
+              <p className="text-body-md text-on-surface-variant text-center px-6 py-10">
                 {query
                   ? 'No channels match. Uploaded-file sources aren\'t listed, because they never change.'
                   : 'No suggestions for this channel. Search for it by name.'}
@@ -146,15 +144,15 @@ export default function LinkChannelDialog({
                 <button
                   key={c.id}
                   onClick={() => pick(c)}
-                  className="md-btn w-full flex items-center gap-3 px-3 py-2 rounded text-left hover:bg-gray-50 dark:hover:bg-white/5"
+                  className="md-btn w-full flex items-center gap-3 px-3 h-14 rounded-xl text-left"
                 >
-                  <ChannelLogo logo={c.logo} name={c.name} logoBgColor={logoBgColor} className="w-10 h-7 shrink-0 rounded border border-gray-200 dark:border-white/10" />
+                  <ChannelLogo logo={c.logo} name={c.name} logoBgColor={logoBgColor} className="w-12 h-8 shrink-0 rounded-md" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{c.name}</p>
-                    <p className="text-[11px] text-gray-500 dark:text-gray-400 truncate">{c.sourceName} · {c.category}</p>
+                    <p className="text-label-lg text-on-surface truncate">{c.name}</p>
+                    <p className="text-body-sm text-on-surface-variant truncate">{c.sourceName} · {c.category}</p>
                   </div>
                   {c.match !== 'search' && (
-                    <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium" style={{ backgroundColor: `${accentColor}20`, color: accentColor }}>
+                    <span className="shrink-0 h-6 px-2.5 inline-flex items-center rounded-lg text-label-sm bg-secondary-container text-on-secondary-container">
                       {c.match === 'url' ? 'Same stream link' : 'Similar name'}
                     </span>
                   )}
@@ -165,44 +163,44 @@ export default function LinkChannelDialog({
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
-          <div className="flex items-center gap-3 rounded border border-gray-200 dark:border-white/10 p-3">
-            <ChannelLogo logo={selected.logo} name={selected.name} logoBgColor={logoBgColor} className="w-10 h-7 shrink-0 rounded border border-gray-200 dark:border-white/10" />
+          <div className="flex items-center gap-3 rounded-xl bg-surface-container-highest pl-3 pr-1.5 py-2.5">
+            <ChannelLogo logo={selected.logo} name={selected.name} logoBgColor={logoBgColor} className="w-12 h-8 shrink-0 rounded-md" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{selected.name}</p>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400 truncate">{selected.sourceName} · {selected.category}</p>
+              <p className="text-label-lg text-on-surface truncate">{selected.name}</p>
+              <p className="text-body-sm text-on-surface-variant truncate">{selected.sourceName} · {selected.category}</p>
             </div>
             <button
               onClick={() => setSelected(null)}
               disabled={saving}
-              className="md-btn shrink-0 flex items-center gap-0.5 h-7 px-2 rounded text-[11px] font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300"
+              className="md-btn btn btn-text"
             >
-              <ChevronLeft className="h-3.5 w-3.5" /> Change
+              <Icon name="chevron_left" className="text-[20px]" /> Change
             </button>
           </div>
 
           {namesLookUnrelated(channel.name, selected.name) && (
-            <div className="flex gap-2 rounded border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-2.5">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
-              <p className="text-xs text-amber-800 dark:text-amber-200">These look like different channels. You can still link them if that's what you want.</p>
+            <div className="flex gap-2.5 rounded-xl bg-tertiary-container text-on-tertiary-container p-3">
+              <Icon name="warning" className="text-[20px] shrink-0 mt-0.5" />
+              <p className="text-body-sm">These look like different channels. You can still link them if that's what you want.</p>
             </div>
           )}
 
           <div>
-            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400 mb-1.5">What to keep in sync</p>
+            <p className="field-label mb-2">What to keep in sync</p>
             {fields
-              ? <SyncFieldToggles value={fields} onChange={setFields} accentColor={accentColor} disabled={saving} />
-              : <p className="text-sm text-gray-400">Loading…</p>}
+              ? <SyncFieldToggles value={fields} onChange={setFields} disabled={saving} />
+              : <p className="text-body-md text-on-surface-variant">Loading…</p>}
           </div>
 
           <div>
-            <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400 mb-1.5">Differences</p>
+            <p className="field-label mb-2">Differences</p>
             {differingFields.length === 0 ? (
-              <p className="text-sm text-gray-500 dark:text-gray-400">Your channel already matches this one.</p>
+              <p className="text-body-md text-on-surface-variant">Your channel already matches this one.</p>
             ) : (
               <div className="space-y-3">
                 {differingFields.map(field => (
                   <div key={field}>
-                    <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{SYNC_FIELD_LABELS[field]}</p>
+                    <p className="text-label-md text-on-surface mb-1.5">{SYNC_FIELD_LABELS[field]}</p>
                     <div className="grid grid-cols-2 gap-2">
                       {(['mine', 'source'] as const).map(option => {
                         const active = choices[field] === option;
@@ -212,13 +210,13 @@ export default function LinkChannelDialog({
                             key={option}
                             onClick={() => setChoices(prev => ({ ...prev, [field]: option }))}
                             disabled={saving}
-                            className={`md-btn text-left rounded border p-2 min-w-0 ${active ? '' : 'border-gray-200 dark:border-white/10'}`}
-                            style={active ? { borderColor: accentColor, backgroundColor: `${accentColor}0d` } : undefined}
+                            className={`md-btn text-left rounded-xl border px-3 py-2 min-w-0 ${active ? 'border-transparent bg-secondary-container text-on-secondary-container' : 'border-outline-variant'}`}
                           >
-                            <span className="block text-[11px] font-medium" style={active ? { color: accentColor } : undefined}>
+                            <span className="flex items-center gap-1 text-label-md">
+                              {active && <Icon name="check" className="text-[18px] shrink-0" />}
                               {option === 'mine' ? 'Keep mine' : 'Use source value'}
                             </span>
-                            <span className="block text-[11px] font-mono text-gray-500 dark:text-gray-400 truncate" title={value || undefined}>
+                            <span className="block text-body-sm font-mono opacity-80 truncate" title={value || undefined}>
                               {value || '(empty)'}
                             </span>
                           </button>
@@ -233,16 +231,15 @@ export default function LinkChannelDialog({
         </div>
       )}
 
-      <div className="flex justify-end gap-1 px-4 py-3 border-t border-gray-100 dark:border-white/10">
-        <button onClick={onClose} disabled={saving} className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300">
+      <div className="flex justify-end gap-2 px-6 py-5">
+        <button onClick={onClose} disabled={saving} className="md-btn btn btn-text">
           Cancel
         </button>
         {selected && (
           <button
             onClick={confirm}
             disabled={saving || !fields || !anySyncFieldOn(fields)}
-            className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40"
-            style={{ color: accentColor }}
+            className="md-btn btn btn-filled"
           >
             {saving ? 'Linking…' : 'Link'}
           </button>

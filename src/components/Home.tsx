@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStats, usePlaylists, SearchResult } from '../apiClient';
-import { useStore, accentAlpha, notifyError } from '../store';
-import { useVersionInfo } from './AppInfo';
+import { useStats, usePlaylists, triggerRefresh, Playlist, SearchResult } from '../apiClient';
+import { useStore, notifyError } from '../store';
+import DesktopTopBar from './DesktopTopBar';
+import UpdateBanner from './UpdateBanner';
+import KeyboardShortcutsDialog from './KeyboardShortcutsDialog';
+import NewPlaylistDialog from './NewPlaylistDialog';
 import { Logo } from './Logo';
 import Spotlight from './Spotlight';
 import Toast from './Toast';
@@ -11,18 +14,7 @@ import MobileTabBar from './MobileTabBar';
 import { useIsPhone } from '../utils/useIsPhone';
 import { formatTime } from '../utils/formatTime';
 import { copyToClipboard } from '../utils/copyToClipboard';
-import { FileAudio, Layers, Radio, Download, Sparkles, Settings, ArrowUpCircle, Search, Keyboard, Copy, Check, Link2 } from 'lucide-react';
-
-const NAV_TABS: { key: string; label: string; path: string }[] = [
-  { key: 'playlists', label: 'My Playlists', path: '/playlists' },
-  { key: 'channels', label: 'Sources', path: '/sources' },
-  { key: 'epg', label: 'EPG', path: '/epg' },
-];
-
-/** Shared glass surface for every card on this screen — translucent + blurred so the
- * animated background reads through softly instead of being hidden behind flat panels.
- * Also used by the first-run setup (Onboarding.tsx), which sits on the same background. */
-export const GLASS = 'backdrop-blur-xl bg-white/60 dark:bg-white/[0.06] amoled:dark:bg-white/[0.03] border border-white/60 dark:border-white/10 amoled:dark:border-white/5 shadow-xl';
+import Icon from './Icon';
 
 /** "Today at 14:32" for a timestamp from today, "03.09.2026 at 14:32" otherwise — same
  * shape as the channel-pool update log's timestamps, so the two read consistently. */
@@ -34,7 +26,7 @@ function formatDateTime(ts: number, is24Hour: boolean): string {
 }
 
 /** Animates a number counting up from whatever it last settled on to `target` — purely a
- * bit of polish for the stat tiles. Re-triggers any time `target` changes (including the
+ * bit of polish for the numbers. Re-triggers any time `target` changes (including the
  * very first render, from 0), not just on mount. */
 function useCountUp(target: number, durationMs = 900): number {
   const [value, setValue] = useState(0);
@@ -58,195 +50,132 @@ function useCountUp(target: number, durationMs = 900): number {
   return value;
 }
 
-/** Decorative background: two slow-drifting accent-colored "aurora" blobs, a tilted "floor"
- * of the user's own channel logos scrolling past as if shot from above at an angle, and a
- * gradient scrim so the glass cards in front stay legible either way. Purely decorative —
- * aria-hidden, and every logo silently drops itself if its URL 404s. The first-run setup
- * (Onboarding.tsx) uses it too, with no logos, so only the aurora shows. */
-export function HomeBackground({ logos, accentColor }: { logos: string[]; accentColor: string }) {
-  const rowCount = 5;
-  // Split into two alternating pools so adjacent rows read as visually distinct sets instead
-  // of the same full list just phase-shifted — even rows draw only from pool A, odd rows only
-  // from pool B (each still offset a bit row-to-row so same-parity rows vary too). Logos
-  // already arrive pre-shuffled from the server, so this split is itself a random partition
-  // on every load, not a fixed one.
-  const rows = (() => {
-    if (logos.length === 0) return [];
-    const mid = Math.ceil(logos.length / 2);
-    const pools = [logos.slice(0, mid), logos.slice(mid)];
-    return Array.from({ length: rowCount }, (_, i) => {
-      const pool = pools[i % 2].length > 0 ? pools[i % 2] : logos;
-      const offset = Math.floor(i / 2) * 5;
-      return pool.map((_, idx) => pool[(idx + offset) % pool.length]);
-    });
-  })();
+/** The same flat card every block on this screen sits on: a pane on the tinted page. */
+const CARD = 'bg-pane border border-pane-border rounded-2xl';
 
+/** A section's title, with an optional button on the right. */
+function SectionTitle({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none select-none" aria-hidden="true">
-      <div
-        className="home-aurora absolute -top-32 -left-24 w-[36rem] h-[36rem] rounded-full blur-3xl opacity-30 dark:opacity-20"
-        style={{ backgroundColor: accentColor }}
-      />
-      <div
-        className="home-aurora absolute -bottom-40 -right-16 w-[40rem] h-[40rem] rounded-full blur-3xl opacity-20 dark:opacity-15"
-        style={{ backgroundColor: accentColor, animationDelay: '-8s', animationDirection: 'alternate-reverse' }}
-      />
-
-      {rows.length > 0 && (
-        // A tilted "floor" of logos, as if shot from above at an angle — perspective on this
-        // outer box, the actual rotation on the inner plane. The plane is oversized (wider/
-        // taller than the box it's tilted inside) because rotateX foreshortens it and a
-        // perspective tilt trapezoids a rectangle; without the extra size and the recentering
-        // translate, the corners of the box would show gaps past the plane's tilted edges.
-        <div className="absolute inset-0" style={{ perspective: '1200px', perspectiveOrigin: '50% 20%' }}>
-          <div
-            className="absolute left-1/2 bottom-0 flex flex-col justify-around gap-6 opacity-[0.18] dark:opacity-[0.24]"
-            style={{
-              width: '170%',
-              height: '170%',
-              transform: 'translateX(-50%) rotateX(58deg) rotateZ(-6deg) scale(1.15)',
-              transformOrigin: 'bottom center',
-            }}
-          >
-            {rows.map((row, i) => (
-              <div
-                key={i}
-                className="home-logo-row flex w-max shrink-0"
-                style={{ animation: `home-scroll-${i % 2 === 0 ? 'l' : 'r'} ${46 + i * 8}s linear infinite` }}
-              >
-                {/* Tile spacing is a margin on each tile, not a `gap` on this row, so the
-                    loop below is exactly seamless. The row is [...row, ...row] and the
-                    animation slides it left/right by -50%/50% to loop; with a container
-                    `gap`, the doubled content has one MORE gap (2N-1) than "two copies
-                    side by side" (2N-2 gaps), and dividing that odd count by 2 comes up
-                    half a gap short of a true one-copy-width — a small but visible snap
-                    every time the animation resets. A trailing margin on every tile
-                    (including the last) makes each tile+margin a fixed-width unit, so
-                    2N of them split evenly in half — no seam, no snap. */}
-                {[...row, ...row].map((logo, j) => (
-                  <img
-                    key={j}
-                    src={logo}
-                    alt=""
-                    loading="lazy"
-                    className="h-28 w-28 shrink-0 rounded-3xl object-contain bg-white/50 dark:bg-white/10 p-3 grayscale shadow-lg mr-10"
-                    onError={e => { e.currentTarget.style.opacity = '0'; }}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="absolute inset-0 bg-gradient-to-b from-gray-100/45 via-gray-100/35 to-gray-100/55 dark:from-[#121212]/55 dark:via-[#121212]/40 dark:to-[#121212]/65 amoled:dark:from-black/60 amoled:dark:via-black/45 amoled:dark:to-black/70" />
+    <div className="flex items-center justify-between gap-3 min-h-10 mb-3 pl-1">
+      <h2 className="text-title-lg text-on-surface">{children}</h2>
+      {action}
     </div>
   );
 }
 
-function StatCard({ icon, count, label, secondary, accentColor, onClick }: {
-  icon: React.ReactNode;
+/**
+ * One playlist: its name, how big it is and when a TV app last fetched it, the link to give
+ * to a TV app (with copy and download), and a way into it. If its sources changed channels
+ * that the user had edited, a chip says so and opens the playlist's sync log.
+ */
+function PlaylistCard({ playlist, is24Hour, onOpen, onOpenSyncLog }: {
+  key?: string | number;
+  playlist: Playlist;
+  is24Hour: boolean;
+  onOpen: () => void;
+  onOpenSyncLog: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const url = `${window.location.protocol}//${window.location.host}/${playlist.shortId}`;
+  const channelCount = playlist.channelCount ?? 0;
+  const pending = playlist.pendingSyncCount || 0;
+
+  const copyLink = async () => {
+    if (!(await copyToClipboard(url))) { notifyError(null, "Couldn't copy the link. Select it and copy it yourself."); return; }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className={`${CARD} flex flex-col p-5 min-w-0`}>
+      <div className="flex items-start gap-2 min-w-0">
+        <h3 className="flex-1 min-w-0 truncate text-title-md text-on-surface" title={playlist.name}>{playlist.name}</h3>
+        {pending > 0 && (
+          <button
+            onClick={onOpenSyncLog}
+            className="md-btn shrink-0 inline-flex items-center gap-1 h-6 pl-1.5 pr-2.5 rounded-lg bg-tertiary-container text-on-tertiary-container text-label-md"
+            title="Sources changed channels you had edited yourself. Review them and pick what to keep."
+          >
+            <Icon name="sync" className="text-[16px]" />
+            {pending} to review
+          </button>
+        )}
+      </div>
+      {/* Wraps instead of cutting off the date on phones and in the two-column layout. */}
+      <p className="mt-0.5 text-body-md text-on-surface-variant">
+        {channelCount.toLocaleString()} channel{channelCount === 1 ? '' : 's'}
+        {playlist.lastDownloadedAt ? ` · Last fetched ${formatDateTime(playlist.lastDownloadedAt, is24Hour).replace(/^Today/, 'today')}` : ''}
+      </p>
+
+      {/* The link a TV app needs. */}
+      <div className="mt-4 flex items-center h-12 pl-4 pr-1 rounded-xl bg-surface-container-highest">
+        <span className="flex-1 min-w-0 truncate text-body-md font-mono text-on-surface select-all" title={url}>{url}</span>
+        <button onClick={copyLink} className="md-btn icon-btn" title="Copy playlist link" aria-label="Copy playlist link">
+          {copied ? <Icon name="check" className="text-primary" /> : <Icon name="content_copy" />}
+        </button>
+        <a href={url} download={`${playlist.name}.m3u`} className="md-btn icon-btn" title="Download playlist" aria-label="Download playlist">
+          <Icon name="download" />
+        </a>
+      </div>
+
+      <div className="mt-4 flex justify-end">
+        <button onClick={onOpen} className="md-btn btn btn-tonal">
+          Open
+          <Icon name="arrow_forward" className="text-[20px] -mr-1.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** One count in the overview: playlists, sources or EPG sources. Clicking it goes there. */
+function CountTile({ icon, count, label, secondary, onClick }: {
+  icon: string;
   count: number;
   label: string;
   secondary: string;
-  accentColor: string;
   onClick: () => void;
 }) {
   const animated = useCountUp(count);
   return (
-    <button
-      onClick={onClick}
-      // Phones (below sm) fit all three tiles in one row, so each is smaller there and drops its
-      // second line.
-      className={`md-btn text-left rounded-2xl px-6 py-6 max-sm:px-3 max-sm:py-4 flex flex-col gap-3 max-sm:gap-2 min-w-0 transition-transform duration-200 hover:-translate-y-1 ${GLASS}`}
-    >
-      <div className="w-11 h-11 max-sm:w-9 max-sm:h-9 rounded-full flex items-center justify-center" style={{ backgroundColor: accentAlpha(accentColor, '20') }}>
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <div className="text-4xl max-sm:text-2xl font-bold text-gray-900 dark:text-white leading-tight tabular-nums">{animated.toLocaleString()}</div>
-        <div className="text-sm max-sm:text-xs font-medium text-gray-700 dark:text-gray-200 mt-1 truncate">{label}</div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 max-sm:hidden">{secondary}</div>
-      </div>
+    // Phones (below sm) fit all three tiles in one row, so each is smaller there and drops
+    // its second line.
+    <button onClick={onClick} className={`md-btn ${CARD} text-left p-5 max-sm:p-3.5 flex flex-col gap-3 max-sm:gap-2 min-w-0`}>
+      <span className="w-10 h-10 max-sm:w-9 max-sm:h-9 rounded-full flex items-center justify-center bg-secondary-container text-on-secondary-container">
+        <Icon name={icon} className="max-sm:text-[20px]" />
+      </span>
+      <span className="min-w-0 block">
+        <span className="block text-[32px] leading-10 max-sm:text-2xl max-sm:leading-8 font-medium tracking-tight text-on-surface tabular-nums">{animated.toLocaleString()}</span>
+        {/* Wraps rather than cuts off ("EPG sour…") on the narrowest phones. */}
+        <span className="block text-label-lg max-sm:text-label-md text-on-surface break-words">{label}</span>
+        <span className="block text-body-sm text-on-surface-variant mt-0.5 truncate max-sm:hidden">{secondary}</span>
+      </span>
     </button>
   );
 }
 
-/** Icon-only quick-download row per playlist — copy its M3U link or download the file directly
- * without leaving the homescreen. Playlists only, deliberately: sources and EPG sources don't
- * have a single "download this" URL the way a playlist's short link does. Uses its own
- * usePlaylists() (not /api/stats) since stats only carries aggregate counts, not the actual
- * list. */
-function PlaylistDownloadsCard({ accentColor }: { accentColor: string }) {
-  const { playlists, loading } = usePlaylists();
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const copyLink = async (url: string, id: string) => {
-    if (!(await copyToClipboard(url))) { notifyError(null, 'Failed to copy to clipboard.'); return; }
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(current => current === id ? null : current), 2000);
-  };
-
-  return (
-    <div className={`rounded-2xl px-5 py-4 ${GLASS}`}>
-      <div className="flex items-center gap-2 mb-3">
-        <Download className="h-4 w-4" style={{ color: accentColor }} />
-        <h2 className="text-sm font-medium text-gray-900 dark:text-white">Download Playlists</h2>
-      </div>
-
-      {loading ? (
-        <div className="space-y-2">
-          {[0, 1].map(i => <div key={i} className="h-9 rounded-lg bg-gray-300/40 dark:bg-white/5 animate-pulse" />)}
-        </div>
-      ) : playlists.length === 0 ? (
-        <p className="text-sm text-gray-400 dark:text-gray-500">You haven't created a playlist yet.</p>
-      ) : (
-        <div className="space-y-1">
-          {playlists.map(p => {
-            const url = `${window.location.protocol}//${window.location.host}/${p.shortId}`;
-            return (
-              <div key={p.id} className="flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-black/[0.03] dark:hover:bg-white/[0.04] transition-colors">
-                <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-300 truncate">{p.name}</span>
-                <button
-                  onClick={() => copyLink(url, p.id)}
-                  className="md-btn shrink-0 p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white transition-colors"
-                  title="Copy playlist link"
-                >
-                  {copiedId === p.id ? <Check className="h-4 w-4" style={{ color: accentColor }} /> : <Copy className="h-4 w-4" />}
-                </button>
-                <a
-                  href={url}
-                  download={`${p.name}.m3u`}
-                  className="md-btn shrink-0 p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white transition-colors"
-                  title="Download playlist"
-                >
-                  <Download className="h-4 w-4" />
-                </a>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** The homescreen — where the app lands unless a specific page is entered directly. Gives an
- * at-a-glance overview of everything m3u4me is managing (see /api/stats in server.ts), and
- * doubles as quick navigation into the three main tabs. */
+/**
+ * The homescreen — where the app lands unless a specific page is entered directly. It's laid
+ * out like the rest of the app: flat cards on the tinted page, no decoration.
+ *
+ * 1. Your playlists: a card each, with the link for a TV app.
+ * 2. Overview: the total number of channels m3u4me knows about (the one accent-coloured
+ *    card), then playlists / sources / EPG sources (see /api/stats in server.ts).
+ * 3. Recent activity: the last time a TV app fetched a playlist, and the newest channels
+ *    a source brought in.
+ */
 export default function Home() {
   const navigate = useNavigate();
   const {
-    accentColor, is24Hour,
+    is24Hour,
     setActivePlaylistId, setActiveCategory,
     setActiveEpgSourceId, setActiveChannelPoolSourceId,
     setScrollTarget, setSyncLogOpenFor,
   } = useStore();
   const { stats, loading, error, refetch } = useStats();
-  const versionInfo = useVersionInfo();
-  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const { playlists, loading: playlistsLoading } = usePlaylists();
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const mod = /mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl';
+  const [isCreating, setIsCreating] = useState(false);
   const isPhone = useIsPhone();
 
   const additions = stats?.latestChannelPoolAdditions ?? null;
@@ -271,308 +200,178 @@ export default function Home() {
     setScrollTarget({ kind: result.kind, id: result.id });
   };
 
+  const openPlaylist = (id: string) => {
+    setActivePlaylistId(id);
+    navigate('/playlists');
+  };
+
   return (
-    <div className="md-page-in relative flex flex-col h-dvh overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
-      <HomeBackground logos={stats?.sampleLogos ?? []} accentColor={accentColor} />
+    <div className="md-page-in flex flex-col h-dvh overflow-hidden bg-page text-on-surface">
+      <UpdateBanner />
 
-      <div className="relative z-10 flex flex-col h-full">
-        {/* ── Update Banner ───────────────────────────────────────────────── */}
-        {versionInfo.updateAvailable && !updateDismissed && versionInfo.releaseUrl && (
-          <div className="shrink-0 z-30 flex items-center justify-center gap-3 px-4 py-2 text-sm font-medium text-white" style={{ backgroundColor: accentColor }}>
-            <ArrowUpCircle className="h-4 w-4 shrink-0" />
-            <span>A new version of m3u4me is available: <strong>v{versionInfo.latest}</strong></span>
-            <a
-              href={versionInfo.releaseUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline underline-offset-2 hover:opacity-80 transition-opacity"
+      {/* Both bars are shared with Dashboard (DesktopTopBar on tablets and computers,
+          MobileTopBar on phones), so nothing shifts when moving between screens. */}
+      <MobileTopBar leading={<Logo className="h-6 w-auto text-on-surface shrink-0" />} />
+      <DesktopTopBar onShortcuts={() => setShowShortcuts(true)} pendingSyncCount={stats?.pendingSyncCount || 0} />
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-5xl mx-auto px-4 max-md:px-2 pt-2 pb-10 space-y-8">
+
+          {/* ── Your playlists ───────────────────────────────────────────── */}
+          <section>
+            <SectionTitle
+              action={
+                <button onClick={() => setIsCreating(true)} className="md-btn btn btn-text">
+                  <Icon name="add" className="text-[20px]" />
+                  New playlist
+                </button>
+              }
             >
-              View release
-            </a>
-            <button onClick={() => setUpdateDismissed(true)} className="ml-auto p-0.5 rounded hover:bg-white/20 transition-colors" aria-label="Dismiss">
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
-          </div>
-        )}
-
-        {/* ── Top App Bar ─────────────────────────────────────────────────── */}
-        {/* Grid + button set/order/classes deliberately mirror Dashboard.tsx's nav bar exactly
-            (same 1fr_auto_1fr, same class strings) so nothing shifts position when you move
-            between Home and the main app — verified pixel-for-pixel against Dashboard's own
-            tabs/Search/Shortcuts/Settings at normal widths. The two things Home doesn't have
-            are the sidebar toggle (there's no sidebar here) and the Hide URLs button (page-
-            specific to the playlist/channel editors) — Dashboard itself already omits that
-            second one on its own EPG tab. Search and Keyboard Shortcuts are fully wired up
-            (Spotlight + the shortcuts dialog below), not just decorative.
-            Below 768px (phones) both screens hide this bar and show MobileTopBar plus
-            MobileTabBar instead, which don't need mirroring because they're one shared
-            component each. */}
-        <MobileTopBar
-          leading={<Logo className="h-6 w-auto text-gray-900 dark:text-white shrink-0" />}
-          surfaceClassName="backdrop-blur-xl bg-white/70 dark:bg-[#1e1e1e]/60 amoled:dark:bg-black/60 border-b border-white/40 dark:border-white/10"
-        />
-        <nav className="h-16 shrink-0 z-30 backdrop-blur-xl bg-white/70 dark:bg-[#1e1e1e]/60 amoled:dark:bg-black/60 border-b border-white/40 dark:border-white/10 hidden md:grid grid-cols-[1fr_auto_1fr] items-center px-2 gap-1">
-          <div className="flex items-center min-w-0">
-            <button
-              onClick={() => navigate('/')}
-              className="md-btn flex items-center shrink-0 p-1 -m-1 rounded"
-              aria-label="Home"
-              title="Home"
-            >
-              <Logo className="h-6 w-auto text-gray-900 dark:text-white shrink-0" />
-            </button>
-          </div>
-
-          <div className="relative flex items-center gap-1 justify-self-center">
-            {NAV_TABS.map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => navigate(tab.path)}
-                className="md-btn relative h-10 px-5 rounded-lg text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-              >
-                {tab.label}
-                {/* Same dot as Dashboard's My Playlists tab. */}
-                {tab.key === 'playlists' && (stats?.pendingSyncCount || 0) > 0 && (
-                  <span
-                    className="absolute top-2 right-2 w-2 h-2 rounded-full"
-                    style={{ backgroundColor: accentColor }}
-                    title={`${stats!.pendingSyncCount} channel${stats!.pendingSyncCount !== 1 ? 's have' : ' has'} changes from a source waiting for you`}
+              Your playlists
+            </SectionTitle>
+            {playlistsLoading && playlists.length === 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {[0, 1].map(i => <div key={i} className={`${CARD} h-[13.5rem] animate-pulse`} />)}
+              </div>
+            ) : playlists.length === 0 ? (
+              <div className={`${CARD} flex flex-col items-center text-center px-6 py-10`}>
+                <span className="w-14 h-14 rounded-full flex items-center justify-center bg-secondary-container text-on-secondary-container mb-4">
+                  <Icon name="queue_music" className="text-[28px]" />
+                </span>
+                <p className="text-title-md text-on-surface">No playlists yet</p>
+                <p className="mt-1 text-body-md text-on-surface-variant max-w-sm">A playlist is the channel list your TV app loads. Make one, then fill it from your sources.</p>
+                <button onClick={() => setIsCreating(true)} className="md-btn btn btn-filled mt-5">
+                  <Icon name="add" className="text-[20px]" />
+                  New playlist
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {playlists.map(playlist => (
+                  <PlaylistCard
+                    key={playlist.id}
+                    playlist={playlist}
+                    is24Hour={is24Hour}
+                    onOpen={() => openPlaylist(playlist.id)}
+                    onOpenSyncLog={() => { setSyncLogOpenFor(playlist.id); openPlaylist(playlist.id); }}
                   />
-                )}
-              </button>
-            ))}
-          </div>
+                ))}
+              </div>
+            )}
+          </section>
 
-          <div className="flex items-center gap-1 justify-self-end min-w-0">
-            <button
-              onClick={() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true })); }}
-              className="md-btn hidden sm:flex items-center gap-2 h-9 px-3 lg:px-4 rounded text-xs font-medium border border-gray-300 dark:border-white/15 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-              title={`Search (${mod}+K)`}
-            >
-              <Search className="h-4 w-4" />
-              <span className="hidden lg:inline text-gray-400 dark:text-gray-500">Search…</span>
-              <kbd className="hidden lg:inline ml-1 font-mono text-[10px] text-gray-400 dark:text-gray-500">{mod}+K</kbd>
-            </button>
-
-            <button
-              onClick={() => setShowShortcuts(true)}
-              className="md-btn p-2 rounded-full text-gray-600 dark:text-gray-400"
-              aria-label="Keyboard shortcuts"
-              title="Keyboard shortcuts"
-            >
-              <Keyboard className="h-5 w-5" />
-            </button>
-
-            <button
-              onClick={() => navigate('/settings')}
-              className="md-btn p-2 rounded-full text-gray-600 dark:text-gray-400 ml-1"
-              aria-label="Settings"
-            >
-              <Settings className="h-5 w-5" />
-            </button>
-          </div>
-        </nav>
-
-        {/* ── Content ─────────────────────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="min-h-full flex flex-col justify-center px-4 py-10">
-            <div className="max-w-4xl w-full mx-auto space-y-5">
-
-              {loading ? (
-                <div className="space-y-5">
-                  <div className="flex justify-center py-4 sm:py-6">
-                    <div className="h-20 w-64 rounded-2xl bg-gray-300/50 dark:bg-white/10 animate-pulse" />
+          {loading && !stats ? (
+            <div className="grid grid-cols-3 lg:grid-cols-[1.5fr_1fr_1fr_1fr] gap-3">
+              <div className={`${CARD} h-36 animate-pulse col-span-3 lg:col-span-1`} />
+              {[0, 1, 2].map(i => <div key={i} className={`${CARD} h-36 animate-pulse`} />)}
+            </div>
+          ) : error && !stats ? (
+            <div className={`${CARD} px-5 py-6 text-center`}>
+              <p className="text-body-md text-error">{error}</p>
+              <button onClick={refetch} className="md-btn btn btn-text mt-2">Retry</button>
+            </div>
+          ) : stats && (
+            <>
+              {/* ── Overview ───────────────────────────────────────────────── */}
+              <section>
+                <SectionTitle>Overview</SectionTitle>
+                <div className="grid grid-cols-3 lg:grid-cols-[1.5fr_1fr_1fr_1fr] gap-3">
+                  {/* The one accent-coloured card: everything m3u4me knows about, in one number. */}
+                  <div className="col-span-3 lg:col-span-1 rounded-2xl bg-primary-container text-on-primary-container p-5 flex flex-col justify-between gap-3 min-w-0">
+                    <span className="text-label-lg">In total</span>
+                    <span className="block">
+                      <span className="block text-[45px] leading-[52px] font-medium tracking-tight tabular-nums">{totalChannelsAnimated.toLocaleString()}</span>
+                      <span className="block text-body-md opacity-80">channels across your playlists, sources and guides</span>
+                    </span>
                   </div>
-                  <div className="grid grid-cols-3 gap-5 max-sm:gap-2">
-                    {[0, 1, 2].map(i => <div key={i} className={`h-36 rounded-2xl animate-pulse ${GLASS}`} />)}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                    {[0, 1].map(i => <div key={i} className={`h-28 rounded-2xl animate-pulse ${GLASS}`} />)}
-                  </div>
-                  <div className={`h-24 rounded-2xl animate-pulse ${GLASS}`} />
+                  <CountTile
+                    icon="queue_music"
+                    count={stats.playlistCount}
+                    label={stats.playlistCount === 1 ? 'Playlist' : 'Playlists'}
+                    secondary={`${stats.playlistChannelCount.toLocaleString()} channel${stats.playlistChannelCount === 1 ? '' : 's'}`}
+                    onClick={() => navigate('/playlists')}
+                  />
+                  <CountTile
+                    icon="stacks"
+                    count={stats.channelPoolSourceCount}
+                    label={stats.channelPoolSourceCount === 1 ? 'Source' : 'Sources'}
+                    secondary={`${stats.channelPoolChannelCount.toLocaleString()} channel${stats.channelPoolChannelCount === 1 ? '' : 's'} available`}
+                    onClick={() => navigate('/sources')}
+                  />
+                  <CountTile
+                    icon="live_tv"
+                    count={stats.epgSourceCount}
+                    label={stats.epgSourceCount === 1 ? 'EPG source' : 'EPG sources'}
+                    secondary={`${stats.epgChannelCount.toLocaleString()} channel${stats.epgChannelCount === 1 ? '' : 's'} with a guide`}
+                    onClick={() => navigate('/epg')}
+                  />
                 </div>
-              ) : error ? (
-                <div className={`rounded-2xl px-5 py-6 text-center ${GLASS}`}>
-                  <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
-                  <button onClick={refetch} className="md-btn mt-2 text-xs font-medium underline text-gray-600 dark:text-gray-300">Retry</button>
-                </div>
-              ) : stats && (
-                <>
-                  {/* ── Hero ──────────────────────────────────────────────────── */}
-                  {/* Deliberately not a card — just the number, floating over the animated
-                      background. The gradient fill + drop-shadow give it depth/"shading"
-                      instead of a flat color, and the shadow doubles as legibility insurance
-                      against whatever's scrolling behind it (no glass scrim here to help). */}
-                  <div className="text-center py-4 sm:py-6">
-                    <div
-                      className="text-7xl sm:text-8xl font-black leading-none tracking-tight tabular-nums bg-clip-text text-transparent bg-gradient-to-b from-gray-900 to-gray-500 dark:from-white dark:to-gray-400 drop-shadow-[0_8px_30px_rgba(0,0,0,0.25)] dark:drop-shadow-[0_0_45px_rgba(255,255,255,0.12)]"
-                    >
-                      {totalChannelsAnimated.toLocaleString()}
+              </section>
+
+              {/* ── Recent activity ────────────────────────────────────────── */}
+              <section>
+                <SectionTitle>Recent activity</SectionTitle>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className={`${CARD} flex gap-4 p-5 min-w-0`}>
+                    <Icon name="download" className="text-primary mt-0.5" />
+                    <div className="min-w-0">
+                      <h3 className="text-title-sm text-on-surface">Last playlist fetch</h3>
+                      <p className="mt-1 text-body-md text-on-surface-variant">
+                        {stats.lastPlaylistDownload
+                          ? formatDateTime(stats.lastPlaylistDownload, is24Hour)
+                          : 'No TV app has fetched a playlist yet.'}
+                      </p>
                     </div>
-                    <p className="mt-3 text-base sm:text-lg font-medium text-gray-600 dark:text-gray-300">channels across your playlists, sources &amp; guides</p>
                   </div>
 
-                  {/* ── Counts ────────────────────────────────────────────────── */}
-                  <div className="grid grid-cols-3 gap-5 max-sm:gap-2">
-                    <StatCard
-                      icon={<FileAudio className="h-5 w-5" style={{ color: accentColor }} />}
-                      count={stats.playlistCount}
-                      label="My Playlists"
-                      secondary={`${stats.playlistChannelCount} channel${stats.playlistChannelCount === 1 ? '' : 's'} total`}
-                      accentColor={accentColor}
-                      onClick={() => navigate('/playlists')}
-                    />
-                    <StatCard
-                      icon={<Layers className="h-5 w-5" style={{ color: accentColor }} />}
-                      count={stats.channelPoolSourceCount}
-                      label="Sources"
-                      secondary={`${stats.channelPoolChannelCount.toLocaleString()} channel${stats.channelPoolChannelCount === 1 ? '' : 's'} available`}
-                      accentColor={accentColor}
-                      onClick={() => navigate('/sources')}
-                    />
-                    <StatCard
-                      icon={<Radio className="h-5 w-5" style={{ color: accentColor }} />}
-                      count={stats.epgSourceCount}
-                      label="EPG Sources"
-                      secondary={`${stats.epgChannelCount.toLocaleString()} channel${stats.epgChannelCount === 1 ? '' : 's'} with guide data`}
-                      accentColor={accentColor}
-                      onClick={() => navigate('/epg')}
-                    />
-                  </div>
-
-                  {/* ── Activity ──────────────────────────────────────────────── */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                    <div className={`rounded-2xl px-5 py-4 ${GLASS}`}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <Download className="h-4 w-4" style={{ color: accentColor }} />
-                        <h2 className="text-sm font-medium text-gray-900 dark:text-white">Last Playlist Download</h2>
-                      </div>
-                      {stats.lastPlaylistDownload ? (
-                        <p className="text-sm text-gray-600 dark:text-gray-400">{formatDateTime(stats.lastPlaylistDownload, is24Hour)}</p>
-                      ) : (
-                        <p className="text-sm text-gray-400 dark:text-gray-500">No playlist has been downloaded yet.</p>
-                      )}
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        if (!additions) return;
-                        setActiveChannelPoolSourceId(additions.sourceId);
-                        navigate('/sources');
-                      }}
-                      disabled={!additions}
-                      className={`md-btn text-left rounded-2xl px-5 py-4 transition-transform duration-200 ${additions ? 'hover:-translate-y-1' : 'cursor-default'} ${GLASS}`}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <Sparkles className="h-4 w-4" style={{ color: accentColor }} />
-                        <h2 className="text-sm font-medium text-gray-900 dark:text-white">Latest New Channels from Sources</h2>
-                      </div>
+                  <button
+                    onClick={() => {
+                      if (!additions) return;
+                      setActiveChannelPoolSourceId(additions.sourceId);
+                      navigate('/sources');
+                    }}
+                    disabled={!additions}
+                    className={`${additions ? 'md-btn' : 'cursor-default'} ${CARD} flex gap-4 p-5 min-w-0 text-left`}
+                  >
+                    <Icon name="auto_awesome" className="text-primary mt-0.5" />
+                    <span className="min-w-0 block">
+                      <span className="block text-title-sm text-on-surface">New channels from your sources</span>
                       {additions ? (
                         <>
-                          <p className="text-sm text-gray-600 dark:text-gray-400">
-                            <span className="font-medium text-gray-800 dark:text-gray-200">{additions.added.length}</span> new channel{additions.added.length === 1 ? '' : 's'} in <span className="font-medium text-gray-800 dark:text-gray-200">{additions.sourceName}</span>
-                          </p>
-                          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{formatDateTime(additions.timestamp, is24Hour)}</p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 truncate">
+                          <span className="block mt-1 text-body-md text-on-surface-variant">
+                            <span className="font-semibold text-on-surface">{additions.added.length}</span> new in <span className="font-semibold text-on-surface">{additions.sourceName}</span> · {formatDateTime(additions.timestamp, is24Hour)}
+                          </span>
+                          <span className="block mt-1 text-body-sm text-on-surface-variant truncate">
                             {additions.added.slice(0, 5).map(c => c.name).join(', ')}
                             {additions.added.length > 5 ? ` +${additions.added.length - 5} more` : ''}
-                          </p>
+                          </span>
                         </>
                       ) : (
-                        <p className="text-sm text-gray-400 dark:text-gray-500">No new channels found yet.</p>
+                        <span className="block mt-1 text-body-md text-on-surface-variant">No new channels found yet.</span>
                       )}
-                    </button>
-                  </div>
+                    </span>
+                  </button>
+                </div>
+              </section>
+            </>
+          )}
 
-                  {/* ── Sync updates waiting ─────────────────────────────────────── */}
-                  {/* Only shown when there's something to review. Each row opens that
-                      playlist with its sync log already open. */}
-                  {stats.pendingSyncCount > 0 && (
-                    <div className={`rounded-2xl px-5 py-4 ${GLASS}`}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Link2 className="h-4 w-4" style={{ color: accentColor }} />
-                        <h2 className="text-sm font-medium text-gray-900 dark:text-white">Sync Updates Waiting</h2>
-                      </div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                        Sources changed channels you had edited yourself. Review them and pick what to keep.
-                      </p>
-                      <div className="space-y-1">
-                        {stats.pendingSyncPlaylists.map(p => (
-                          <button
-                            key={p.id}
-                            onClick={() => { setActivePlaylistId(p.id); setSyncLogOpenFor(p.id); navigate('/playlists'); }}
-                            className="md-btn w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-black/[0.03] dark:hover:bg-white/[0.04] transition-colors"
-                          >
-                            <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-300 truncate">{p.name}</span>
-                            <span className="shrink-0 text-xs font-medium" style={{ color: accentColor }}>
-                              {p.count} channel{p.count !== 1 ? 's' : ''}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── Quick downloads ──────────────────────────────────────────── */}
-                  <PlaylistDownloadsCard accentColor={accentColor} />
-                </>
-              )}
-
-            </div>
-          </div>
         </div>
-        {isPhone && (
-          <MobileTabBar
-            active="home"
-            surfaceClassName="backdrop-blur-xl bg-white/70 dark:bg-[#1e1e1e]/60 amoled:dark:bg-black/60 border-t border-white/40 dark:border-white/10"
-          />
-        )}
       </div>
 
-      {/* Same dialog as Dashboard's — verbatim, so the reference stays one list instead of
-          drifting into two. It's a static, app-wide list rather than a per-page one (Dashboard
-          shows it unchanged across all three of its own tabs too, including ones where a given
-          shortcut doesn't apply), so reusing it here isn't inconsistent with how it behaves
-          today. */}
-      {showShortcuts && (
-        <div className="md-scrim fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={() => setShowShortcuts(false)}>
-          <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100 dark:border-white/10">
-              <h2 className="text-xl font-medium text-gray-900 dark:text-white">Keyboard Shortcuts</h2>
-              <button onClick={() => setShowShortcuts(false)} className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            <div className="px-6 py-4 space-y-1">
-              {([
-                [[mod, 'K'], 'Open search'],
-                [[mod, 'A'], 'Select all channels in category'],
-                [['Esc'], 'Clear selection'],
-                [['Del'], 'Delete selected channels'],
-                [['Space'], 'Toggle visibility of selected channels'],
-                [[mod, 'Z'], 'Undo last destructive action'],
-              ] as [string[], string][]).map(([keys, label]) => (
-                <div key={label} className="flex items-center justify-between py-2.5 border-b border-gray-100 dark:border-white/8 last:border-0">
-                  <span className="text-sm text-gray-700 dark:text-gray-300">{label}</span>
-                  <div className="flex items-center gap-1 shrink-0 ml-4">
-                    {keys.map((k, i) => (
-                      <React.Fragment key={k}>
-                        {i > 0 && <span className="text-xs text-gray-400">+</span>}
-                        <kbd className="inline-flex items-center px-2 py-1 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-white/10 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-white/15 shadow-sm">
-                          {k}
-                        </kbd>
-                      </React.Fragment>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="px-6 pb-5 pt-1">
-              <p className="text-xs text-gray-400 dark:text-gray-500">Shortcuts are active when no text field is focused.</p>
-            </div>
-          </div>
-        </div>
-      )}
+      {isPhone && <MobileTabBar active="home" />}
+
+      <NewPlaylistDialog
+        open={isCreating}
+        onClose={() => setIsCreating(false)}
+        onCreated={playlistId => {
+          setIsCreating(false);
+          triggerRefresh();
+          openPlaylist(playlistId);
+        }}
+      />
+
+      <KeyboardShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
 
       <Spotlight onNavigate={handleSpotlightNavigate} />
       <Toast withTabBar />

@@ -16,22 +16,26 @@ The first time you open m3u4me, a short setup walks you through adding your prov
 
 **Simple playlist links.** No more typing huge links on your TV. Playlists get a number, so your links look like `http://IP:port/1` for your first playlist, `http://IP:port/2` for the second one, and so on. Each playlist also gets its own TV guide link at `http://IP:port/1/epg`. See [Use it in your TV app](tv-app.md).
 
-**Edit anything in place.** Click a channel's name, stream link, logo or [TVG ID](glossary.md#tvg-id) to change it. Drag channels and categories to reorder them, and use **Move to…** to put channels in another category. On a phone, tap a channel instead to edit everything about it in one place (see [On your phone](#on-your-phone)).
+**Edit anything in place.** Click a channel's name, stream link, logo or [TVG ID](glossary.md#tvg-id) to change it. Drag channels, categories and playlists to reorder them (a playlist's link stays the same when you move it; on a phone or tablet, tap **Edit** above the list first), and use **Move to…** to put channels in another category. On a phone, tap a channel instead to edit everything about it in one place (see [On your phone](#on-your-phone)).
 
 **Logo editing.** Add, edit or remove your channels' logos.
 
-**Stream headers.** Some channels only play when your TV app sends a certain referrer or [user agent](glossary.md#user-agent) along with the request. m3u4me keeps these from your source's playlist and writes them into the playlist your TV app loads. Channels that have them show a small **Referrer · UA** tag next to their name. Click the tag, or right-click any channel and choose **Stream headers…**, to change or add them. On a phone, they're in the channel's editor (tap the channel). If a synced channel's stream link updates, its headers update with it.
+**More per channel.** Each channel's **⋮** button (on a computer, point at the channel to see it) inserts a new channel above or below it, links it to a source, edits its stream headers, or deletes it. Right-clicking a channel opens the same menu.
+
+**Stream headers.** Some channels only play when your TV app sends a certain referrer or [user agent](glossary.md#user-agent) along with the request. m3u4me keeps these from your source's playlist and writes them into the playlist your TV app loads. Channels that have them show a small **Referrer · UA** tag next to their name. Click the tag, or choose **Stream headers…** in the channel's **⋮** menu (or right-click it), to change or add them. On a phone, they're in the channel's editor (tap the channel). If a synced channel's stream link updates, its headers update with it.
 
 **Bulk actions.** Select several channels to move, delete or hide them all at once, or to find & replace text across them. Hide a whole category from your playlist with one click on its eye button. Hidden channels stay in m3u4me but are left out of the playlist your TV app loads.
 
 **Auto-saving.** You don't need to remember to save your changes or push your playlist. Everything happens instantly, automatically.
+
+**Picks up where you left off.** Each tab opens the playlist, source or TV guide you had open last, even after a reload, so you never land on an empty screen.
 
 **Undo delete.** Deleted a channel by mistake? Hit the **Undo** button that appears at the bottom of your screen (or press `Cmd+Z` / `Ctrl+Z`) and bring it back without a hassle.
 
 **Stream checker (not recommended).**
 
 > [!WARNING]
-> m3u4me has a basic stream checker (**Check**, in the playlist's toolbar), but some IPTV providers don't react nicely to any sort of bulk checking. Use it at your own risk!
+> m3u4me has a basic stream checker (**Check streams**, above the channel list), but some IPTV providers don't react nicely to any sort of bulk checking. Use it at your own risk!
 
 ## Sources
 
@@ -39,7 +43,7 @@ A [channel source](glossary.md#channel-source) is where your channels come from,
 
 **Copy a stream link.** Every channel in a source has a copy button next to its **+** (on a computer, point at the channel to see it). Handy for testing a stream in VLC or another player.
 
-**Their own refresh schedule.** Each source refreshes on its own schedule (every 24 hours unless you change it) and keeps a changelog of what got added, removed or renamed. Uploaded files never refresh.
+**Their own refresh schedule.** Each source refreshes on its own schedule (every 24 hours unless you change it) and keeps a changelog of what got added, removed or renamed. Uploaded files never refresh. To download a source again right away, or change its settings, use the refresh and pencil buttons next to its name (on a phone, they're under **⋮**).
 
 **Choose which app it downloads as.** If a provider only works with certain apps, choose which app the source downloads as: TiviMate, VLC, Kodi, a browser, or your own [user agent](glossary.md#user-agent). It's under **User agent (optional)** in the source's settings.
 
@@ -67,10 +71,11 @@ Add [EPG](glossary.md#epg-tv-guide) sources from an XMLTV URL or an Xtream Codes
   - in bulk, with **Bulk EPG Assignment**, which matches channel names automatically
   - from the guide, by picking a guide channel and assigning it to channels in any playlist
 - **Every playlist gets its own guide link,** containing only that playlist's channels.
+- **Refresh or edit a guide** with the buttons next to its name (on a phone, under **⋮**).
 
 ## Printable channel list
 
-Turn any playlist into a neat A4 channel list PDF, with numbers, logos, names and whether each channel has a TV guide. Press **PDF** in the playlist's toolbar, check the preview, then **Save PDF** and choose **Save as PDF** in the print window.
+Turn any playlist into a neat A4 channel list PDF, with numbers, logos, names and whether each channel has a TV guide. Choose **Channel list PDF** in the **⋮** menu above the channel list, check the preview, then **Save PDF** and choose **Save as PDF** in the print window.
 
 ## Backup & restore
 
@@ -78,9 +83,9 @@ Download everything (playlists, sources, TV guides and settings) as one file fro
 
 ## Search and shortcuts
 
-**Global search.** Press `Cmd+K` / `Ctrl+K` to search across every playlist, channel source, and EPG source at once. All searches ignore accents, so typing "stiri" also finds "Știri".
+**Global search.** Press `Cmd+K` / `Ctrl+K` to search across every playlist, channel source, and EPG source at once. Results are grouped by where they live, shown as a path like *My Playlists › News › UK*, so you can tell at a glance which playlist and category a channel is in. All searches ignore accents, so typing "stiri" also finds "Știri".
 
-**Keyboard shortcuts.** On a computer, the full list is inside the app, under the keyboard button in the top bar.
+**Keyboard shortcuts.** On a computer, the full list is inside the app, under the keyboard button in the top bar. (Touch-only tablets don't show that button.)
 
 | Shortcut | What it does |
 | --- | --- |
@@ -93,7 +98,7 @@ Download everything (playlists, sources, TV guides and settings) as one file fro
 
 ## On your phone
 
-m3u4me works on your phone's browser too: open the same address you use on your computer. On a phone, the layout changes to fit a small touch screen. Tablets get the computer layout; on an iPad, choose **Request Mobile Website** in Safari's page menu to get the phone layout instead.
+m3u4me works on your phone's browser too: open the same address you use on your computer. On a phone, the layout changes to fit a small touch screen. Tablets get the computer layout, but held upright, the list of playlists and categories opens over the channels with ☰, like on a phone, so the channels get the whole width. On any touch screen, buttons and rows are bigger, and the list's rename, hide, delete and drag handles stay out of the way until you tap **Edit** above it. On an iPad, choose **Request Mobile Website** in Safari's page menu to get the phone layout instead.
 
 - **Tabs at the bottom.** Home, Playlists, Sources, EPG and Settings sit along the bottom of the screen, in easy reach of your thumb.
 - **One bar at the top.** ☰ opens the list where you pick a playlist and category, a source, or a TV guide. The title shows where you are (for a playlist, its name above the category). The magnifying glass searches everything, and **⋮** has everything else you can do on that screen.
@@ -102,14 +107,16 @@ m3u4me works on your phone's browser too: open the same address you use on your 
 - **Long-press to select.** Press and hold a channel to select it, then tap others to add them. The bar at the bottom moves, hides or deletes them all at once, and its **⋮** has the rest.
 - **Reorder channels.** Choose **Reorder channels** under **⋮**, then drag the handles on the right.
 - **Add channels from a source.** Tap channels to select them, then press **Add to playlist** at the bottom. Category and sort are behind the filter button next to the search box.
-- **In the ⋮ menu:** the playlist's link and download, the sync log (the **⋮** gets a dot when it has news), find & replace, automatic EPG matching, the stream checker, the channel list PDF, Hide stream URLs, and the Sources update log.
+- **In the ⋮ menu:** the playlist's link and download, the sync log (the **⋮** gets a dot when it has news), find & replace, automatic EPG matching, the stream checker, the channel list PDF and Hide stream URLs; on Sources and EPG, refresh and edit for the open source or guide, and the Sources update log.
 
 ## Look and feel
 
-- **Light mode, Dark mode & AMOLED Dark mode.**
-- **Custom accent colours.** Even the browser tab's icon matches your chosen colour.
+- **Light, Dark or AMOLED.** AMOLED keeps the background pure black, for OLED screens.
+- **Your colour everywhere.** Pick an accent colour and the whole app is coloured from it, background included, the way Android's Material You does it. Even the browser tab's icon matches.
+- **Colour style.** Nine ways to build the app's colours from your accent, from calm (**Tonal spot**, the default) to bold (**Vibrant**, **Expressive**, **Fruit salad**) or plain grey (**Monochrome**). Each shows a small preview.
+- **Font.** Geist (the default), or your device's own font.
 - **Channel logo background colour presets.** Choose between light gray, white, black or transparency. *(Only for previewing. Does not affect the actual logos in the playlist.)*
-- **Hide stream URLs.** Useful for sharing screenshots. It's the **Hide stream URLs** button in the top bar (on a phone, under **⋮**).
+- **Hide stream URLs.** Useful for sharing screenshots. It's **Hide stream links** in the **⋮** menu above a playlist's channels, and the crossed-out eye button above a source's channels (on a phone, under the top bar's **⋮**).
 - **12-hour or 24-hour time.** Pick your preferred clock format for the TV guide.
 
 All of these are in **Settings → Appearance**, except Hide stream URLs.

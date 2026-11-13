@@ -1,17 +1,17 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link2, AlertTriangle } from 'lucide-react';
 import { api, Channel, SyncField, SYNC_FIELDS, SyncFieldToggles as Toggles, triggerRefresh, triggerChannelPoolRefresh } from '../apiClient';
 import { useStore, notifyError, notifyInfo } from '../store';
 import SyncFieldToggles, { SYNC_FIELD_LABELS, anySyncFieldOn } from './SyncFieldToggles';
 import Dialog from './Dialog';
+import Icon from './Icon';
 
 function ValueLine({ label, value, strong = false }: { label: string; value: string | null | undefined; strong?: boolean }) {
   return (
-    <div className="flex gap-2 text-[11px] min-w-0">
-      <span className="w-10 shrink-0 text-gray-400 dark:text-gray-500">{label}</span>
+    <div className="flex gap-2 text-body-sm min-w-0">
+      <span className="w-10 shrink-0 text-on-surface-variant">{label}</span>
       <span
-        className={`truncate font-mono ${strong ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}
+        className={`truncate font-mono ${strong ? 'text-on-surface' : 'text-on-surface-variant'}`}
         title={value || undefined}
       >
         {value || '(empty)'}
@@ -83,7 +83,7 @@ export function ChannelSyncPopover({
   return createPortal(
     <div
       ref={ref}
-      className="md-menu fixed z-50 w-80 bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-8 border border-gray-200 dark:border-white/10 text-left"
+      className="md-menu fixed z-50 w-80 bg-menu rounded-xl shadow-level-2 text-on-surface text-left"
       onMouseDown={e => e.stopPropagation()}
       onContextMenu={e => e.stopPropagation()}
     >
@@ -127,7 +127,6 @@ export function ChannelSyncDetails({
   fields?: Toggles;
   onFieldsChange?: (fields: Toggles) => void;
 }) {
-  const { accentColor } = useStore();
   const link = channel.link!;
   const [fields, setFields] = useState<Toggles>(link.fields);
   const [busy, setBusy] = useState(false);
@@ -182,37 +181,37 @@ export function ChannelSyncDetails({
   const pendingFields = SYNC_FIELDS.filter(f => f in link.pending);
   const shownFields = onFieldsChange && fieldsFromForm ? fieldsFromForm : fields;
   // Taller on phones, where these are tapped with a finger (in the channel editor sheet).
-  const smallBtn = 'md-btn h-7 max-md:h-10 px-2.5 max-md:px-3 rounded text-[11px] font-medium uppercase tracking-wider disabled:opacity-40';
+  const smallBtn = 'md-btn btn h-8 max-md:h-10 px-3 disabled:opacity-40';
 
   return (
     <>
       <div className="flex items-center gap-2 px-4 pt-3 pb-2">
-        <Link2 className="h-4 w-4 shrink-0" style={{ color: accentColor }} />
-        <p className="text-sm text-gray-900 dark:text-white min-w-0 truncate">
-          Kept in sync with <span className="font-medium">{sourceName}</span>
+        <Icon name="link" className="text-[24px] shrink-0 text-primary" />
+        <p className="text-body-md text-on-surface min-w-0 truncate">
+          Kept in sync with <span className="font-semibold">{sourceName}</span>
         </p>
       </div>
 
       <div className="px-4 pb-3 space-y-3">
         {link.lost && (
-          <div className="flex gap-2 rounded border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 p-2.5">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-gray-500 dark:text-gray-400" />
-            <p className="text-xs text-gray-600 dark:text-gray-300">
+          <div className="flex gap-2.5 rounded-lg bg-surface-container-highest p-3">
+            <Icon name="warning" className="text-[20px] shrink-0 mt-0.5 text-on-surface-variant" />
+            <p className="text-body-sm text-on-surface-variant">
               This channel disappeared from its source{channel.hiddenBySync ? ', so it was hidden' : ''}. If the provider brings it back, it syncs again{channel.hiddenBySync ? ' and shows up in your playlist' : ''} automatically.
             </p>
           </div>
         )}
 
         {pendingFields.map(field => (
-          <div key={field} className="rounded border p-2.5" style={{ borderColor: `${accentColor}55`, backgroundColor: `${accentColor}0d` }}>
-            <p className="text-xs font-medium text-gray-900 dark:text-white mb-1.5">New {SYNC_FIELD_LABELS[field].toLowerCase()} from source</p>
+          <div key={field} className="rounded-lg bg-primary-container/60 p-3">
+            <p className="text-label-md text-on-primary-container mb-1.5">New {SYNC_FIELD_LABELS[field].toLowerCase()} from source</p>
             <ValueLine label="Yours" value={channel[field]} />
             <ValueLine label="New" value={link.pending[field]} strong />
             <div className="flex justify-end gap-1 mt-2">
-              <button disabled={busy} onClick={() => handleSuggestion(field, 'dismiss')} className={`${smallBtn} text-gray-600 dark:text-gray-300`}>
+              <button disabled={busy} onClick={() => handleSuggestion(field, 'dismiss')} className={`${smallBtn} text-on-surface-variant`}>
                 Keep mine
               </button>
-              <button disabled={busy} onClick={() => handleSuggestion(field, 'apply')} className={smallBtn} style={{ color: accentColor }}>
+              <button disabled={busy} onClick={() => handleSuggestion(field, 'apply')} className={`${smallBtn} text-primary`}>
                 Use new
               </button>
             </div>
@@ -220,19 +219,19 @@ export function ChannelSyncDetails({
         ))}
 
         <div>
-          <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400 mb-1.5">What to keep in sync</p>
-          <SyncFieldToggles value={shownFields} onChange={onFieldsChange ?? saveFields} accentColor={accentColor} disabled={busy} />
+          <p className="text-label-md text-on-surface-variant mb-2">What to keep in sync</p>
+          <SyncFieldToggles value={shownFields} onChange={onFieldsChange ?? saveFields} disabled={busy} />
           {!anySyncFieldOn(shownFields) && (
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5">Nothing is synced right now. You can unlink this channel instead.</p>
+            <p className="text-body-sm text-on-surface-variant mt-2">Nothing is synced right now. You can unlink this channel instead.</p>
           )}
         </div>
       </div>
 
-      <div className="flex justify-between gap-1 px-2 pb-2 pt-1 border-t border-gray-100 dark:border-white/8">
-        <button disabled={busy} onClick={onRelink} className={`${smallBtn} text-gray-600 dark:text-gray-300`}>
+      <div className="flex justify-between gap-1 px-2 pb-2 pt-1 border-t border-outline-variant">
+        <button disabled={busy} onClick={onRelink} className={`${smallBtn} text-on-surface-variant`}>
           Link to another channel
         </button>
-        <button disabled={busy} onClick={unlink} className={`${smallBtn} text-red-600 dark:text-red-400`}>
+        <button disabled={busy} onClick={unlink} className={`${smallBtn} text-error`}>
           Unlink
         </button>
       </div>
@@ -251,7 +250,6 @@ export function BulkSyncSettingsDialog({
   channels: Channel[];
   onClose: () => void;
 }) {
-  const { accentColor } = useStore();
   const [fields, setFields] = useState<Toggles>(channels[0]?.link?.fields ?? { url: true, name: true, logo: true, tvgId: true });
   const [saving, setSaving] = useState(false);
   const count = channels.length;
@@ -272,18 +270,18 @@ export function BulkSyncSettingsDialog({
 
   return (
     <Dialog onClose={onClose} dismissible={!saving}>
-      <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-2">Sync Settings</h2>
-      <div className="px-6 pb-4 space-y-3">
-        <p className="text-sm text-gray-600 dark:text-gray-400">
+      <h2 className="text-headline-sm text-on-surface px-6 pt-6 pb-4">Sync settings</h2>
+      <div className="px-6 pb-2 space-y-4">
+        <p className="text-body-md text-on-surface-variant">
           These replace the current settings on the {count} linked channel{count !== 1 ? 's' : ''} in your selection. Unlinked channels are left alone.
         </p>
-        <SyncFieldToggles value={fields} onChange={setFields} accentColor={accentColor} disabled={saving} />
+        <SyncFieldToggles value={fields} onChange={setFields} disabled={saving} />
       </div>
-      <div className="flex justify-end gap-1 px-4 pb-4">
-        <button onClick={onClose} disabled={saving} className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300">
+      <div className="flex justify-end gap-2 px-6 pt-4 pb-6">
+        <button onClick={onClose} disabled={saving} className="md-btn btn btn-text">
           Cancel
         </button>
-        <button onClick={save} disabled={saving} className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40" style={{ color: accentColor }}>
+        <button onClick={save} disabled={saving} className="md-btn btn btn-text">
           {saving ? 'Saving…' : 'Save'}
         </button>
       </div>

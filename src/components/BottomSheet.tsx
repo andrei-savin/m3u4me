@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import Icon from './Icon';
 
 /**
  * A panel that slides up from the bottom of the screen, for phones: the channel
@@ -49,29 +49,29 @@ export default function BottomSheet({
 
   return (
     <div
-      className="md-scrim fixed inset-0 z-50 flex items-end bg-black/50"
+      className="md-scrim fixed inset-0 z-50 flex items-end bg-black/40"
       onClick={dismissible ? onClose : undefined}
     >
       <div
-        className={`md-sheet-in w-full ${fullHeight ? 'h-[90dvh]' : 'max-h-[90dvh]'} flex flex-col rounded-t-2xl bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] elev-24`}
+        className={`md-sheet-in w-full ${fullHeight ? 'h-[90dvh]' : 'max-h-[90dvh]'} flex flex-col rounded-t-[28px] bg-drawer text-on-surface shadow-level-3`}
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
       >
         {/* Grab bar: just a visual cue that this is a sheet. */}
-        <div className="shrink-0 flex justify-center pt-2 pb-1">
-          <div className="w-10 h-1 rounded-full bg-gray-300 dark:bg-white/20" />
+        <div className="shrink-0 flex justify-center pt-3 pb-2">
+          <div className="w-8 h-1 rounded-full bg-on-surface-variant/40" />
         </div>
         {title && (
-          <div className="shrink-0 flex items-center gap-2 pl-5 pr-2 pb-2 border-b border-gray-100 dark:border-white/10">
-            <h2 className="flex-1 min-w-0 truncate text-lg font-medium text-gray-900 dark:text-white">{title}</h2>
+          <div className="shrink-0 flex items-center gap-2 pl-6 pr-2 pb-2">
+            <h2 className="flex-1 min-w-0 truncate text-title-lg text-on-surface">{title}</h2>
             <button
               onClick={onClose}
               disabled={!canClose}
-              className="md-btn w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-gray-500 dark:text-gray-400 disabled:opacity-40"
+              className="md-btn icon-btn w-12 h-12"
               aria-label="Close"
             >
-              <X className="h-5 w-5" />
+              <Icon name="close" className="text-[24px]" />
             </button>
           </div>
         )}
@@ -79,7 +79,7 @@ export default function BottomSheet({
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
           {children}
         </div>
-        <div className={`shrink-0 ${footer ? 'border-t border-gray-100 dark:border-white/10' : ''} pb-safe`}>
+        <div className={`shrink-0 ${footer ? 'border-t border-outline-variant' : ''} pb-safe`}>
           {footer}
         </div>
       </div>

@@ -31,3 +31,37 @@ export function useIsPhone(): boolean {
 
   return isPhone;
 }
+
+/**
+ * "Narrow" means narrower than 1024px (Tailwind's `lg:`): phones and tablets held upright.
+ * There the playlists/categories (or sources, or guides) list floats over the page as a
+ * drawer that closes after a pick, like on phones, so the list beside it gets the full width.
+ * From 1024px it's a panel beside the content that stays open. Keep this in step with the
+ * `max-lg:` classes on that list in Dashboard.tsx.
+ */
+export const NARROW_QUERY = '(max-width: 1023.98px)';
+
+export function isNarrowNow(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia(NARROW_QUERY).matches;
+}
+
+/** True while the window is narrower than 1024px. Updates when it's resized or rotated. */
+export function useIsNarrow(): boolean {
+  const [isNarrow, setIsNarrow] = useState(isNarrowNow);
+
+  useEffect(() => {
+    const query = window.matchMedia(NARROW_QUERY);
+    const update = () => setIsNarrow(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  return isNarrow;
+}
+
+/**
+ * Whether the device has a mouse or trackpad that can hover. Without one (phones, tablets),
+ * actions that a mouse reveals by hovering over a row are shown all the time instead.
+ */
+export const canHover = typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches;

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api, EpgSource, EpgChannel, Channel } from '../apiClient';
-import { useStore, notifyError } from '../store';
-import { Loader2, Wand2, CheckCircle2, XCircle, Check } from 'lucide-react';
+import { notifyError } from '../store';
 import Dialog from './Dialog';
+import Icon from './Icon';
 
 interface BulkEpgAssignDialogProps {
   open: boolean;
@@ -64,7 +64,6 @@ type Scope = 'playlist' | 'category';
 export default function BulkEpgAssignDialog({
   open, onClose, playlistId, channels, activeCategory,
 }: BulkEpgAssignDialogProps) {
-  const { accentColor } = useStore();
 
   const [sources, setSources] = useState<EpgSource[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState('');
@@ -218,13 +217,14 @@ export default function BulkEpgAssignDialog({
 
   const scoreBar = (score: number) => {
     const pct = Math.round(score * 100);
-    const color = score >= 0.75 ? '#22c55e' : score >= 0.5 ? '#f59e0b' : '#f97316';
+    // Good matches in the success colour, doubtful ones in the warning colour.
+    const tone = score >= 0.75 ? 'bg-success text-success' : 'bg-warning text-warning';
     return (
       <div className="flex items-center gap-1.5 shrink-0">
-        <div className="w-16 h-1.5 rounded-full bg-gray-200 dark:bg-white/10 overflow-hidden">
-          <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
+        <div className="w-16 h-1.5 rounded-full bg-surface-container-highest overflow-hidden">
+          <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
         </div>
-        <span className="text-[10px] font-mono w-7 text-right" style={{ color }}>{pct}%</span>
+        <span className={`text-label-sm font-mono w-8 text-right bg-transparent ${tone}`}>{pct}%</span>
       </div>
     );
   };
@@ -233,7 +233,7 @@ export default function BulkEpgAssignDialog({
     <Dialog
       onClose={onClose}
       maxWidth="max-w-2xl"
-      panelClassName="rounded-lg overflow-hidden max-h-[85vh]"
+      panelClassName="overflow-hidden max-h-[85vh]"
       scrimClassName="bg-black/60"
       // The 'applying' step blocks tab-close (see the beforeunload handler above) for
       // the same reason it shouldn't be dismissible via backdrop/Escape either: closing
@@ -243,12 +243,12 @@ export default function BulkEpgAssignDialog({
     >
         {/* Header */}
         <div className="flex items-center gap-3 px-6 pt-6 pb-4 shrink-0">
-          <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: `${accentColor}20` }}>
-            <Wand2 className="h-5 w-5" style={{ color: accentColor }} />
+          <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-secondary-container text-on-secondary-container">
+            <Icon name="auto_fix_high" className="text-[24px]" />
           </div>
           <div>
-            <h2 className="text-lg font-medium text-gray-900 dark:text-white">Bulk EPG Assignment</h2>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Automatically match channel names to EPG entries using fuzzy search</p>
+            <h2 className="text-headline-sm text-on-surface">Assign EPG automatically</h2>
+            <p className="text-body-sm text-on-surface-variant">Automatically match channel names to EPG entries using fuzzy search</p>
           </div>
         </div>
 
@@ -257,31 +257,25 @@ export default function BulkEpgAssignDialog({
           <div className="flex flex-col gap-5 px-6 pb-6 flex-1 overflow-y-auto">
             {/* EPG Source picker */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">EPG Source</label>
+              <label className="field-label mb-2">EPG source</label>
               {sources.length === 0 ? (
-                <p className="text-sm text-gray-400 dark:text-gray-500 italic">No EPG sources added yet. Add one in the EPG view.</p>
+                <p className="text-body-md text-on-surface-variant">No EPG sources added yet. Add one in the EPG view.</p>
               ) : (
                 <div className="flex flex-col gap-2">
                   {sources.map(s => (
                     <button
                       key={s.id}
                       onClick={() => setSelectedSourceId(s.id)}
-                      className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 transition-colors text-left"
-                      style={selectedSourceId === s.id
-                        ? { borderColor: accentColor, backgroundColor: `${accentColor}12` }
-                        : { borderColor: 'transparent', backgroundColor: 'rgba(128,128,128,0.08)' }}
+                      className={`md-btn flex items-center gap-3 px-4 py-3 rounded-xl text-left ${selectedSourceId === s.id ? 'bg-secondary-container text-on-secondary-container' : 'bg-surface-container-highest text-on-surface'}`}
                     >
                       <div
-                        className="w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors"
-                        style={selectedSourceId === s.id
-                          ? { borderColor: accentColor, backgroundColor: accentColor }
-                          : { borderColor: 'currentColor' }}
+                        className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors ${selectedSourceId === s.id ? 'border-primary bg-primary text-on-primary' : 'border-on-surface-variant'}`}
                       >
-                        {selectedSourceId === s.id && <Check className="w-2.5 h-2.5 text-white" />}
+                        {selectedSourceId === s.id && <Icon name="check" className="text-[16px]" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">{s.name}</p>
-                        <p className="text-[11px] text-gray-500 dark:text-gray-400">{s.channelCount.toLocaleString()} channels · {s.type === 'xtream' ? 'Xtream Codes' : 'XMLTV'}</p>
+                        <p className="text-label-lg">{s.name}</p>
+                        <p className="text-body-sm opacity-80">{s.channelCount.toLocaleString()} channels · {s.type === 'xtream' ? 'Xtream Codes' : 'XMLTV'}</p>
                       </div>
                     </button>
                   ))}
@@ -291,21 +285,18 @@ export default function BulkEpgAssignDialog({
 
             {/* Scope picker */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Assign to</label>
+              <label className="field-label mb-2">Assign to</label>
               <div className="grid grid-cols-2 gap-2">
                 {(['category', 'playlist'] as Scope[]).map(s => (
                   <button
                     key={s}
                     onClick={() => setScope(s)}
-                    className="px-4 py-3 rounded-lg border-2 transition-colors text-left"
-                    style={scope === s
-                      ? { borderColor: accentColor, backgroundColor: `${accentColor}12` }
-                      : { borderColor: 'transparent', backgroundColor: 'rgba(128,128,128,0.08)' }}
+                    className={`md-btn px-4 py-3 rounded-xl text-left ${scope === s ? 'bg-secondary-container text-on-secondary-container' : 'bg-surface-container-highest text-on-surface'}`}
                   >
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">
+                    <p className="text-label-lg">
                       {s === 'category' ? `Current category` : 'Whole playlist'}
                     </p>
-                    <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                    <p className="text-body-sm opacity-80 mt-0.5">
                       {s === 'category'
                         ? `"${activeCategory}" — ${channels.filter(c => c.category === activeCategory).length} channels`
                         : `All categories — ${channels.length} channels`}
@@ -316,14 +307,13 @@ export default function BulkEpgAssignDialog({
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              <button onClick={onClose} className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300">Cancel</button>
+              <button onClick={onClose} className="md-btn btn btn-text">Cancel</button>
               <button
                 onClick={handleRunMatching}
                 disabled={!selectedSourceId}
-                className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40 flex items-center gap-2"
-                style={{ color: accentColor }}
+                className="md-btn btn btn-filled"
               >
-                <Wand2 className="h-3.5 w-3.5" />
+                <Icon name="auto_fix_high" className="text-[20px]" />
                 Match Channels
               </button>
             </div>
@@ -333,11 +323,11 @@ export default function BulkEpgAssignDialog({
         {/* ── Step: matching ── */}
         {step === 'matching' && (
           <div className="flex flex-col items-center justify-center gap-4 py-16 px-6">
-            <Loader2 className="h-8 w-8 animate-spin" style={{ color: accentColor }} />
-            <p className="text-sm text-gray-600 dark:text-gray-400">{loadingMsg}</p>
+            <Icon name="progress_activity" className="text-[32px] animate-spin text-primary" />
+            <p className="text-body-md text-on-surface-variant">{loadingMsg}</p>
             <button
               onClick={() => cancelRef.current = true}
-              className="mt-4 md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+              className="mt-4 md-btn btn btn-text text-error"
             >
               Cancel
             </button>
@@ -347,34 +337,34 @@ export default function BulkEpgAssignDialog({
         {/* ── Step: preview ── */}
         {step === 'preview' && (
           <>
-            <div className="px-6 py-3 shrink-0 border-b border-gray-200 dark:border-white/8 flex items-center justify-between gap-4">
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                <span className="font-semibold text-gray-900 dark:text-white">{matches.length}</span> matches found ·{' '}
-                <span className="font-semibold" style={{ color: accentColor }}>{acceptedCount}</span> selected
+            <div className="px-6 py-3 shrink-0 border-b border-outline-variant flex items-center justify-between gap-4">
+              <p className="text-body-md text-on-surface-variant">
+                <span className="font-semibold text-on-surface">{matches.length}</span> matches found ·{' '}
+                <span className="font-semibold text-primary">{acceptedCount}</span> selected
               </p>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setMatches(prev => prev.map(m => ({ ...m, accepted: true })))}
-                  className="text-[11px] underline text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                  className="text-label-md underline text-on-surface-variant hover:text-on-surface"
                 >Select all</button>
-                <span className="text-gray-300 dark:text-white/20">|</span>
+                <span className="text-outline-variant">|</span>
                 <button
                   onClick={() => setMatches(prev => prev.map(m => ({ ...m, accepted: false })))}
-                  className="text-[11px] underline text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                  className="text-label-md underline text-on-surface-variant hover:text-on-surface"
                 >Deselect all</button>
               </div>
             </div>
 
             {matches.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-16 px-6 text-gray-400">
-                <XCircle className="h-8 w-8" />
-                <p className="text-sm">No matches found above the confidence threshold.</p>
-                <button onClick={() => setStep('config')} className="text-xs underline" style={{ color: accentColor }}>Back to settings</button>
+              <div className="flex flex-col items-center justify-center gap-3 py-16 px-6 text-on-surface-variant">
+                <Icon name="cancel" className="text-[32px]" />
+                <p className="text-body-md">No matches found above the confidence threshold.</p>
+                <button onClick={() => setStep('config')} className="md-btn btn btn-text">Back to settings</button>
               </div>
             ) : (
               <>
                 {/* Column headers */}
-                <div className="px-4 py-1.5 shrink-0 grid gap-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-white/5"
+                <div className="px-4 h-10 items-center shrink-0 grid gap-2 text-label-md text-on-surface-variant border-b border-outline-variant"
                   style={{ gridTemplateColumns: '2rem 1fr 1fr 5.5rem' }}>
                   <span />
                   <span>Playlist Channel</span>
@@ -387,26 +377,26 @@ export default function BulkEpgAssignDialog({
                     <button
                       key={m.channel.id}
                       onClick={() => toggleMatch(i)}
-                      className="w-full grid gap-2 items-center px-4 py-2.5 border-b border-gray-100 dark:border-white/5 hover:bg-gray-50 dark:hover:bg-white/3 transition-colors text-left"
+                      className="md-btn w-full grid gap-2 items-center px-4 py-2.5 border-b border-outline-variant/60 text-left"
                       style={{ gridTemplateColumns: '2rem 1fr 1fr 5.5rem' }}
                     >
                       {/* Checkbox */}
                       <div className="flex items-center justify-center">
                         {m.accepted
-                          ? <CheckCircle2 className="h-4 w-4" style={{ color: accentColor }} />
-                          : <div className="h-4 w-4 rounded-full border-2 border-gray-300 dark:border-gray-600" />}
+                          ? <Icon name="check_circle" className="text-[24px] text-primary" />
+                          : <div className="h-5 w-5 rounded-full border-2 border-on-surface-variant" />}
                       </div>
                       {/* Playlist channel */}
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{m.channel.name}</p>
+                        <p className="text-label-lg text-on-surface truncate">{m.channel.name}</p>
                         {m.channel.tvgId && (
-                          <p className="text-[10px] font-mono text-gray-400 dark:text-gray-500 truncate">was: {m.channel.tvgId}</p>
+                          <p className="text-label-sm font-normal font-mono text-on-surface-variant truncate">was: {m.channel.tvgId}</p>
                         )}
                       </div>
                       {/* EPG channel */}
                       <div className="min-w-0">
-                        <p className="text-sm text-gray-800 dark:text-gray-200 truncate">{m.epgChannel.displayName}</p>
-                        <p className="text-[10px] font-mono text-gray-400 dark:text-gray-500 truncate">{m.epgChannel.id}</p>
+                        <p className="text-body-md text-on-surface truncate">{m.epgChannel.displayName}</p>
+                        <p className="text-label-sm font-normal font-mono text-on-surface-variant truncate">{m.epgChannel.id}</p>
                       </div>
                       {/* Score bar */}
                       {scoreBar(m.score)}
@@ -414,15 +404,14 @@ export default function BulkEpgAssignDialog({
                   ))}
                 </div>
 
-                <div className="px-6 py-4 shrink-0 border-t border-gray-200 dark:border-white/8 flex justify-end gap-2">
-                  <button onClick={() => setStep('config')} className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300">Back</button>
+                <div className="px-6 py-4 shrink-0 border-t border-outline-variant flex justify-end gap-2">
+                  <button onClick={() => setStep('config')} className="md-btn btn btn-text">Back</button>
                   <button
                     onClick={handleApply}
                     disabled={acceptedCount === 0}
-                    className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40 flex items-center gap-2"
-                    style={{ color: accentColor }}
+                    className="md-btn btn btn-filled"
                   >
-                    <Check className="h-3.5 w-3.5" />
+                    <Icon name="check" className="text-[20px]" />
                     Apply {acceptedCount} Assignment{acceptedCount !== 1 ? 's' : ''}
                   </button>
                 </div>
@@ -434,14 +423,14 @@ export default function BulkEpgAssignDialog({
         {/* ── Step: applying ── */}
         {step === 'applying' && (
           <div className="flex flex-col items-center justify-center gap-4 py-16 px-6">
-            <Loader2 className="h-8 w-8 animate-spin" style={{ color: accentColor }} />
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <Icon name="progress_activity" className="text-[32px] animate-spin text-primary" />
+            <p className="text-body-md text-on-surface-variant">
               {isReverting ? 'Reverting changes...' : `Applying ${appliedCount} / ${matches.filter(m => m.accepted).length}…`}
             </p>
             {!isReverting && (
               <button 
                 onClick={() => cancelRef.current = true}
-                className="mt-4 md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                className="mt-4 md-btn btn btn-text text-error"
               >
                 Cancel & Revert
               </button>
@@ -452,19 +441,18 @@ export default function BulkEpgAssignDialog({
         {/* ── Step: done ── */}
         {step === 'done' && (
           <div className="flex flex-col items-center justify-center gap-5 py-16 px-6">
-            <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ backgroundColor: `${accentColor}20` }}>
-              <CheckCircle2 className="h-8 w-8" style={{ color: accentColor }} />
+            <div className="w-16 h-16 rounded-full flex items-center justify-center bg-primary-container text-on-primary-container">
+              <Icon name="check_circle" className="text-[32px]" />
             </div>
             <div className="text-center">
-              <p className="text-lg font-medium text-gray-900 dark:text-white">Done!</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              <p className="text-title-lg text-on-surface">Done</p>
+              <p className="text-body-md text-on-surface-variant mt-1">
                 Successfully assigned EPG IDs to <strong>{appliedCount}</strong> channel{appliedCount !== 1 ? 's' : ''}.
               </p>
             </div>
             <button
               onClick={onClose}
-              className="md-btn h-9 px-6 rounded text-xs font-medium uppercase tracking-wider"
-              style={{ color: accentColor }}
+              className="md-btn btn btn-filled"
             >
               Done
             </button>

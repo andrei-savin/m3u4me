@@ -104,7 +104,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 | Area | Routes |
 | --- | --- |
 | Auth | `/auth/status`, `/auth/login` and `/auth/recover` (these three are public), plus `/auth/set-password`, `/auth/remove-password`, `/auth/logout` |
-| Playlists | `/playlists` CRUD and `/playlists/import` |
+| Playlists | `/playlists` CRUD, `/playlists/import`, and `/playlists/reorder` (POST `{ ids }`: the order playlists are listed in) |
 | Channels (under `/playlists/:id/channels`) | single PUT/DELETE, `bulk` (add, returns new ids), `bulk-update` (same changes → many ids), `bulk-update-many` (per-id changes), `bulk-replace` (find/replace), `bulk-delete`, `reorder` |
 | EPG | `/epg-sources` CRUD, `/:id/refresh`, `/:id/channels`, `/:id/now` (programmes from −3h to +6h), `/epg/tvg-ids?q=` (autocomplete), `/epg/resolve-tvg-ids` |
 | Channel pool | `/channel-pool/sources` CRUD, `/upload`, `/:id/refresh`, `/:id/channels?q=&category=&sort=name\|original`, `/:id/categories`, `/validate-url`, `/changelog?page=` |
@@ -131,7 +131,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 `server.ts` and `src/apiClient.ts` each declare `Playlist`, `Channel`, `EpgSource`, `ChannelPoolSource`, `ChannelPoolEntry`, `ChannelPoolChangeLog`, the EPG programme shape, and the sync types (`SyncField`, `ChannelLink`, `PoolSnapshot`, `SyncLogEntry`, `AppSettings`). **When changing a shape, update both files.** Response-only types (`SearchResult`, `Stats`, `EpgChannel`, `LinkCandidate`) exist only in `apiClient.ts` and must match what the route actually returns. Some routes also add response-only fields: `GET /playlists` adds `channelCount`/`pendingSyncCount`/`unreadSyncLogCount`, `GET /channel-pool/sources` adds `linkedChannelCount`, and the pool channel list adds `linkedPlaylistIds`. The matching `PUT` routes drop these if a caller echoes them back.
 
 - **Playlist**
-  - `shortId`: incrementing integer used in the public URLs.
+  - `shortId`: incrementing integer used in the public URLs. It never changes; the order playlists are *listed* in is simply their order in `db.playlists`, which `POST /playlists/reorder` rearranges (drag a playlist in the list pane).
   - `exportId`: UUID for the legacy URL.
   - `categories: string[]`: this array *is* the category display order. `PUT` rejects duplicate names, and bulk add/update endpoints auto-append unknown categories.
   - `lastDownloadedAt`: last time a player pulled the M3U; absent on old records.
@@ -141,11 +141,11 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 
 ## Frontend
 
-**Entry and routing:** `main.tsx` wraps everything in `BrowserRouter` and calls `initRipples()`. `App.tsx` applies the `dark`/`amoled` classes to `<html>`, updates the accent-tinted favicon, checks auth status, and shows `LockScreen` when locked. Once unlocked it fetches `/api/settings` and shows `Onboarding` while `onboardingDone` is false. Both are gates rather than routes, so every address shows them. Otherwise it renders routes:
+**Entry and routing:** `main.tsx` wraps everything in `BrowserRouter`, calls `initRipples()`, imports the Geist fonts, and applies the Material You palette and font before the first render (see Styling). `App.tsx` applies the `dark`/`amoled` classes and `data-font` to `<html>`, re-applies the palette when the accent or colour style changes (and gives the favicon the palette's primary colour, the same shade as the logo), checks auth status, and shows `LockScreen` when locked. Once unlocked it fetches `/api/settings` and shows `Onboarding` while `onboardingDone` is false. Both are gates rather than routes, so every address shows them. Otherwise it renders routes:
 
 | Path | Component |
 | --- | --- |
-| `/` | `Home.tsx`: homescreen with stats tiles, last download, newest pool channels, a "Sync updates waiting" card (only when suggestions are pending), per-playlist copy/download links |
+| `/` | `Home.tsx`: flat cards on the tinted page, like the rest of the app. "Your playlists" first (a card each: link for a TV app with copy/download, Open, a chip when sync suggestions wait, plus New playlist), then Overview (the total-channels card in `primary-container` and three count tiles), then Recent activity (last playlist fetch, newest pool channels) |
 | `/playlists`, `/sources`, `/epg` | `Dashboard.tsx` with `activeView` prop `'playlists' \| 'channels' \| 'epg'` (note: **`'channels'` means the Sources tab**) |
 | `/settings` | `SettingsPage.tsx`: appearance, channel sync defaults, password/recovery key, backup (download, restore dialog), about + version |
 | `*` | redirect to `/` |
@@ -157,19 +157,20 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 - `useChannels` returns a stable `EMPTY_CHANNELS` array while a fetch is in flight. Returning a fresh `[]` there once caused an infinite render loop, so keep hook return values referentially stable.
 
 **UI state: one Zustand store (`src/store.ts`):**
-- It holds active playlist/category/EPG source/pool source, `scrollTarget`, `isSidebarOpen` (starts closed on phones), `channelPoolLogOpen` (opens the phone update-log sheet), `syncLogOpenFor` (Home asks PlaylistEditor to open a sync log), `hideUrls`, `undoEntry`, `toast`, and the cosmetic settings.
-- Only `logoBgColor`, `accentColor`, `isDarkMode`, `isAmoledMode` and `is24Hour` are persisted to localStorage. Everything else resets on reload.
+- It holds active playlist/category/EPG source/pool source, `scrollTarget`, `isSidebarOpen` (starts closed below 1024px), `channelPoolLogOpen` (opens the phone update-log sheet), `syncLogOpenFor` (Home asks PlaylistEditor to open a sync log), `hideUrls`, `undoEntry`, `toast`, and the cosmetic settings.
+- Only `logoBgColor`, `accentColor`, `colorStyle`, `isDarkMode`, `isAmoledMode`, `is24Hour`, `fontFamily` (`'geist'` | `'system'`) `nameColumnWidth` (the playlist editor's dragged name-column width; null = automatic), and what was open last (`activePlaylistId`, `activeCategory`, `activeChannelPoolSourceId`, `activeEpgSourceId`) are persisted to localStorage. Everything else resets on reload.
+- **Something is always open.** Dashboard's fallback effects open the first playlist/source/guide when the remembered one is missing or none is set, so a tab never lands on an empty pane behind the closed drawer. They run only when a list *arrives* (reading the current id with `useStore.getState()`), never when the selection changes, because a newly created item becomes active before the refetched list contains it. `NothingSelected` therefore only shows for an empty list (with an Add button) or a failed load (Try again), and nothing while loading.
 - The sidebar *width* is local state in `Dashboard.tsx`, not in the store.
 - **Errors and notifications:** in a mutation's catch block, call `console.error(e)` plus `notifyError(e, 'fallback message')`. For non-error feedback, use `notifyWarning` or `notifyInfo`. `AuthExpiredError` is ignored on purpose (the lock screen covers it). One toast shows at a time.
 - **Undo:** `setUndoEntry({ description, restore })`. Existing restores re-create data via `bulkAddChannels`, so restored channels get new ids. `bulk` add keeps `isHidden` (only restores send it), so hidden channels come back hidden.
 - `<Toast />` renders both the toast and the undo snackbar (Cmd/Ctrl+Z triggers undo). It's mounted in `Dashboard`, `Home`, `SettingsPage` and `Onboarding`, but not in LockScreen. The first three pass `withTabBar`, which lifts it above the phone tab bar. Error messages users see (toasts, inline form errors, server `{ error }` text) should be plain language that says what to do next.
 
 **Cross-surface search:**
-- `Spotlight.tsx` (Cmd/Ctrl+K) queries `/api/search` and groups results as kind → container → category.
+- `Spotlight.tsx` (Cmd/Ctrl+K) queries `/api/search` and groups results by kind → container → category, one group per place, each under a single sticky Finder-style path line (`My Playlists › LynkTV › Anglia`; icon only on phones). Rows show the name; the second line appears only when the TVG ID and/or stream link matched (`matchesQuery`), showing just what matched (the link without `https://`).
 - Picking a result navigates, sets the active container, and sets `scrollTarget: { kind, id }`. The matching view (`PlaylistEditor` / `ChannelPoolViewer` / `EpgViewer`) clears any filter or pagination hiding the target, scrolls to it, highlights it, and resets `scrollTarget` to null.
-- `handleSpotlightNavigate` and the keyboard-shortcuts dialog are **duplicated verbatim in `Dashboard.tsx` and `Home.tsx`**, so edit both. The desktop top nav bar is also deliberately mirrored between the two files so nothing shifts when navigating (phones use the shared `MobileTopBar`/`MobileTabBar` instead, see Phone layout).
+- `handleSpotlightNavigate` is **duplicated verbatim in `Dashboard.tsx` and `Home.tsx`**, so edit both. Both screens share the desktop top bar (`DesktopTopBar.tsx`: ☰, logo, the three tabs with a sliding underline, search, shortcuts (hidden on touch-only screens, `no-hover:hidden`), Settings), the update strip (`UpdateBanner.tsx`) and `KeyboardShortcutsDialog.tsx`, so nothing shifts when navigating. Home passes its frosted-glass surface to the bars. Phones use the shared `MobileTopBar`/`MobileTabBar` instead (see Phone layout).
 
-**Version check:** `AppInfo.tsx`'s `useVersionInfo()` compares `api.getVersion()` (the `package.json` version) to GitHub's latest release, fetched from the browser. It drives the update banner in Dashboard/Home and the About section.
+**Version check:** `AppInfo.tsx`'s `useVersionInfo()` compares `api.getVersion()` (the `package.json` version) to GitHub's latest release, fetched from the browser. It drives `UpdateBanner` (Dashboard/Home) and the About section.
 
 ### Feature surfaces
 
@@ -178,23 +179,28 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
     - Start fresh: Sources → Password → Playlist → Done
     - Restore a backup: Backup → Password → Done (plus the Playlist step if the backup had no playlist)
   - Naming a playlist can't be skipped. The server finishes the setup when the playlist is made, so leaving mid-way or reloading brings the setup back from Welcome.
-  - The Sources step reuses `AddChannelPoolSourceDialog`/`AddEpgSourceDialog`, rendered outside the glass card (its backdrop blur would otherwise anchor their `position: fixed` to the card). It also offers "Use the TV guide from <Xtream source>", which creates an Xtream EPG source with the same login.
+  - The Sources step reuses `AddChannelPoolSourceDialog`/`AddEpgSourceDialog`, rendered outside the card (the step's slide-in transform would otherwise anchor their `position: fixed` to the card). It also offers "Use the TV guide from <Xtream source>", which creates an Xtream EPG source with the same login.
   - The Password step stores the token `set-password` returns. The Done step shows the playlist's short link (and `/epg` when there's a guide), then navigates and calls `onFinish`.
   - The step container is keyed by step for its entrance animation, and the scroll container resets to the top on every step change.
 - `BackupDropZone.tsx`: the shared drop-or-click file picker for a backup, used by onboarding and the Settings restore dialog. It also exports `describeRestoredBackup()` and `restoreErrorMessage()`.
 - **My Playlists**
-  - The sidebar has the playlist list plus `CategoryList.tsx`: dnd-kit category reordering and rename/delete/add. Category mutations write the full `categories` array and suppress the auto-sync effect while in flight, to avoid a race. Each category also has an eye button that hides/shows all its channels via `bulk-update`. There's no stored per-category flag: a category shows as hidden when every channel in it is hidden. Undo restores each channel's previous `isHidden` via `bulk-update-many`.
+  - The list pane has the playlists and, below them, `CategoryList.tsx`. Both lists are rows of `SortableNavRow.tsx` (no icons; name, count, rename/hide/delete) and can be reordered with dnd-kit: with a mouse the whole row is the drag handle (dragging starts after 5px, a grip fades in over the left padding as a hint) and the buttons appear on hover. On touch screens and in the drawer (`touch`) rows are just name and count until the section header's Edit / Done button (`PaneSectionHeader`'s `onToggleEdit`; Dashboard's `editingList`, one list at a time) shows a real grip and the buttons. Hover-revealed buttons are never used on touch: a tap counts as a hover on iPads. Source and guide rows (`SourceRow`) work the same way. Playlist order is saved with `api.reorderPlaylists`. Categories also get rename/delete/add. Category mutations write the full `categories` array and suppress the auto-sync effect while in flight, to avoid a race. Each category also has an eye button that hides/shows all its channels via `bulk-update`. There's no stored per-category flag: a category shows as hidden when every channel in it is hidden. Undo restores each channel's previous `isHidden` via `bulk-update-many`.
   - `PlaylistEditor.tsx` covers (desktop; see Phone layout for its phone rows and sheet):
+    - a header (playlist name as an overline, the category as the title, the count) with Sync log, Check streams, Assign EPG, a ⋮ (Find & Replace, Channel list PDF, Hide stream links) and the one filled "Link & download" button. Button labels appear once the pane is wide enough, via a container query (`@container` on the editor, `@4xl:` on the labels), so they follow the pane, not the window.
+    - while channels are selected, the header turns into the selection bar (Move to, Sync, Unlink, Check, Delete, ✕)
+    - rows without zebra stripes: the drag handle and link/eye/delete/⋮ buttons appear on hover (always on touch screens, via `canHover` from `useIsPhone.ts`); the link button (when linked) and the eye-off (when hidden) always show. The row's ⋮ opens the same menu as a right-click (Insert above/below, Link/Sync settings, Stream headers, Delete), because touch screens can't right-click; there, Delete lives only in that menu, so a touch row has three buttons and a mouse row four (`sharedWidth` and the column header's spacer account for both). **Never make a feature right-click-only.** Hidden channels are dimmed, selected rows use `secondary-container`, a search jump flashes `tertiary-container`.
+    - the "Add channel" FAB, bottom-right on every size (desktop adds a row for inline editing at once; phones open the sheet)
+    - a name column whose width is measured, not guessed: left alone, the TV guide column gets about 38% of the row (200–380px) and the name the rest; dragging the header divider saves a width in the store (`nameColumnWidth`), double-clicking it goes back to automatic
     - dnd-kit channel reordering with an optimistic local order
     - click-to-edit fields
     - multi-select with bulk move/delete/hide and find/replace
     - the stream health checker (batched to `/api/health-check`)
-    - TVG-ID autocomplete (`TvgIdAutocomplete.tsx`: `inline` mode in desktop rows, `field` mode in the phone sheet)
+    - TVG-ID autocomplete (`TvgIdAutocomplete.tsx`: `inline` mode in desktop rows, `field` mode in the phone sheet). Its list is at least 360px wide whatever the column, and each row puts the guide channel's name on its own line, with the guide and the id (the part that truncates) underneath.
     - client-side pagination of 100 channels per page
     - keyboard shortcuts: Cmd/Ctrl+A, Del, Space, Esc
   - `NewPlaylistDialog.tsx` creates an empty playlist or imports from a URL/file.
   - Channel sync in PlaylistEditor:
-    - Each row has a link button, a quiet accent dot when suggestions are pending, and a "Source lost" chip.
+    - Each row has a link button, a quiet accent dot when suggestions are pending, and a "Source lost" chip. A TVG-ID found in a guide shows as an outlined chip (guide channel name · source), without an icon.
     - `ChannelSyncPopover.tsx` (portal, anchored to the clicked element) handles suggestions, sync toggles and Unlink. Its inside is the exported `ChannelSyncDetails`, which the phone channel sheet shows inline. It also exports `BulkSyncSettingsDialog` for the selection bar.
     - `LinkChannelDialog.tsx` links an existing channel: server-ranked candidates, then a per-field "Keep mine / Use source value" comparison.
     - `SyncLogPanel.tsx` is the per-playlist log drawer. Opening it marks the log read, and it offers Apply/Dismiss for suggestions still waiting.
@@ -202,17 +208,17 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
     - The My Playlists tab shows a dot (mirrored in Home) when any suggestion is pending, and the sidebar shows unread log counts.
   - `ChannelListPdf.tsx` (toolbar "PDF" button, next to Sync log) is a printable A4 channel list copied from the maintainer's demo PDF.
     - It's a preview in the shared `Dialog`, portaled into `<body>`. "Save PDF" waits for the font and logos (max 15s), then calls `window.print()`. The `@media print` block in `index.css` hides the app and the dialog's header/footer (`pdf-no-print`), and flattens the dialog's layout (`pdf-print-reset`), so only the sheets print. It's browser print-to-PDF, not a PDF library, which keeps any logo format and system-font fallback for glyphs Inter lacks.
-    - The dialog chrome uses the app's system UI font. Only the sheets use Inter, because they copy the demo.
+    - The dialog chrome uses the app's font (Geist or system). Only the sheets use Inter, and their fixed colours, because they copy the demo.
     - Order and numbering mirror `serveM3U` (hidden channels left out, numbers run through the whole playlist). EPG ✓ means the TVG-ID is in PlaylistEditor's `tvgIdLabels` (found in a loaded guide).
     - Pagination is computed, not measured: every row is 36.99pt, so page 1 fits 17 rows and later pages 20 (`FIRST_PAGE_ROWS`/`PAGE_ROWS`). Change those if the `.pdf-*` sizes change.
     - Fonts come from `@fontsource-variable/inter` (bundled, offline). "Inter Display" is the same font at `opsz` 32.
   - `BulkEpgAssignDialog.tsx` is opened from PlaylistEditor. It fuzzy-matches channel names to EPG channel names client-side (trigram + word overlap, precomputed index, chunked with yields) and applies matches in chunks via `bulk-update-many`, with cancel & revert.
 - **Sources**
-  - `ChannelPoolViewer.tsx` is a virtualized list (56px rows). Search, category filter and sort run server-side. The selection persists across searches, and an `AddToPlaylistModal` bulk-adds the selection with an optional category override and an optional "Keep in sync with source" (default or custom fields, per selection; not offered for file sources). Linked pool rows show a link icon.
-  - `ChannelPoolUpdateLog.tsx` is a collapsible changelog drawer.
+  - `ChannelPoolViewer.tsx` is a virtualized list (56px rows) under a title header (with `SourceActions.tsx`: Refresh, not for file sources, and Edit) and a toolbar (search, category, sort, Hide stream links, "Add N to playlist" while something is selected). Search, category filter and sort run server-side. The selection persists across searches, and an `AddToPlaylistModal` bulk-adds the selection with an optional category override and an optional "Keep in sync with source" (default or custom fields, per selection; not offered for file sources). Linked pool rows show a link icon.
+  - `ChannelPoolUpdateLog.tsx` is a collapsible changelog strip on the right of the pane.
   - `AddChannelPoolSourceDialog.tsx` adds or edits sources (Xtream, URL, or file upload).
 - **EPG**
-  - `EpgViewer.tsx` is a hand-virtualized timeline grid. It uses a single scroll container with sticky header and channel column, rAF-coalesced scroll handling, and programme times parsed once per fetch.
+  - `EpgViewer.tsx` is a hand-virtualized timeline grid under a title header (Dashboard passes `sourceName`, plus `onRefresh`/`onEdit` for its `SourceActions`). The header shows above the loading, failed and empty states too; the empty state shows the guide's `lastFetchError` and Edit / Download again buttons. What's on now is a `secondary-container` block with a progress fill; past programmes are quieter. It uses a single scroll container with sticky header and channel column, rAF-coalesced scroll handling, and programme times parsed once per fetch.
   - `EpgProgramDialog.tsx` shows programme details.
   - `AddEpgSourceDialog.tsx` adds or edits sources.
   - `AssignTvgIdDialog.tsx` is the reverse of bulk assign: pick one EPG channel, then assign it to channels from any playlist. It's opened from Dashboard via EpgViewer's `onAssignChannel`.
@@ -221,9 +227,10 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 
 Below 768px (Tailwind's `md`) the app switches to a phone layout. Tablets and computers keep the desktop layout, except a tablet whose browser asks for the mobile site (iPad Safari's "Request Mobile Website" sends a user agent with "Mobile"): an inline script in `index.html` then sets the viewport to `width=767` (no `initial-scale`, which iPads let override the width) so the page lays out as a phone and is scaled up. Desktop markup itself is left alone: phone-only pieces are `md:hidden`, desktop-only pieces `hidden md:flex`, and phone-only sizes `max-md:…`. Don't put `max-md:` and an existing `sm:` on the same property (their order in the CSS isn't obvious); Home's count tiles use `max-sm:` to match its existing `sm:` grid.
 
-- **CSS vs `useIsPhone()`** (`src/utils/useIsPhone.ts`, `PHONE_QUERY` must match `md`): CSS for showing, hiding and sizing; the hook only where the phone needs different components or behaviour (drawer overlay and auto-close, `PhoneChannelRow` instead of `SortableChannelItem`, the channel sheet, long-press, selection bars, the EPG channel-column width, the update-log sheet, mounting the tab bar). `isPhoneNow()` is for the store's starting values.
-- **Shell:** `MobileTopBar.tsx` (☰, title with optional `overline`, or the logo; Search via the synthetic Cmd+K event; one `OverflowMenu` ⋮) and `MobileTabBar.tsx` (Home/Playlists/Sources/EPG/Settings, in the page flow as the last row, with the pending-sync dot) are shared by Dashboard, Home and Settings; their desktop navs are `hidden md:grid`/`md:flex`. `OverflowMenu.tsx` is the ⋮ menu (48px rows, `openUp` for bottom bars).
-- **Drawer:** the sidebar becomes `max-md:fixed` over the page with a scrim, `min(320px, 85vw)` wide, starts closed, and closes as soon as anything is picked or created in it: a playlist, a category (`CategoryList`'s `onPick`, also after adding one), a source or a guide. Rename, delete and hide leave it open. To switch category, open ☰ again. Playlists and categories get a visible rename pencil on phones (no double-click).
+- **CSS vs `useIsPhone()`** (`src/utils/useIsPhone.ts`, `PHONE_QUERY` must match `md`): CSS for showing, hiding and sizing; the hook only where the phone needs different components or behaviour (`PhoneChannelRow` instead of `SortableChannelItem`, the channel sheet, long-press, selection bars, the EPG channel-column width, the update-log sheet, mounting the tab bar). The same file has `useIsNarrow()` (`NARROW_QUERY`, below 1024px = `max-lg:`) for the floating drawer, and `canHover` for showing hover-revealed buttons all the time on touch screens.
+- **Shell:** `MobileTopBar.tsx` (☰, title with optional `overline`, or the logo; Search via the synthetic Cmd+K event; one `OverflowMenu` ⋮) and `MobileTabBar.tsx` (Home/Playlists/Sources/EPG/Settings, in the page flow as the last row, a `secondary-container` pill on the current tab, with the pending-sync dot) are shared by Dashboard, Home and Settings, on the page colour; their desktop navs are `hidden md:grid`/`md:flex`. `OverflowMenu.tsx` is the ⋮ menu (48px rows, `openUp` for bottom bars, Escape closes it).
+- **Touch screens of any size** (`canHover` false, the `no-hover:` variant): buttons are at least 44px (`.icon-btn`/`.btn` `min-*` sizes in `index.css`), playlist rows are 64px with wider handle and button columns (`sharedWidth` accounts for them), Sources rows 64px (`ROW`), the list pane starts at 320px, and list rows keep their buttons behind Edit (see My Playlists). The Browser pane can't emulate `(hover: none)` at tablet width, so check these on a real iPad.
+- **Drawer (phones and upright tablets, below 1024px):** the list pane becomes `max-lg:fixed` over the page with a scrim and the logo on top, `min(320px, 85vw)` wide, starts closed, and closes as soon as anything is picked or created in it: a playlist, a category (`CategoryList`'s `onPick`, also after adding one), a source or a guide. Rename, delete and hide leave it open. To switch category, open ☰ again. In the drawer (and on touch screens) rows show their rename pencil and buttons after tapping the section's Edit (no double-click or hover). From 1024px it's a resizable panel beside the content again, collapsible with ☰.
 - **Layering rule:** phone overlays (drawer, sheets) are `z-50` and come *before* the dialogs they open in the page, so dialogs paint on top. Never move them with a CSS `transform` (it would re-anchor `position: fixed` children); `.md-sheet-in` ends on `transform: none`. Bars shown while something is selected are `fixed bottom-0 z-40` and cover the tab bar on purpose.
 - **`BottomSheet.tsx`** is the phone counterpart of `Dialog` (title row with ✕, scrolling body, footer with `pb-safe`, `dismissible`, `fullHeight`). Used by `ChannelEditSheet.tsx` and the Sources update log.
 - **One bar, one ⋮, one way to navigate.** The user found a second (coloured) toolbar, two ⋮ menus and a tappable category title confusing, so on phones: ☰ is the only way to switch playlist/category/source/guide, the title only says where you are, and each screen has exactly one ⋮.
@@ -231,20 +238,22 @@ Below 768px (Tailwind's `md`) the app switches to a phone layout. Tablets and co
 - **Adding a channel on a phone** uses the round + button (FAB) or the sheet's Insert above/below. Both open `ChannelEditSheet` with `isNew`: nothing is created until Add (`handleCreateChannel`), so Cancel leaves nothing behind. Desktop's Add/Insert still create a "New Channel" immediately for inline editing.
 - **`ChannelEditSheet` is one form.** Every setting in it (text fields, "Show in playlist", stream headers, the sync checkboxes via `ChannelSyncDetails`' `fields`/`onFieldsChange`) is a draft until Save; ✕ and Cancel discard it (`BottomSheet`'s `canClose` keeps ✕ working while `dismissible` blocks stray outside taps). The user reported mixing instant-save toggles into it as a big bug. Only buttons that *do* something (Use new / Keep mine, Link, Unlink, Insert, Delete) act immediately.
 - **The sheet sends only fields that changed** (`handleSheetSave` → `handleChannelSave`, then `updateChannelLink` if the sync checkboxes changed). Any `isHidden` key in a channel PUT clears `hiddenBySync` (`afterManualChannelEdit`), so never echo unchanged values.
-- **Sources:** full-width search plus a filter button for category/sort, tap a row to select, a bottom "Add to playlist" bar, and the update log in a sheet from the top bar's ⋮ (`channelPoolLogOpen`).
-- **EPG:** a fixed 104px channel column (tap it to assign the guide channel). "Now" centring accounts for the pinned column on every screen size (`scrollLeftToCenter`).
+- **Sources:** full-width search plus a filter button for category/sort, tap a row to select, a bottom "Add to playlist" bar. The top bar's ⋮ (Dashboard's `menuItems`) has Refresh source, Edit source, the update log in a sheet (`channelPoolLogOpen`) and Hide stream links.
+- **EPG:** a fixed 104px channel column (tap it to assign the guide channel). The top bar's ⋮ has Refresh guide and Edit guide. "Now" centring accounts for the pinned column on every screen size (`scrollLeftToCenter`).
 - **Global:** shell roots use `h-dvh` (not `h-screen`, which hides content behind mobile browser bars). `index.html` has `viewport-fit=cover`; `pt-safe`/`pb-safe` utilities and the `body` side padding handle notches and home bars. `.md-btn`'s hover tint only applies on `(hover: hover)` devices, so it doesn't stick after a tap. Form inputs in phone UI use `text-base` (16px), or iPhones zoom the page on focus.
 - **Testing:** the Browser pane can emulate the size but sends mouse events, so long-press, touch dragging, safe areas and the on-screen keyboard need a check on a real phone over the LAN.
 
 ### Shared pieces and conventions
 
-- `Dialog.tsx` is the shared modal shell (scrim, Escape/backdrop close, `dismissible` flag). Use it for new dialogs. The confirm dialogs inline in Dashboard/Home predate it. Its scrim scrolls (`items-start overflow-y-auto` plus `my-auto` on the panel), so a dialog taller than the screen can be scrolled; one that fits stays centred.
-- `ACCENT_PRESETS` lives in `store.ts` (Settings and onboarding). `Home.tsx` exports `HomeBackground` and `GLASS`, which onboarding reuses for its aurora background and glass card.
+- `Dialog.tsx` is the shared modal shell (scrim, Escape/backdrop close, `dismissible` flag, 28px corners on `bg-dialog`). Use it for new dialogs: 24px padding, a `text-headline-sm` title, `text-body-md` text, text buttons on the right. `ConfirmDialog.tsx` is the "are you sure?" version (title, message, Cancel + one confirm, `danger` for red). Its scrim scrolls (`items-start overflow-y-auto` plus `my-auto` on the panel), so a dialog taller than the screen can be scrolled; one that fits stays centred.
+- Small shared controls: `Checkbox.tsx` (the M3 checkbox picture, put inside the clickable element), `Switch.tsx` (M3 switch), `SegmentedButtons.tsx` (2–4 joined choices, e.g. Theme and Font in Settings), `SyncFieldToggles.tsx` (filter chips).
+- `ACCENT_PRESETS` lives in `store.ts` (Settings and onboarding).
+- **Icons are Material Symbols (rounded)**, through `Icon.tsx`: `<Icon name="delete" className="text-[20px]" />`. It's a font (`@fontsource-variable/material-symbols-rounded`, bundled; the `@font-face` is in `index.css`), so the name is the snake_case one from fonts.google.com/icons, the size is a font-size class (24px by default, 20px in dense rows and labelled buttons) and `filled` gives the solid version (current phone tab). There is no lucide-react any more.
 - `ChannelLogo.tsx` renders a logo with an initials fallback. `Logo.tsx` exports `M3U_ICON_PATH`, which `utils/favicon.ts` reuses.
 - Utilities in `src/utils/`:
   - `formatTime` (always honor `is24Hour`)
   - `useDebouncedValue` (search-as-you-type)
-  - `ripple.ts` (document-level ripple for every `.md-btn`)
+  - `ripple.ts` (document-level press ripple for every `.md-btn`: grows from the pointer just far enough to cover the surface, holds while pressed, fades after release; only the innermost `.md-btn` ripples). A surface must keep `md-btn` (its `overflow: hidden` clips the ripple) for as long as it can be pressed, so rows keep it when they become the current one.
 - **Programmatic "jump to row" scrolling uses `behavior: 'instant'`**, not `'smooth'`. Smooth scrolling was observed not to animate reliably, and the virtualized lists need `scrollTop` to actually change before the target row renders.
 - **Clipboard copy needs a fallback.** The app is usually opened over plain `http://<LAN-IP>`, which is not a secure context, so `navigator.clipboard` is undefined there. Always copy through `src/utils/copyToClipboard.ts` (it falls back to `execCommand('copy')`, iPhone-safe, and resolves to whether it worked).
 - XMLTV timestamp parsing exists twice: `parseXmltvDate` inside the `/now` route in `server.ts` and `parseXmltvTime` in `EpgProgramDialog.tsx`.
@@ -252,26 +261,29 @@ Below 768px (Tailwind's `md`) the app switches to a phone layout. Tablets and co
 - Use relative imports. The `@/*` path alias is configured in `tsconfig.json`/`vite.config.ts`, but nothing uses it.
 - There's no `@types/react`, so JSX is only loosely typed. A `key` on a custom component whose props are typed inline fails `tsc`, so put the `key` on a `React.Fragment` around it instead (see Onboarding's source rows).
 
-### Styling
+### Styling (Material Design 3)
 
 - Tailwind v4, configured CSS-first in `src/index.css` (no `tailwind.config.js`). It defines custom variants:
   - `dark` (class on `<html>`)
-  - `amoled` (stacks with dark: `amoled:dark:bg-black`)
+  - `amoled` (stacks with dark: `amoled:dark:…`); rarely needed now that colours are tokens
   - `no-hover` (touch devices; used so hover-revealed controls stay reachable)
-- Surface palette used throughout:
-  - page: `bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black`
-  - bars/cards: `bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a]`
-  - dialogs: `bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a]`
-- Hand-rolled Material Design 2 replaces a component library:
-  - `.md-btn` for hover/press state and ripple; put it on clickable surfaces
-  - `.elev-{1,2,4,8,16,24}` shadows
-  - `--md-standard/decelerate/accelerate` easing tokens
-  - entrance classes: `.md-scrim`, `.md-dialog`, `.md-dialog-top`, `.md-menu`, `.md-list-in`, `.md-snackbar-in`, `.md-page-in`
-  - `.home-*` classes belong to Home; onboarding reuses `.home-aurora` through `HomeBackground`
-  - `.onboarding-step-in`/`.onboarding-step-back`/`.onboarding-pop` are the first-run setup's step slide and Done check-mark
+- **Colours are Material You tokens, not hand-picked greys.** `src/utils/materialTheme.ts` turns the accent into the M3 palette with Google's `@material/material-color-utilities` (the colour style picked in Settings: `COLOR_STYLES` there lists all nine of the library's schemes, Tonal spot by default, stored as `colorStyle`) and writes it as `--md-*` variables into a `<style id="md-theme">` (`:root` light, `:root.dark` dark). `index.css` maps them to Tailwind names with `@theme inline`, so use classes, never inline accent styles:
+  - roles: `bg-primary`/`text-on-primary`, `bg-primary-container`, `bg-secondary-container`/`text-on-secondary-container` (selection, active pills), `bg-tertiary-container` (search-jump highlight, notes), `text-error`/`bg-error-container`, `text-on-surface`, `text-on-surface-variant` (secondary text, icons), `border-outline`/`border-outline-variant` (dividers), `bg-surface-container*`, `bg-inverse-surface`
+  - app surfaces: `bg-page` (the tinted background, bars sit on it), `bg-pane` (rounded content panels), `bg-search`, `bg-drawer`, `bg-dialog`, `bg-menu`; `text-success`/`text-warning` for stream checks (M3 has no such roles)
+  - they switch with dark mode on their own, so no `dark:` twins. AMOLED is CSS only: `:root.amoled.dark` swaps the surfaces for true black (panes get `border-pane-border`), the accent roles stay generated.
+  - the raw `accentColor` is only used for the colour swatches (with `contrastText()` for the tick on them). The favicon uses the palette's primary, like the logo.
+  - the snackbar (`bg-snackbar`, `text-on-snackbar`, `text-snackbar-accent`) is dark in every theme: M3's inverse surface would be white in dark mode, which the maintainer rejected
+  - on a selected row (`secondary-container`), outlined chips switch to `border-outline` and tags get `tag-on-selected`, or they'd vanish into the selection colour
+- **Fonts:** Geist and Geist Mono from `@fontsource-variable/geist(-mono)` (Google Fonts' files, bundled, offline), or the system font when Settings → Font is System (`data-font="system"` on `<html>`). `font-sans`/`font-mono` follow it.
+- **Type scale** (one class sets size, line height and weight): `text-headline-sm` (pane and dialog titles), `text-title-lg/md/sm`, `text-body-lg/md/sm`, `text-label-lg/md/sm` (buttons, chips, column headers). Sentence case everywhere, no uppercase labels.
+- **Corners** use Tailwind's own scale, which already has M3's steps: `rounded-sm` (menus, fields), `rounded-lg` (chips), `rounded-xl` (cards, notices), `rounded-2xl` (panes, FAB), `rounded-[28px]` (dialogs, sheets, search view), `rounded-full` (buttons, nav items, search fields).
+- **Elevation:** surfaces separate by tone; shadows only for floating things: `shadow-level-1/2/3`.
+- **Component classes** (in `@layer components`, so Tailwind utilities on the same element win):
+  - `.md-btn`: the state layer (8% hover tint, only on the innermost hovered `.md-btn`; M3 focus ring) and the press ripple; put it on every clickable surface
+  - buttons: `btn` + `btn-filled` (one per screen, the main action) / `btn-tonal` / `btn-outlined` / `btn-text`; `icon-btn` (40px round, size with `w-*/h-*`); `fab`
+  - `tag` (small row labels like "Source lost"), `chip`/`chip-on`, `badge`, `field` + `field-label` (outlined text field), `menu` + `menu-item` + `menu-divider`, `nav-item`/`nav-item-on` (pill rows in the list pane), `checkbox`
+- Motion: `--md-standard/decelerate/accelerate` (M3 curves). Entrance classes: `.md-scrim`, `.md-dialog`, `.md-dialog-top`, `.md-menu`, `.md-list-in`, `.md-snackbar-in`, `.md-page-in`, `.md-sheet-in`. `.onboarding-step-in`/`-back`/`.onboarding-pop` are the setup's step slide and Done tick.
 - Add any new animation class to the `prefers-reduced-motion` block too.
-- The `.elev-*`/`.md-btn` transitions sit in `@layer components` so Tailwind `transition-*` utilities override them. Keep new default transitions in that layer.
-- The accent color is user-picked, so apply it with inline `style={{ color/backgroundColor: accentColor }}`, not Tailwind classes. Use `contrastText()` for readable text on it and `accentAlpha(hex, '18')` for tints.
 
 ## Deployment and releases
 

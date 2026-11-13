@@ -1,6 +1,6 @@
 import React from 'react';
-import { CheckSquare, Square } from 'lucide-react';
 import { SyncField, SyncFieldToggles as Toggles, SYNC_FIELDS } from '../apiClient';
+import Icon from './Icon';
 
 export const SYNC_FIELD_LABELS: Record<SyncField, string> = {
   url: 'Stream link',
@@ -20,19 +20,17 @@ export function anySyncFieldOn(fields: Toggles): boolean {
 }
 
 /**
- * The four "what to keep in sync" checkboxes. Shared by Settings (defaults), the Add to
- * Playlist modal (custom settings) and the sync controls in My Playlists, so they all look
- * and behave the same.
+ * The four "what to keep in sync" switches, as Material 3 filter chips (filled with a tick
+ * when on). Shared by Settings (defaults), the Add to Playlist modal (custom settings) and
+ * the sync controls in My Playlists, so they all look and behave the same.
  */
 export default function SyncFieldToggles({
   value,
   onChange,
-  accentColor,
   disabled = false,
 }: {
   value: Toggles;
   onChange: (next: Toggles) => void;
-  accentColor: string;
   disabled?: boolean;
 }) {
   return (
@@ -47,14 +45,9 @@ export default function SyncFieldToggles({
             aria-checked={checked}
             disabled={disabled}
             onClick={() => onChange({ ...value, [field]: !checked })}
-            className={`md-btn flex items-center gap-2 h-9 px-3 rounded border text-sm text-left disabled:opacity-50 ${
-              checked ? '' : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300'
-            }`}
-            style={checked ? { borderColor: accentColor, color: accentColor, backgroundColor: `${accentColor}12` } : undefined}
+            className={`md-btn chip justify-start text-left disabled:opacity-40 ${checked ? 'chip-on' : 'text-on-surface'}`}
           >
-            {checked
-              ? <CheckSquare className="h-4 w-4 shrink-0" />
-              : <Square className="h-4 w-4 shrink-0 text-gray-400" />}
+            {checked && <Icon name="check" className="text-[20px] shrink-0 -ml-1" />}
             {SYNC_FIELD_LABELS[field]}
           </button>
         );

@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileDown, FileText } from 'lucide-react';
 // Bundled (not Google Fonts) so the PDF looks right even on a LAN with no internet.
 // This file has Inter's optical-size axis: "Inter Display" is the same font at opsz 32,
 // so one font covers both families the design uses. Only this preview loads it.
 import '@fontsource-variable/inter/opsz.css';
 import { Channel, Playlist } from '../apiClient';
-import { useStore } from '../store';
 import Dialog from './Dialog';
 import { Logo } from './Logo';
 import ChannelLogo from './ChannelLogo';
+import Icon from './Icon';
 
 /**
  * Printable channel list for one playlist, laid out as A4 pages to match the
@@ -107,7 +106,6 @@ export default function ChannelListPdf({ playlist, channels, tvgIdLabels, onClos
   tvgIdLabels: Record<string, unknown>;
   onClose: () => void;
 }) {
-  const accentColor = useStore(s => s.accentColor);
   const sheetsRef = useRef<HTMLDivElement>(null);
   const [preparing, setPreparing] = useState<{ done: number; total: number } | null>(null);
 
@@ -160,19 +158,19 @@ export default function ChannelListPdf({ playlist, channels, tvgIdLabels, onClos
       <Dialog
         onClose={onClose}
         maxWidth="max-w-4xl"
-        panelClassName="rounded-lg overflow-hidden h-[90vh] pdf-print-reset"
-        scrimClassName="bg-black/60 pdf-print-reset"
+        panelClassName="overflow-hidden h-[90vh] pdf-print-reset"
+        scrimClassName="bg-black/40 pdf-print-reset"
         dismissible={!preparing}
       >
         {/* Header */}
         <div className="pdf-no-print flex items-center gap-3 px-6 pt-6 pb-4 shrink-0">
-          <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: `${accentColor}20` }}>
-            <FileText className="h-5 w-5" style={{ color: accentColor }} />
+          <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-secondary-container text-on-secondary-container">
+            <Icon name="description" className="text-[24px]" />
           </div>
-          <h2 className="min-w-0 text-lg font-medium text-gray-900 dark:text-white truncate">{playlist.name} channel list</h2>
+          <h2 className="min-w-0 text-headline-sm text-on-surface truncate">{playlist.name} channel list</h2>
         </div>
 
-        <div ref={scrollRef} className="pdf-print-reset flex-1 min-h-0 overflow-y-auto bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black border-y border-gray-200 dark:border-white/8">
+        <div ref={scrollRef} className="pdf-print-reset flex-1 min-h-0 overflow-y-auto bg-page border-y border-outline-variant">
           <div ref={sheetsRef} className="pdf-sheets" style={{ zoom }}>
             {pages.map((pageRows, pageIndex) => (
               <section key={pageIndex} className="pdf-page">
@@ -214,16 +212,15 @@ export default function ChannelListPdf({ playlist, channels, tvgIdLabels, onClos
         {/* Footer */}
         <div className="pdf-no-print px-6 py-4 shrink-0 flex items-center justify-end gap-2">
           {preparing && (
-            <p className="flex-1 text-xs text-gray-500 dark:text-gray-400">Loading logos… {preparing.done} of {preparing.total}</p>
+            <p className="flex-1 text-body-sm text-on-surface-variant">Loading logos… {preparing.done} of {preparing.total}</p>
           )}
-          <button onClick={onClose} disabled={!!preparing} className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 disabled:opacity-40">Cancel</button>
+          <button onClick={onClose} disabled={!!preparing} className="md-btn btn btn-text">Cancel</button>
           <button
             onClick={savePdf}
             disabled={!!preparing}
-            className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40 flex items-center gap-2"
-            style={{ color: accentColor }}
+            className="md-btn btn btn-filled"
           >
-            <FileDown className="h-3.5 w-3.5" />
+            <Icon name="picture_as_pdf" className="text-[20px]" />
             Save PDF
           </button>
         </div>

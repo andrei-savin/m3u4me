@@ -6,8 +6,184 @@
    of being permanently unreachable. */
 @variant no-hover (@media (hover: none));
 
+/* ── Material 3 colours ───────────────────────────────────────────────
+   The `--md-*` palette is generated from the accent colour by
+   src/utils/materialTheme.ts (light on :root, dark on :root.dark). Below
+   are the app's own roles built on top of it, so a screen asks for "the
+   page" or "a pane" instead of picking a grey per mode:
+   - page:   the tinted background behind everything (bars sit on it too)
+   - pane:   the rounded panels holding content (lists, settings cards)
+   - search: the search field in the top bar
+   - drawer, dialog, menu: floating surfaces, one step lighter each
+   - snackbar: the notification at the bottom. Material makes it the inverse of the page,
+     which is white in dark mode; here it stays dark in every theme.
+   - success / warning: the stream check's Online / Timeout colours (M3 has
+     no such roles; error is the palette's own) */
+:root {
+  --app-page: var(--md-surface-container);
+  --app-pane: var(--md-surface-container-lowest);
+  --app-pane-border: transparent;
+  --app-search: var(--md-surface-container-highest);
+  --app-drawer: var(--md-surface-container-low);
+  --app-dialog: var(--md-surface-container-high);
+  --app-menu: var(--md-surface-container);
+  --app-snackbar: var(--md-inverse-surface);
+  --app-on-snackbar: var(--md-inverse-on-surface);
+  --app-snackbar-accent: var(--md-inverse-primary);
+  --app-success: #1e7b3a;
+  --app-warning: #a15c00;
+}
+:root.dark {
+  --app-page: var(--md-surface);
+  --app-pane: var(--md-surface-container);
+  --app-search: var(--md-surface-container-high);
+  --app-snackbar: var(--md-surface-container-highest);
+  --app-on-snackbar: var(--md-on-surface);
+  --app-snackbar-accent: var(--md-primary);
+  --app-success: #7dd896;
+  --app-warning: #f2c062;
+}
+/* AMOLED keeps true black: the generated surfaces are swapped for the
+   near-blacks the app always used, and panes get a hairline instead of a
+   lighter fill. Accent colours (buttons, selection, chips) stay generated. */
+:root.amoled.dark {
+  --md-surface: #000000;
+  --md-surface-dim: #000000;
+  --md-surface-bright: #1f1f1f;
+  --md-surface-container-lowest: #000000;
+  --md-surface-container-low: #0a0a0a;
+  --md-surface-container: #0f0f0f;
+  --md-surface-container-high: #1a1a1a;
+  --md-surface-container-highest: #242424;
+  --app-pane: #000000;
+  --app-pane-border: #1f1f1f;
+  --app-search: #141414;
+}
+
+/* ── Fonts ────────────────────────────────────────────────────────────
+   Geist and Geist Mono (bundled from Google Fonts' files by Fontsource,
+   imported in main.tsx, so they work offline) unless Settings → Font is
+   "System", which App.tsx marks with data-font="system" on <html>. */
+:root {
+  --app-font-sans: 'Geist Variable', system-ui, -apple-system, sans-serif;
+  --app-font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+:root[data-font="system"] {
+  --app-font-sans: system-ui, -apple-system, sans-serif;
+  --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ── Icons: Material Symbols (rounded) ────────────────────────────────
+   The icon font, bundled by Fontsource like the text fonts (this file has
+   the weight and fill axes; it's used through the Icon component).
+   `font-display: block` keeps an icon blank for the instant before the
+   font arrives, instead of showing its name as text. */
+@font-face {
+  font-family: 'Material Symbols Rounded';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+  src: url('../node_modules/@fontsource-variable/material-symbols-rounded/files/material-symbols-rounded-latin-fill-normal.woff2') format('woff2-variations');
+}
+
+/* Tailwind class names for the tokens: bg-primary, text-on-surface-variant,
+   bg-secondary-container, border-outline-variant, bg-page, bg-pane… They
+   already switch with dark mode and AMOLED, so they need no `dark:` twin. */
+@theme inline {
+  --color-primary: var(--md-primary);
+  --color-on-primary: var(--md-on-primary);
+  --color-primary-container: var(--md-primary-container);
+  --color-on-primary-container: var(--md-on-primary-container);
+  --color-secondary: var(--md-secondary);
+  --color-on-secondary: var(--md-on-secondary);
+  --color-secondary-container: var(--md-secondary-container);
+  --color-on-secondary-container: var(--md-on-secondary-container);
+  --color-tertiary: var(--md-tertiary);
+  --color-on-tertiary: var(--md-on-tertiary);
+  --color-tertiary-container: var(--md-tertiary-container);
+  --color-on-tertiary-container: var(--md-on-tertiary-container);
+  --color-error: var(--md-error);
+  --color-on-error: var(--md-on-error);
+  --color-error-container: var(--md-error-container);
+  --color-on-error-container: var(--md-on-error-container);
+  --color-surface: var(--md-surface);
+  --color-surface-container-lowest: var(--md-surface-container-lowest);
+  --color-surface-container-low: var(--md-surface-container-low);
+  --color-surface-container: var(--md-surface-container);
+  --color-surface-container-high: var(--md-surface-container-high);
+  --color-surface-container-highest: var(--md-surface-container-highest);
+  --color-on-surface: var(--md-on-surface);
+  --color-on-surface-variant: var(--md-on-surface-variant);
+  --color-outline: var(--md-outline);
+  --color-outline-variant: var(--md-outline-variant);
+  --color-inverse-surface: var(--md-inverse-surface);
+  --color-inverse-on-surface: var(--md-inverse-on-surface);
+  --color-inverse-primary: var(--md-inverse-primary);
+  --color-page: var(--app-page);
+  --color-pane: var(--app-pane);
+  --color-pane-border: var(--app-pane-border);
+  --color-search: var(--app-search);
+  --color-drawer: var(--app-drawer);
+  --color-dialog: var(--app-dialog);
+  --color-menu: var(--app-menu);
+  --color-snackbar: var(--app-snackbar);
+  --color-on-snackbar: var(--app-on-snackbar);
+  --color-snackbar-accent: var(--app-snackbar-accent);
+  --color-success: var(--app-success);
+  --color-warning: var(--app-warning);
+  --font-sans: var(--app-font-sans);
+  --font-mono: var(--app-font-mono);
+}
+
+/* ── Material 3 type scale and elevation ──────────────────────────────
+   One class sets size, line height and weight together, e.g.
+   `text-title-md` (section titles) or `text-label-lg` (buttons). Text is
+   always sentence case; the old 11px UPPERCASE labels are gone.
+   Corners use Tailwind's own scale, which already has M3's steps:
+   rounded-sm 4 (menus, fields), rounded-lg 8 (chips), rounded-xl 12
+   (cards), rounded-2xl 16 (panes, FAB), rounded-[28px] (dialogs, sheets),
+   rounded-full (buttons, nav items, search). */
+@theme {
+  --text-headline-sm: 1.5rem;
+  --text-headline-sm--line-height: 2rem;
+  --text-headline-sm--font-weight: 500;
+  --text-title-lg: 1.375rem;
+  --text-title-lg--line-height: 1.75rem;
+  --text-title-lg--font-weight: 500;
+  --text-title-md: 1rem;
+  --text-title-md--line-height: 1.5rem;
+  --text-title-md--font-weight: 500;
+  --text-title-sm: 0.875rem;
+  --text-title-sm--line-height: 1.25rem;
+  --text-title-sm--font-weight: 500;
+  --text-body-lg: 1rem;
+  --text-body-lg--line-height: 1.5rem;
+  --text-body-md: 0.875rem;
+  --text-body-md--line-height: 1.25rem;
+  --text-body-sm: 0.75rem;
+  --text-body-sm--line-height: 1rem;
+  --text-label-lg: 0.875rem;
+  --text-label-lg--line-height: 1.25rem;
+  --text-label-lg--font-weight: 500;
+  --text-label-md: 0.75rem;
+  --text-label-md--line-height: 1rem;
+  --text-label-md--font-weight: 500;
+  --text-label-sm: 0.6875rem;
+  --text-label-sm--line-height: 1rem;
+  --text-label-sm--font-weight: 500;
+
+  /* M3 elevation levels: `shadow-level-1` … `shadow-level-3`. Surfaces mostly
+     separate by tone now; shadows are for things that float (FAB, menus,
+     dialogs, drawers). */
+  --shadow-level-1: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 1px 3px 1px rgb(0 0 0 / 0.15);
+  --shadow-level-2: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 2px 6px 2px rgb(0 0 0 / 0.15);
+  --shadow-level-3: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 4px 8px 3px rgb(0 0 0 / 0.15);
+}
+
 html {
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--app-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ── Phones: notch and home-bar room ──────────────────────────────────
@@ -16,14 +192,13 @@ html {
    computers. The sides are padded here once (a phone on its side is wider
    than 768px and gets the desktop layout); the top and bottom bars pad
    themselves with `pt-safe` / `pb-safe`. The body gets the page color so
-   the padded strips don't show up white. */
+   the padded strips match the page. */
 body {
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
-  background-color: var(--color-gray-100);
+  background-color: var(--app-page);
+  color: var(--md-on-surface);
 }
-.dark body { background-color: #121212; }
-.amoled.dark body { background-color: #000; }
 @utility pt-safe {
   padding-top: env(safe-area-inset-top);
 }
@@ -31,72 +206,29 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* ── MD2 motion tokens ────────────────────────────────────────────────
-   The three standard Material easing curves. Used by every transition/
-   animation below so motion feels consistent across the app. ───────── */
+/* ── M3 motion tokens ─────────────────────────────────────────────────
+   Material 3's easing curves. The old names are kept so every existing
+   transition picks up the new feel: standard for small changes,
+   decelerate (M3 "emphasized decelerate") for things arriving, accelerate
+   for things leaving. ─────────────────────────────────────────────────── */
 :root {
-  --md-standard: cubic-bezier(0.4, 0, 0.2, 1);
-  --md-decelerate: cubic-bezier(0, 0, 0.2, 1);
-  --md-accelerate: cubic-bezier(0.4, 0, 1, 1);
+  --md-standard: cubic-bezier(0.2, 0, 0, 1);
+  --md-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
 }
 
-/* ── MD2 Elevation shadows ───────────────────────────────────────────── */
-.elev-1 {
-  box-shadow:
-    0 1px 1px 0   rgba(0,0,0,.14),
-    0 2px 1px -1px rgba(0,0,0,.12),
-    0 1px 3px 0   rgba(0,0,0,.20);
-}
-.elev-2 {
-  box-shadow:
-    0 2px 2px 0   rgba(0,0,0,.14),
-    0 3px 1px -2px rgba(0,0,0,.12),
-    0 1px 5px 0   rgba(0,0,0,.20);
-}
-.elev-4 {
-  box-shadow:
-    0 4px 5px 0   rgba(0,0,0,.14),
-    0 1px 10px 0  rgba(0,0,0,.12),
-    0 2px 4px -1px rgba(0,0,0,.20);
-}
-.elev-8 {
-  box-shadow:
-    0 8px 10px 1px rgba(0,0,0,.14),
-    0 3px 14px 2px rgba(0,0,0,.12),
-    0 5px 5px -3px rgba(0,0,0,.20);
-}
-.elev-16 {
-  box-shadow:
-    0 16px 24px 2px rgba(0,0,0,.14),
-    0 6px 30px 5px  rgba(0,0,0,.12),
-    0 8px 10px -5px rgba(0,0,0,.20);
-}
-.elev-24 {
-  box-shadow:
-    0 24px 38px 3px rgba(0,0,0,.14),
-    0 9px 46px 8px  rgba(0,0,0,.12),
-    0 11px 15px -7px rgba(0,0,0,.20);
-}
-/* These `transition` shorthands are wrapped in @layer components (Tailwind puts its own
-   utilities in @layer utilities, which is declared later and so always wins the cascade
-   regardless of source order). Without this, e.g. `.elev-1`'s unconditional
-   `transition: box-shadow ...` would silently strip a `transition-[width]` or
-   `transition-colors` utility class applied to the same element — the transition would
-   still exist, just for the wrong property. Layering it means these are only the default,
-   and any element that also carries a real Tailwind transition utility keeps that instead. */
+/* The app's own component classes sit in @layer components (Tailwind's utilities layer comes
+   later and always wins), so a Tailwind class on the same element, e.g. `transition-colors`,
+   `px-3` or `text-error`, overrides them instead of being silently ignored. */
 @layer components {
-  /* Elevation swaps (e.g. a card lifting on hover, the app bar appearing) fade smoothly
-     instead of popping between shadow values. */
-  .elev-1, .elev-2, .elev-4, .elev-8, .elev-16, .elev-24 {
-    transition: box-shadow 200ms var(--md-standard);
-  }
-
-  /* ── MD2 hover/press state overlay (apply to buttons only) ─────────── */
+  /* ── State layer (put on every clickable surface) ────────────────────
+     M3's hover and press feedback: an 8% wash of the element's own text colour on
+     hover, and the ripple from ripple.ts when pressed. */
   .md-btn {
     position: relative;
     overflow: hidden;
     cursor: pointer;
-    transition: box-shadow 200ms var(--md-standard);
+    transition: box-shadow 200ms var(--md-standard), background-color 150ms var(--md-standard);
   }
   .md-btn::after {
     content: '';
@@ -108,34 +240,269 @@ body {
     transition: opacity 150ms var(--md-standard);
   }
   /* Only on devices with a real pointer. A phone fakes a "hover" on whatever was last
-     tapped, which left the tint stuck on that button until you tapped somewhere else. */
+     tapped, which left the tint stuck on that button until you tapped somewhere else.
+     And only the innermost one: hovering a row's delete button tints the button, not also
+     the whole row behind it. */
   @media (hover: hover) {
-    .md-btn:hover::after { opacity: 0.08; }
+    .md-btn:hover:not(:has(.md-btn:hover))::after { opacity: 0.08; }
   }
-  .md-btn:active::after { opacity: 0.18; }
-  .md-btn:focus-visible { outline: 2px solid; outline-offset: 2px; }
+  .md-btn:focus-visible { outline: 3px solid var(--md-secondary); outline-offset: 2px; }
+  .md-btn:disabled { cursor: default; }
+  .md-btn:disabled::after { opacity: 0 !important; }
+
+  /* ── Icon (see Icon.tsx) ─────────────────────────────────────────────
+     A square exactly one font-size big, so `text-[20px]` makes a 20px icon.
+     The fixed width and hidden overflow keep the layout steady even before
+     the font has drawn the picture. */
+  .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 1em;
+    height: 1em;
+    overflow: hidden;
+    font-family: 'Material Symbols Rounded';
+    font-size: 1.5rem;
+    font-weight: 400;
+    font-style: normal;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    white-space: nowrap;
+    direction: ltr;
+    font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+    font-variation-settings: 'FILL' 0;
+    user-select: none;
+  }
+  .icon-filled { font-variation-settings: 'FILL' 1; }
+
+  /* ── Buttons (combine with md-btn) ───────────────────────────────────
+     40px pills with Label Large text. One filled button per screen at
+     most (the main action); tonal for strong secondary actions, outlined
+     and text for the rest. Icons go first and get a narrower left edge. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 2.5rem;
+    padding: 0 1.5rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .btn:has(> .icon:first-child) { padding-left: 1rem; }
+  .btn:disabled { opacity: 0.38; }
+  .btn-filled { background-color: var(--md-primary); color: var(--md-on-primary); }
+  .btn-tonal { background-color: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+  .btn-outlined { border: 1px solid var(--md-outline); color: var(--md-on-surface-variant); }
+  .btn-text { color: var(--md-primary); padding: 0 0.75rem; }
+  .btn-text:has(> .icon:first-child) { padding-left: 0.75rem; }
+
+  /* Round icon-only button. 40px; add w-/h- classes for 32px (dense rows) or 48px (phones). */
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 9999px;
+    color: var(--md-on-surface-variant);
+    flex-shrink: 0;
+  }
+  .icon-btn:disabled { opacity: 0.38; }
+
+  /* Touch screens (no mouse): every button is at least 44px, the size a finger can hit
+     reliably (Apple's and Material's guideline). min-width/min-height rather than width and
+     height, so the w-/h- classes that make buttons compact for a mouse don't undo it. */
+  @media (hover: none) {
+    .icon-btn { min-width: 2.75rem; min-height: 2.75rem; }
+    .btn { min-height: 2.75rem; }
+    .menu-item { min-height: 3rem; }
+  }
+
+  /* Floating action button: the one main "add" action, bottom-right. */
+  .fab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    height: 3.5rem;
+    min-width: 3.5rem;
+    padding: 0 1rem;
+    border-radius: 1rem;
+    background-color: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+    box-shadow: var(--shadow-level-3);
+  }
+  .fab:has(> span:not(.icon)) { padding: 0 1.25rem 0 1rem; }
+
+  /* Small labelled tag inside rows (e.g. "Referrer · UA", "Source lost"). */
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    height: 1.25rem;
+    padding: 0 0.5rem;
+    border-radius: 0.375rem;
+    background-color: var(--md-surface-container-highest);
+    color: var(--md-on-surface-variant);
+    font-size: 0.6875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* On a selected row the tag's usual background is the same tone as the selection, so it
+     takes a wash of the selection's own text colour instead. */
+  .tag-on-selected {
+    background-color: color-mix(in srgb, var(--md-on-secondary-container) 14%, transparent);
+    color: var(--md-on-secondary-container);
+  }
+
+  /* Filter/assist chip: 32px, 8px corners, outlined; `chip-on` when selected. */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    height: 2rem;
+    padding: 0 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--md-outline-variant);
+    color: var(--md-on-surface-variant);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .chip-on { background-color: var(--md-secondary-container); color: var(--md-on-secondary-container); border-color: transparent; }
+
+  /* Small count badge (unread sync log entries and the like). */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    min-width: 1.125rem;
+    height: 1.125rem;
+    padding: 0 0.3rem;
+    border-radius: 9999px;
+    background-color: var(--md-primary);
+    color: var(--md-on-primary);
+    font-size: 0.6875rem;
+    line-height: 1;
+    font-weight: 600;
+  }
+
+  /* Outlined text field. `field-label` is the small label above it. */
+  .field {
+    width: 100%;
+    height: 3rem;
+    padding: 0 1rem;
+    border-radius: 0.25rem;
+    border: 1px solid var(--md-outline);
+    background-color: transparent;
+    color: var(--md-on-surface);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    transition: border-color 150ms var(--md-standard), box-shadow 150ms var(--md-standard);
+  }
+  textarea.field { height: auto; padding: 0.75rem 1rem; }
+  .field::placeholder { color: var(--md-on-surface-variant); opacity: 0.7; }
+  .field:hover { border-color: var(--md-on-surface); }
+  .field:focus { outline: none; border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); }
+  .field:disabled { opacity: 0.38; }
+  .field-label {
+    display: block;
+    margin-bottom: 0.375rem;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500;
+    color: var(--md-on-surface-variant);
+  }
+
+  /* Menus (⋮, right-click, dropdowns). Rows are `menu-item md-btn`. */
+  .menu {
+    min-width: 12rem;
+    padding: 0.5rem 0;
+    border-radius: 0.25rem;
+    background-color: var(--app-menu);
+    box-shadow: var(--shadow-level-2);
+    color: var(--md-on-surface);
+  }
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    height: 3rem;
+    padding: 0 1rem 0 0.75rem;
+    text-align: left;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    color: var(--md-on-surface);
+  }
+  .menu-item > .icon:first-child { color: var(--md-on-surface-variant); }
+  .menu-divider { height: 1px; margin: 0.5rem 0; background-color: var(--md-outline-variant); }
+
+  /* Drawer / sidebar row: a pill, filled with secondary-container when it's the current one. */
+  .nav-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border-radius: 9999px;
+    color: var(--md-on-surface-variant);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+  }
+  .nav-item-on { background-color: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+
+  /* Checkbox box (see Checkbox.tsx) and switch track (Switch.tsx). */
+  .checkbox {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.125rem;
+    height: 1.125rem;
+    border-radius: 0.1875rem;
+    border: 2px solid var(--md-on-surface-variant);
+    flex-shrink: 0;
+  }
+  .checkbox-on { background-color: var(--md-primary); border-color: var(--md-primary); color: var(--md-on-primary); }
 }
 
-/* ── MD2 ripple ─────────────────────────────────────────────────────────
-   Spawned as a plain <span class="md-ripple"> by src/utils/ripple.ts on
-   pointerdown anywhere inside a .md-btn. Because every clickable surface
-   in the app already carries .md-btn, this one rule gives the whole UI
-   the classic expanding-circle click feedback with no per-component
-   wiring. .md-btn's overflow:hidden clips it to the button's own shape. */
+/* ── Ripple ──────────────────────────────────────────────────────────────
+   A <span class="md-ripple"> that src/utils/ripple.ts puts inside the pressed
+   .md-btn, sized and placed around the pointer. It grows from a small dot to
+   its full size, keeps a soft edge (the radial gradient), holds while the
+   button is pressed, and fades once ripple.ts adds .md-ripple-out. .md-btn's
+   overflow:hidden clips it to the button's own shape. */
 .md-ripple {
   position: absolute;
   border-radius: 50%;
-  transform: scale(0);
-  background: currentColor;
-  opacity: 0.22;
   pointer-events: none;
-  animation: md-ripple-anim 500ms var(--md-decelerate) forwards;
+  background: radial-gradient(closest-side, currentColor 60%, transparent 100%);
+  opacity: 0.12;
+  transform: scale(0.15);
+  animation: md-ripple-grow 450ms var(--md-standard) forwards;
+  transition: opacity 375ms linear;
 }
-@keyframes md-ripple-anim {
-  to { transform: scale(1); opacity: 0; }
+.md-ripple-out { opacity: 0; }
+@keyframes md-ripple-grow {
+  to { transform: scale(1); }
 }
 
-/* ── MD2 entrance animations ────────────────────────────────────────────
+/* ── Entrance animations ────────────────────────────────────────────
    Applied on mount only (there's no exit animation — components already
    unmount instantly on close, and adding a delayed-unmount just for an
    exit transition isn't worth the extra state here). Dialogs, menus and
@@ -206,7 +573,7 @@ body {
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* ── MD2 indeterminate progress bar ──────────────────────────────────────
+/* ── Indeterminate progress bar ──────────────────────────────────────
    A thin bar pinned to the bottom edge of an element, with a segment that
    slides back and forth — styled after Windows Explorer's copy-progress
    bar. Used to cover a channel row while a single-field save is in flight
@@ -238,33 +605,10 @@ body {
   100% { left: 100%; width: 35%; }
 }
 
-/* ── Homescreen background decoration ────────────────────────────────────
-   The scrolling wall of channel logos (Home.tsx) and the soft accent-colored
-   "aurora" blobs behind it. Namespaced `home-` since these are specific to
-   that one screen, not general MD2 chrome like everything above. */
-.home-logo-row {
-  animation-play-state: running;
-}
-@keyframes home-scroll-l {
-  from { transform: translateX(0); }
-  to   { transform: translateX(-50%); }
-}
-@keyframes home-scroll-r {
-  from { transform: translateX(-50%); }
-  to   { transform: translateX(0); }
-}
-.home-aurora {
-  animation: home-drift 24s ease-in-out infinite alternate;
-}
-@keyframes home-drift {
-  from { transform: translate(-8%, -6%) scale(1); }
-  to   { transform: translate(8%, 6%) scale(1.15); }
-}
-
 /* ── First-run setup (Onboarding.tsx) ────────────────────────────────────
    Each step slides in from the side it's coming from (right going forward,
    left going back), and the finished screen's check mark pops in with a
-   small overshoot. The setup also reuses .home-aurora via HomeBackground. */
+   small overshoot. */
 .onboarding-step-in {
   animation: onboarding-step-in 320ms var(--md-decelerate) both;
 }
@@ -294,12 +638,11 @@ body {
   .onboarding-step-in, .onboarding-step-back, .onboarding-pop {
     animation: none !important;
   }
-  .elev-1, .elev-2, .elev-4, .elev-8, .elev-16, .elev-24, .md-btn, .md-btn::after {
+  .md-btn, .md-btn::after {
     transition: none !important;
   }
-  .home-logo-row, .home-aurora {
-    animation: none !important;
-  }
+  /* No growing: the ripple just appears at full size and fades. */
+  .md-ripple { transform: none; }
   .md-progress::after {
     animation: none !important;
     left: 0;

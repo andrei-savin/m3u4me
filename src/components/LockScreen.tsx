@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
 import { api, setSessionToken } from '../apiClient';
-import { useStore } from '../store';
 import { Logo } from './Logo';
-import { Lock, KeyRound, ArrowLeft, Eye, EyeOff, Copy, Check } from 'lucide-react';
 import { copyToClipboard } from '../utils/copyToClipboard';
+import Icon from './Icon';
 
 interface LockScreenProps {
   onUnlock: () => void;
 }
 
 export default function LockScreen({ onUnlock }: LockScreenProps) {
-  const { accentColor } = useStore();
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -84,30 +82,30 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
   // After recovery: show new recovery key
   if (newRecoveryKey) {
     return (
-      <div className="min-h-dvh flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black px-4">
-        <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded-lg elev-24 overflow-hidden">
+      <div className="min-h-dvh flex items-center justify-center bg-page px-4">
+        <div className="md-dialog w-full max-w-sm bg-dialog rounded-[28px] shadow-level-3 overflow-hidden">
           <div className="px-6 pt-8 pb-4 text-center">
-            <div className="mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: accentColor + '18' }}>
-              <KeyRound className="h-6 w-6" style={{ color: accentColor }} />
+            <div className="mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-4 bg-secondary-container text-on-secondary-container">
+              <Icon name="key" className="text-[24px]" />
             </div>
-            <h2 className="text-xl font-medium text-gray-900 dark:text-white mb-2">Password Reset Successful</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400">Save your new recovery key. You won't be able to see it again.</p>
+            <h2 className="text-headline-sm text-on-surface mb-2">Password reset</h2>
+            <p className="text-body-md text-on-surface-variant">Save your new recovery key. You won't be able to see it again.</p>
           </div>
           <div className="px-6 pb-4">
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10">
-              <code className="flex-1 text-center text-sm font-mono font-medium text-gray-900 dark:text-white tracking-wider">
+            <div className="flex items-center gap-2 pl-4 pr-1 py-1.5 rounded-xl bg-surface-container-highest">
+              <code className="flex-1 text-center text-body-md font-mono font-medium text-on-surface">
                 {newRecoveryKey}
               </code>
               <button
                 onClick={handleCopyKey}
-                className="md-btn p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white"
+                className="md-btn icon-btn"
                 title="Copy recovery key"
               >
-                {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                {copied ? <Icon name="check" className="text-[24px] text-success" /> : <Icon name="content_copy" className="text-[24px]" />}
               </button>
             </div>
             {copyFailed && (
-              <p className="text-xs text-red-500 dark:text-red-400 text-center mt-2">
+              <p className="text-body-sm text-error text-center mt-2">
                 Couldn't copy the recovery key. Select the key and copy it yourself, then keep it somewhere safe.
               </p>
             )}
@@ -115,10 +113,9 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
           <div className="px-6 pb-8 pt-2">
             <button
               onClick={onUnlock}
-              className="md-btn w-full h-10 rounded-lg text-sm font-medium text-white transition-colors"
-              style={{ backgroundColor: accentColor }}
+              className="md-btn btn btn-filled w-full"
             >
-              Continue to App
+              Continue to the app
             </button>
           </div>
         </div>
@@ -129,14 +126,14 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
   // Recovery mode
   if (isRecovery) {
     return (
-      <div className="min-h-dvh flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black px-4">
-        <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded-lg elev-24 overflow-hidden">
+      <div className="min-h-dvh flex items-center justify-center bg-page px-4">
+        <div className="md-dialog w-full max-w-sm bg-dialog rounded-[28px] shadow-level-3 overflow-hidden">
           <div className="px-6 pt-8 pb-4 text-center">
-            <div className="mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: accentColor + '18' }}>
-              <KeyRound className="h-6 w-6" style={{ color: accentColor }} />
+            <div className="mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-4 bg-secondary-container text-on-secondary-container">
+              <Icon name="key" className="text-[24px]" />
             </div>
-            <h2 className="text-xl font-medium text-gray-900 dark:text-white mb-1">Account Recovery</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Enter your recovery key and a new password</p>
+            <h2 className="text-headline-sm text-on-surface mb-1">Account recovery</h2>
+            <p className="text-body-md text-on-surface-variant">Enter your recovery key and a new password</p>
           </div>
           <div className="px-6 pb-2 space-y-3">
             <input
@@ -144,10 +141,7 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
               value={recoveryKey}
               onChange={e => setRecoveryKey(e.target.value)}
               placeholder="Recovery key (XXXX-XXXX-...)"
-              className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2.5 text-sm font-mono focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-              style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-              onFocus={e => (e.target.style.borderColor = accentColor)}
-              onBlur={e => (e.target.style.borderColor = '')}
+              className="field h-12 font-mono max-md:text-base"
               autoFocus
             />
             <div className="relative">
@@ -157,38 +151,35 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
                 onChange={e => setNewPassword(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleRecover()}
                 placeholder="New password"
-                className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-                style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                onFocus={e => (e.target.style.borderColor = accentColor)}
-                onBlur={e => (e.target.style.borderColor = '')}
+                className="field h-12 pr-12 max-md:text-base"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(p => !p)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                className="md-btn icon-btn absolute right-1 top-1/2 -translate-y-1/2"
                 tabIndex={-1}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPassword ? <Icon name="visibility_off" className="text-[24px]" /> : <Icon name="visibility" className="text-[24px]" />}
               </button>
             </div>
-            {error && <p className="text-xs text-red-500 dark:text-red-400 text-center">{error}</p>}
+            {error && <p className="text-body-sm text-error text-center">{error}</p>}
           </div>
           <div className="px-6 pb-4 pt-3 space-y-2">
             <button
               onClick={handleRecover}
               disabled={loading || !recoveryKey.trim() || !newPassword.trim()}
-              className="md-btn w-full h-10 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-40"
-              style={{ backgroundColor: accentColor }}
+              className="md-btn btn btn-filled w-full"
             >
-              {loading ? 'Recovering…' : 'Reset Password'}
+              {loading ? 'Recovering…' : 'Reset password'}
             </button>
             <button
               onClick={() => { setIsRecovery(false); setError(''); setRecoveryKey(''); setNewPassword(''); }}
-              className="md-btn w-full h-10 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5"
+              className="md-btn btn btn-text w-full"
             >
               <span className="flex items-center justify-center gap-1.5">
-                <ArrowLeft className="h-4 w-4" />
-                Back to Login
+                <Icon name="arrow_back" className="text-[20px]" />
+                Back to login
               </span>
             </button>
           </div>
@@ -199,16 +190,16 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
 
   // Login mode
   return (
-    <div className="min-h-dvh flex items-center justify-center bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black px-4">
-      <div className="w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded-lg elev-24 overflow-hidden">
+    <div className="min-h-dvh flex items-center justify-center bg-page px-4">
+      <div className="md-dialog w-full max-w-sm bg-dialog rounded-[28px] shadow-level-3 overflow-hidden">
         <div className="px-6 pt-8 pb-4 flex flex-col items-center">
           <div className="px-5 py-3 rounded-lg mb-5">
-            <Logo className="h-7 w-auto text-gray-900 dark:text-white" />
+            <Logo className="h-7 w-auto text-on-surface" />
           </div>
-          <div className="mx-auto w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ backgroundColor: accentColor + '18' }}>
-            <Lock className="h-5 w-5" style={{ color: accentColor }} />
+          <div className="mx-auto w-10 h-10 rounded-full flex items-center justify-center mb-3 bg-secondary-container text-on-secondary-container">
+            <Icon name="lock" className="text-[24px]" />
           </div>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Enter your password to continue</p>
+          <p className="text-body-md text-on-surface-variant">Enter your password to continue</p>
         </div>
         <div className="px-6 pb-2">
           <div className="relative">
@@ -218,36 +209,32 @@ export default function LockScreen({ onUnlock }: LockScreenProps) {
               onChange={e => setPassword(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleLogin()}
               placeholder="Password"
-              className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-              style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-              onFocus={e => (e.target.style.borderColor = accentColor)}
-              onBlur={e => (e.target.style.borderColor = '')}
+              className="field h-12 pr-12 max-md:text-base"
               autoFocus
             />
             <button
               type="button"
               onClick={() => setShowPassword(p => !p)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              className="md-btn icon-btn absolute right-1 top-1/2 -translate-y-1/2"
               tabIndex={-1}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {showPassword ? <Icon name="visibility_off" className="text-[24px]" /> : <Icon name="visibility" className="text-[24px]" />}
             </button>
           </div>
-          {error && <p className="text-xs text-red-500 dark:text-red-400 text-center mt-2">{error}</p>}
+          {error && <p className="text-body-sm text-error text-center mt-2">{error}</p>}
         </div>
         <div className="px-6 pb-6 pt-3 space-y-2">
           <button
             onClick={handleLogin}
             disabled={loading || !password.trim()}
-            className="md-btn w-full h-10 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-40"
-            style={{ backgroundColor: accentColor }}
+            className="md-btn btn btn-filled w-full"
           >
             {loading ? 'Signing in…' : 'Unlock'}
           </button>
           <button
             onClick={() => { setIsRecovery(true); setError(''); setPassword(''); }}
-            className="md-btn w-full text-center text-xs py-2 rounded transition-colors"
-            style={{ color: accentColor }}
+            className="md-btn btn btn-text w-full"
           >
             Forgot password?
           </button>

@@ -1,22 +1,24 @@
 import { useEffect, useRef } from 'react';
-import { AlertCircle, AlertTriangle, Info, X } from 'lucide-react';
 import { useStore } from '../store';
+import Icon from './Icon';
 
 const DISPLAY_MS = 5000;
 
+// The snackbar is dark in every theme (see --app-snackbar in index.css), so the icons use
+// the colours made to read on it.
 const TOAST_ICON = {
-  error: { Icon: AlertCircle, className: 'text-red-400' },
-  warning: { Icon: AlertTriangle, className: 'text-amber-400' },
-  info: { Icon: Info, className: 'text-sky-400' },
+  error: { icon: 'error', className: 'text-[#ffb4ab]' },
+  warning: { icon: 'warning', className: 'text-snackbar-accent' },
+  info: { icon: 'info', className: 'text-snackbar-accent' },
 } as const;
 
 /**
- * Shared MD2 snackbar surface. Every notification — error/warning/info toasts and the undo
+ * Shared Material 3 snackbar surface. Every notification — error/warning/info toasts and the undo
  * snackbar — renders on this exact surface (color, shape, elevation, type scale) so the app
  * has one consistent notification design instead of a different treatment per kind. Only the
  * leading icon (for toasts) or action button (for undo) varies.
  */
-const SNACKBAR = 'md-snackbar-in pointer-events-auto flex items-center gap-3 w-full max-w-md px-4 py-3 rounded bg-gray-800 dark:bg-[#2f2f2f] text-white shadow-xl elev-8 text-sm';
+const SNACKBAR = 'md-snackbar-in pointer-events-auto flex items-center gap-3 w-full max-w-md min-h-12 pl-4 pr-2 py-1.5 rounded-sm bg-snackbar text-on-snackbar shadow-level-3 text-body-md';
 
 /**
  * Renders the app's single notification stack: the global error/warning/info toast (`toast` in
@@ -25,7 +27,7 @@ const SNACKBAR = 'md-snackbar-in pointer-events-auto flex items-center gap-3 w-f
  * per MD guidelines, at most one of each is shown at a time (a new toast replaces the last).
  */
 export default function Toast({ withTabBar = false }: { withTabBar?: boolean }) {
-  const { toast, setToast, undoEntry, setUndoEntry, accentColor } = useStore();
+  const { toast, setToast, undoEntry, setUndoEntry } = useStore();
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -74,20 +76,20 @@ export default function Toast({ withTabBar = false }: { withTabBar?: boolean }) 
     // (the bar is 4rem plus the home-bar inset). Computers keep bottom-6 either way.
     <div className={`fixed ${withTabBar ? 'bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-6' : 'bottom-[calc(1.5rem+env(safe-area-inset-bottom))] md:bottom-6'} inset-x-0 z-50 flex flex-col items-center gap-2 px-4 pointer-events-none`}>
       {toast && (() => {
-        const { Icon, className } = TOAST_ICON[toast.type];
+        const { icon, className } = TOAST_ICON[toast.type];
         return (
           <div key={toast.id} className={SNACKBAR}>
-            <Icon className={`shrink-0 ${className}`} size={18} />
-            <span className="flex-1">{toast.message}</span>
+            <Icon name={icon} className={`text-[20px] ${className}`} />
+            <span className="flex-1 py-2">{toast.message}</span>
             <button
               onClick={() => {
                 if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
                 setToast(null);
               }}
-              className="text-white/70 hover:text-white transition-colors shrink-0"
+              className="md-btn icon-btn text-on-snackbar"
               aria-label="Dismiss"
             >
-              <X size={16} />
+              <Icon name="close" className="text-[20px]" />
             </button>
           </div>
         );
@@ -95,15 +97,14 @@ export default function Toast({ withTabBar = false }: { withTabBar?: boolean }) 
 
       {undoEntry && (
         <div key={undoEntry.description} className={SNACKBAR}>
-          <span className="flex-1">{undoEntry.description}</span>
+          <span className="flex-1 py-2">{undoEntry.description}</span>
           <button
             onClick={() => {
               if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
               undoEntry.restore();
               setUndoEntry(null);
             }}
-            className="font-medium uppercase text-xs tracking-wider px-2 py-1 rounded hover:bg-white/10 transition-colors shrink-0"
-            style={{ color: accentColor }}
+            className="md-btn btn btn-text text-snackbar-accent"
           >
             Undo
           </button>
@@ -112,10 +113,10 @@ export default function Toast({ withTabBar = false }: { withTabBar?: boolean }) 
               if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
               setUndoEntry(null);
             }}
-            className="text-white/70 hover:text-white transition-colors shrink-0"
+            className="md-btn icon-btn text-on-snackbar"
             aria-label="Dismiss"
           >
-            <X size={16} />
+            <Icon name="close" className="text-[20px]" />
           </button>
         </div>
       )}

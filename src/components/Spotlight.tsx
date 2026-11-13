@@ -1,34 +1,44 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { api, SearchResult } from '../apiClient';
 import { useStore, notifyError } from '../store';
-import { Search, EyeOff, FileAudio, Layers, Radio } from 'lucide-react';
 import ChannelLogo from './ChannelLogo';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { foldText } from '../utils/foldText';
+import Icon from './Icon';
 
-// Level-1 grouping metadata, in the fixed display order the hierarchy always uses —
+// The first step of each result path, in the fixed display order groups always use —
 // My Playlists, then Sources, then EPG — regardless of which kind has the most hits.
 // Icons mirror the ones Dashboard already uses for each tab's empty state/sidebar
 // section, so a result's origin is recognizable at a glance.
-const KIND_META: Record<SearchResult['kind'], { label: string; icon: typeof Search }> = {
-  playlist: { label: 'My Playlists', icon: FileAudio },
-  channelPool: { label: 'Sources', icon: Layers },
-  epg: { label: 'EPG', icon: Radio },
+const KIND_META: Record<SearchResult['kind'], { label: string; icon: string }> = {
+  playlist: { label: 'My Playlists', icon: 'queue_music' },
+  channelPool: { label: 'Sources', icon: 'stacks' },
+  epg: { label: 'EPG', icon: 'live_tv' },
 };
 const KIND_ORDER: SearchResult['kind'][] = ['playlist', 'channelPool', 'epg'];
 
-interface CategoryGroup {
+// One group per place a result lives in: kind → container → category, shown as a single
+// Finder-style path line ("My Playlists › LynkTV › Anglia") instead of three stacked headers.
+interface ResultGroup {
+  key: string;
+  kind: SearchResult['kind'];
+  containerName: string;
   category: string | null;
   items: SearchResult[];
 }
-interface ContainerGroup {
-  containerId: string;
-  containerName: string;
-  categories: CategoryGroup[];
+
+// "https://" in front of every stream link is noise when skimming, so it's left out —
+// unless the match is in that part (a search for "http"), so the bold still has letters to land on.
+function displayUrl(url: string, query: string) {
+  const short = url.replace(/^https?:\/\//i, '');
+  return foldText(short).includes(foldText(query.trim())) ? short : url;
 }
-interface KindGroup {
-  kind: SearchResult['kind'];
-  containers: ContainerGroup[];
+
+// Whether the search found the query in this text, the same way the server does
+// (accent-insensitive, ignoring spaces around the query).
+function matchesQuery(text: string | null, query: string) {
+  const q = foldText(query.trim());
+  return !!text && !!q && foldText(text).includes(q);
 }
 
 // The search is accent-insensitive ("stiri" finds "Știri"), so the match is looked up in a
@@ -52,7 +62,9 @@ function highlight(text: string, query: string) {
   return (
     <>
       {text.slice(0, start)}
-      <mark className="bg-transparent font-semibold" style={{ color: 'inherit' }}>
+      {/* The match is bold and in the row's main text colour, so it stands out even in
+          the quieter grey second line. Inside a highlighted row it follows that row's colour. */}
+      <mark className="bg-transparent font-semibold text-[color:var(--match-color,inherit)]">
         {text.slice(start, end)}
       </mark>
       {text.slice(end)}
@@ -63,7 +75,7 @@ function highlight(text: string, query: string) {
 export default function Spotlight({ onNavigate }: {
   onNavigate: (result: SearchResult) => void;
 }) {
-  const { accentColor, logoBgColor } = useStore();
+  const { logoBgColor } = useStore();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -134,32 +146,26 @@ export default function Spotlight({ onNavigate }: {
     close();
   };
 
-  // Group results into a 3-level tree — kind → container → category — in that fixed
-  // kind order, then flatten back out in the same order the tree renders in. Keyboard
-  // nav/activeIndex walk `orderedResults` rather than the raw `results` from the API:
-  // the API can interleave items from different playlists/sources (channels are appended
-  // to a flat array as they're created), so without this, arrow-key highlighting could
-  // jump to a result that isn't actually next on screen.
-  const groups: KindGroup[] = [];
+  // Group results by kind → container → category, in the fixed kind order, then flatten back
+  // out in the same order the groups render in. Keyboard nav/activeIndex walk
+  // `orderedResults` rather than the raw `results` from the API: the API can interleave items
+  // from different playlists/sources (channels are appended to a flat array as they're
+  // created), so without this, arrow-key highlighting could jump to a result that isn't
+  // actually next on screen.
+  const groups: ResultGroup[] = [];
   for (const kind of KIND_ORDER) {
-    const containers: ContainerGroup[] = [];
     for (const r of results) {
       if (r.kind !== kind) continue;
-      let container = containers.find(c => c.containerId === r.containerId);
-      if (!container) {
-        container = { containerId: r.containerId, containerName: r.containerName, categories: [] };
-        containers.push(container);
+      const key = `${kind}|${r.containerId}|${r.category ?? ''}`;
+      let group = groups.find(g => g.key === key);
+      if (!group) {
+        group = { key, kind, containerName: r.containerName, category: r.category || null, items: [] };
+        groups.push(group);
       }
-      let catGroup = container.categories.find(c => c.category === r.category);
-      if (!catGroup) {
-        catGroup = { category: r.category, items: [] };
-        container.categories.push(catGroup);
-      }
-      catGroup.items.push(r);
+      group.items.push(r);
     }
-    if (containers.length > 0) groups.push({ kind, containers });
   }
-  const orderedResults = groups.flatMap(g => g.containers.flatMap(c => c.categories.flatMap(cat => cat.items)));
+  const orderedResults = groups.flatMap(g => g.items);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIndex(i => i === -1 ? 0 : Math.min(i + 1, orderedResults.length - 1)); }
@@ -173,37 +179,37 @@ export default function Spotlight({ onNavigate }: {
   return (
     <div
       className="md-scrim fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] max-md:pt-[max(0.75rem,env(safe-area-inset-top))] px-4 max-md:px-2"
-      style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
+      style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
       onMouseDown={e => { if (e.target === e.currentTarget) close(); }}
     >
       <div
-        className="md-dialog-top w-full max-w-xl bg-white/90 dark:bg-[#1e1e1e]/95 amoled:dark:bg-[#111]/95 rounded-2xl overflow-hidden"
-        style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.45), 0 0 0 1px rgba(0,0,0,0.08)' }}
+        // Material 3's search view: one rounded surface with the field on top and results below.
+        className="md-dialog-top w-full max-w-xl bg-dialog text-on-surface rounded-[28px] overflow-hidden shadow-level-3"
       >
         {/* Search input */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200/70 dark:border-white/8">
-          <Search className="h-5 w-5 shrink-0 text-gray-400 dark:text-gray-500" />
+        <div className="flex items-center gap-3 h-16 pl-5 pr-4 border-b border-outline-variant">
+          <Icon name="search" className="text-[24px] shrink-0 text-on-surface-variant" />
           <input
             ref={inputRef}
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search channels, URLs, TVG IDs…"
-            className="flex-1 bg-transparent text-base text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none"
+            className="flex-1 min-w-0 bg-transparent text-body-lg text-on-surface placeholder:text-on-surface-variant focus:outline-none"
           />
           {loading && (
-            <svg className="h-4 w-4 shrink-0 animate-spin text-gray-400" viewBox="0 0 24 24" fill="none">
+            <svg className="h-4 w-4 shrink-0 animate-spin text-on-surface-variant" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
             </svg>
           )}
-          <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium font-mono bg-gray-100 dark:bg-white/10 text-gray-400 dark:text-gray-500 border border-gray-200 dark:border-white/10">
+          <kbd className="hidden sm:inline-flex items-center h-6 px-2 rounded-md text-label-sm font-mono border border-outline-variant text-on-surface-variant">
             Esc
           </kbd>
           {/* Phones have no Esc key, so they get a visible way out. */}
           <button
             onClick={close}
-            className="md-btn md:hidden -mr-2 h-10 px-3 rounded text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400"
+            className="md-btn btn btn-text md:hidden -mr-2"
           >
             Cancel
           </button>
@@ -212,105 +218,102 @@ export default function Spotlight({ onNavigate }: {
         {/* Results */}
         <div ref={listRef} className="max-h-[54vh] max-md:max-h-[45dvh] overflow-y-auto overscroll-contain">
           {!query.trim() ? (
-            <div className="flex flex-col items-center justify-center py-10 text-sm text-gray-400 dark:text-gray-500 gap-2">
-              <Search className="h-8 w-8 opacity-30" />
+            <div className="flex flex-col items-center justify-center py-10 text-body-md text-on-surface-variant gap-2">
+              <Icon name="search" className="text-[32px] opacity-40" />
               <span>Type to search across playlists, sources &amp; EPG</span>
             </div>
           ) : results.length === 0 && !loading ? (
-            <div className="flex flex-col items-center justify-center py-10 text-sm text-gray-400 dark:text-gray-500 gap-2">
-              <span>No results for <strong className="text-gray-600 dark:text-gray-300">"{query}"</strong></span>
+            <div className="flex flex-col items-center justify-center py-10 text-body-md text-on-surface-variant gap-2">
+              <span>No results for <strong className="font-semibold text-on-surface">"{query}"</strong></span>
             </div>
           ) : (
             <div className="pb-2">
-              {groups.map(({ kind, containers }) => {
-                const { label, icon: KindIcon } = KIND_META[kind];
+              {groups.map(group => {
+                const { label, icon } = KIND_META[group.kind];
+                // EPG sources have no categories, and some pool entries have none either,
+                // so the path is two or three steps long.
+                const steps = [group.containerName || 'Untitled', ...(group.category ? [group.category] : [])];
                 return (
-                  <div key={kind}>
-                    {/* Level 1: which tab this came from. Sticky headers stack — each
-                        level pins directly below the one(s) above it (top-0/top-10/top-18
-                        match the h-10/h-8/h-8 heights exactly) — and since every header
-                        sits as the first child of the div that also wraps the rest of
-                        its own group's content, it naturally scrolls away the moment
-                        that group ends and the next one's header takes its place. All
-                        three share the same left padding rather than staggering deeper —
-                        weight/case/color carry the hierarchy instead of indentation, so
-                        they stay easy to read at a glance. */}
-                    <div className="sticky top-0 z-30 flex items-center gap-2 h-10 px-5 text-sm font-bold uppercase tracking-wide text-gray-700 dark:text-gray-200 bg-white/90 dark:bg-[#1e1e1e]/95 amoled:dark:bg-[#111]/95 border-b border-gray-200/70 dark:border-white/8">
-                      <KindIcon className="h-4 w-4" />
-                      {label}
+                  // A little air between groups; the first one sits right under the field.
+                  <div key={group.key} className="pt-2 first:pt-1">
+                    {/* The path, like the bar at the bottom of a Finder window: where these
+                        results live, read left to right. The tab name and its icon lead in
+                        the accent colour, earlier steps are grey, the last step (the one the
+                        rows sit in) is full strength. It pins to the top while its rows
+                        scroll past, then the next group's path takes its place. The rows'
+                        logos line up under the icon, the names under the text. */}
+                    <div className="sticky top-0 z-10 flex items-center gap-1 h-10 px-5 bg-dialog text-label-lg text-on-surface-variant">
+                      <Icon name={icon} className="text-[20px] shrink-0 text-primary mr-1" />
+                      {/* Phones keep only the icon, so the playlist and category names get the room. */}
+                      <span className="shrink-0 text-primary max-md:sr-only">{label}</span>
+                      {steps.map((step, i) => (
+                        <React.Fragment key={i}>
+                          <Icon name="chevron_right" className="text-[18px] shrink-0 opacity-60" />
+                          <span className={`truncate ${i === steps.length - 1 ? 'text-on-surface' : 'max-w-[45%]'}`}>{step}</span>
+                        </React.Fragment>
+                      ))}
+                      <span className="ml-auto pl-3 shrink-0 text-label-md tabular-nums">{group.items.length}</span>
                     </div>
-                    {containers.map(container => (
-                      <div key={container.containerId}>
-                        {/* Level 2: the specific playlist / source / EPG source */}
-                        <div className="sticky top-10 z-20 flex items-center h-8 px-5 text-sm font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300 bg-white/90 dark:bg-[#1e1e1e]/95 amoled:dark:bg-[#111]/95 border-b border-gray-200/70 dark:border-white/8">
-                          {container.containerName}
-                        </div>
-                        {container.categories.map(catGroup => (
-                          <div key={catGroup.category ?? '_none'}>
-                            {/* Level 3: category within that playlist/source — EPG
-                                sources have no categories, so catGroup.category is
-                                always null there and this header is skipped. */}
-                            {catGroup.category && (
-                              <div className="sticky top-18 z-10 flex items-center h-8 px-5 text-sm font-medium text-gray-500 dark:text-gray-400 bg-white/90 dark:bg-[#1e1e1e]/95 amoled:dark:bg-[#111]/95 border-b border-gray-200/70 dark:border-white/8">
-                                {catGroup.category}
-                              </div>
-                            )}
-                            {catGroup.items.map(r => {
-                              const globalIdx = orderedResults.indexOf(r);
-                              const isActive = globalIdx === activeIndex;
-                              return (
-                                <div
-                                  // Index rather than a data id: EPG sources can legitimately
-                                  // list the same channel id more than once (seen in practice —
-                                  // e.g. duplicate <channel id="bbcone.nl"> entries within one
-                                  // XMLTV source), so id-based keys aren't reliably unique. Rows
-                                  // are stateless and the whole list is rebuilt on every new
-                                  // search anyway, so the render-stable position is fine as a key.
-                                  key={globalIdx}
-                                  data-idx={globalIdx}
-                                  onMouseEnter={() => setActiveIndex(globalIdx)}
-                                  onMouseLeave={() => setActiveIndex(i => (i === globalIdx ? -1 : i))}
-                                  onClick={() => select(r)}
-                                  className="flex items-center gap-3 mx-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors"
-                                  style={isActive ? { backgroundColor: `${accentColor}18` } : undefined}
-                                >
-                                  {/* Logo — same fallback-to-initials component used in
-                                      the Sources/EPG list views, for visual consistency. */}
-                                  <ChannelLogo
-                                    logo={r.logo}
-                                    name={r.name}
-                                    logoBgColor={logoBgColor}
-                                    className="w-9 h-7 shrink-0 rounded border border-gray-200/60 dark:border-white/8"
-                                  />
+                    {group.items.map(r => {
+                      const globalIdx = orderedResults.indexOf(r);
+                      const isActive = globalIdx === activeIndex;
+                      return (
+                        <div
+                          // Index rather than a data id: EPG sources can legitimately
+                          // list the same channel id more than once (seen in practice —
+                          // e.g. duplicate <channel id="bbcone.nl"> entries within one
+                          // XMLTV source), so id-based keys aren't reliably unique. Rows
+                          // are stateless and the whole list is rebuilt on every new
+                          // search anyway, so the render-stable position is fine as a key.
+                          key={globalIdx}
+                          data-idx={globalIdx}
+                          onMouseEnter={() => setActiveIndex(globalIdx)}
+                          onMouseLeave={() => setActiveIndex(i => (i === globalIdx ? -1 : i))}
+                          onClick={() => select(r)}
+                          className={`flex items-center gap-3 mx-2 px-3 h-14 rounded-2xl cursor-pointer transition-colors ${isActive ? 'bg-secondary-container text-on-secondary-container [--match-color:var(--md-on-secondary-container)]' : '[--match-color:var(--md-on-surface)]'}`}
+                        >
+                          {/* Logo — same fallback-to-initials component used in the
+                              Sources/EPG list views. Hidden channels are dimmed, like in
+                              the playlist editor. */}
+                          <ChannelLogo
+                            logo={r.logo}
+                            name={r.name}
+                            logoBgColor={logoBgColor}
+                            className={`w-12 h-8 shrink-0 rounded-md ${r.isHidden ? 'opacity-50' : ''}`}
+                          />
 
-                                  {/* Text */}
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <span className={`text-sm font-medium truncate ${isActive ? '' : 'text-gray-900 dark:text-white'}`} style={isActive ? { color: accentColor } : undefined}>
-                                        {highlight(r.name || 'Unnamed', query)}
-                                      </span>
-                                      {r.isHidden && <EyeOff className="h-3 w-3 shrink-0 text-amber-500" />}
-                                    </div>
-                                    <div className="flex items-center gap-2 mt-0.5">
-                                      {r.url && (
-                                        <span className="text-[11px] font-mono text-gray-400 dark:text-gray-500 truncate">
-                                          {highlight(r.url, query)}
-                                        </span>
-                                      )}
-                                      {r.tvgId && (
-                                        <span className="shrink-0 text-[10px] font-mono px-1.5 py-px rounded bg-gray-100 dark:bg-white/8 text-gray-500 dark:text-gray-400">
-                                          {highlight(r.tvgId, query)}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
+                          {/* Name on top; underneath, only what the search found besides the
+                              name — the TVG ID and/or the stream link — so the second line always
+                              explains why a row is here. A row found by its name alone has just
+                              the one line. */}
+                          {(() => {
+                            const tvgIdMatched = matchesQuery(r.tvgId, query);
+                            const urlMatched = matchesQuery(r.url, query);
+                            return (
+                              <div className={`flex-1 min-w-0 ${r.isHidden ? 'opacity-60' : ''}`}>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`text-title-sm truncate ${isActive ? '' : 'text-on-surface'}`}>
+                                    {highlight(r.name || 'Unnamed', query)}
+                                  </span>
+                                  {r.isHidden && <Icon name="visibility_off" className="text-[16px] shrink-0" aria-label="Hidden" />}
                                 </div>
-                              );
-                            })}
-                          </div>
-                        ))}
-                      </div>
-                    ))}
+                                {(tvgIdMatched || urlMatched) && (
+                                  <div className={`flex items-center gap-1.5 text-body-sm ${isActive ? 'opacity-80' : 'text-on-surface-variant'}`}>
+                                    {tvgIdMatched && (
+                                      <span className={`truncate min-w-0 ${urlMatched ? 'shrink max-w-[50%]' : 'flex-1'}`}>{highlight(r.tvgId!, query)}</span>
+                                    )}
+                                    {tvgIdMatched && urlMatched && <span className="shrink-0 opacity-60" aria-hidden>·</span>}
+                                    {urlMatched && (
+                                      <span className="flex-1 min-w-0 truncate">{highlight(displayUrl(r.url!, query), query)}</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -320,7 +323,7 @@ export default function Spotlight({ onNavigate }: {
 
         {/* Footer hint */}
         {results.length > 0 && (
-          <div className="flex items-center gap-3 px-5 py-2.5 border-t border-gray-200/70 dark:border-white/8 text-[11px] text-gray-400 dark:text-gray-500">
+          <div className="flex items-center gap-3 px-5 h-10 border-t border-outline-variant text-label-md text-on-surface-variant">
             {/* Keyboard hints mean nothing on a phone; the result count stays. */}
             <span className="hidden md:inline"><kbd className="font-mono">↑↓</kbd> navigate</span>
             <span className="hidden md:inline"><kbd className="font-mono">↵</kbd> open</span>

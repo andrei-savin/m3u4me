@@ -1360,35 +1360,6 @@ function serveM3U(playlist: Playlist, db: Database, res: any) {
   res.send(m3u);
 }
 
-// A small, randomized sample of distinct channel logo URLs from the user's own playlists —
-// purely decorative, used to texture the homescreen's background. Genuinely shuffled (Fisher-
-// Yates) rather than strided across the array: channels are grouped by playlist/category, and
-// a fixed stride only spreads out reads when the array is much bigger than what's needed — for
-// a single modest-sized playlist the computed stride rounds down to 1, degenerating right back
-// into a plain prefix scan that only ever samples the first category. Re-shuffled on every
-// call, so reloading the homescreen also reshuffles which channels show up.
-function collectSampleLogos(db: Database): string[] {
-  const CAP = 30;
-  const logos: string[] = [];
-  const seen = new Set<string>();
-  const add = (url: string | null | undefined) => {
-    if (url && !seen.has(url)) { seen.add(url); logos.push(url); }
-  };
-
-  const indices = db.channels.map((_, i) => i);
-  for (let i = indices.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [indices[i], indices[j]] = [indices[j], indices[i]];
-  }
-
-  for (const idx of indices) {
-    if (logos.length >= CAP) break;
-    add(db.channels[idx].logo);
-  }
-
-  return logos;
-}
-
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 8080;
@@ -2000,7 +1971,6 @@ async function startServer() {
       epgChannelCount,
       lastPlaylistDownload,
       latestChannelPoolAdditions,
-      sampleLogos: collectSampleLogos(db),
     });
   });
 
@@ -2154,6 +2124,26 @@ async function startServer() {
     writeDb(db);
 
     res.json(newPlaylist);
+  });
+
+  // Changes the order playlists are listed in, everywhere in the app. `ids` is every playlist
+  // id in the new order. Nothing else about a playlist changes: its short link number
+  // (shortId) stays the same. Registered before the "/:playlistId" routes below.
+  app.post("/api/playlists/reorder", (req, res) => {
+    const ids: unknown = req.body?.ids;
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ error: "Send the playlist ids in their new order." });
+    }
+    const db = readDb();
+    const position = new Map(ids.map((id, index) => [id, index]));
+    // A playlist that isn't in the list (made on another device meanwhile) keeps its place at the end.
+    const placeOf = (id: string) => position.get(id) ?? Number.MAX_SAFE_INTEGER;
+    db.playlists = db.playlists
+      .map((playlist, index) => ({ playlist, index }))
+      .sort((a, b) => placeOf(a.playlist.id) - placeOf(b.playlist.id) || a.index - b.index)
+      .map(entry => entry.playlist);
+    writeDb(db);
+    res.json({ ok: true });
   });
 
   app.put("/api/playlists/:playlistId", (req, res) => {

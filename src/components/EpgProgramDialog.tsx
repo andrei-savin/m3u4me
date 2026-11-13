@@ -2,8 +2,8 @@ import React from 'react';
 import { EpgProgramme } from '../apiClient';
 import { useStore } from '../store';
 import { formatTime } from '../utils/formatTime';
-import { X } from 'lucide-react';
 import Dialog from './Dialog';
+import Icon from './Icon';
 
 export interface EpgProgramDialogProps {
   programme: EpgProgramme | null;
@@ -45,7 +45,7 @@ function formatDuration(ms: number): string {
 }
 
 export default function EpgProgramDialog({ programme, onClose, onAssignChannel }: EpgProgramDialogProps) {
-  const { accentColor, is24Hour } = useStore();
+  const { is24Hour } = useStore();
 
   if (!programme) return null;
 
@@ -65,49 +65,49 @@ export default function EpgProgramDialog({ programme, onClose, onAssignChannel }
   const formattedEndTime = formatTime(endDate, is24Hour);
 
   return (
-    <Dialog onClose={onClose} maxWidth="max-w-lg" panelClassName="rounded max-h-[90vh]">
-        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100 dark:border-white/10 shrink-0">
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white truncate pr-4">
+    <Dialog onClose={onClose} maxWidth="max-w-lg" panelClassName="max-h-[90vh]">
+        <div className="flex items-center justify-between pl-6 pr-3 pt-5 pb-1 shrink-0">
+          <h2 className="text-headline-sm text-on-surface truncate pr-4">
             {programme.title}
           </h2>
           <button 
             onClick={onClose} 
-            className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 shrink-0"
+            className="md-btn icon-btn"
             aria-label="Close dialog"
           >
-            <X className="h-5 w-5" />
+            <Icon name="close" className="text-[24px]" />
           </button>
         </div>
         
-        <div className="px-6 py-4 overflow-y-auto">
-          <p className="text-sm font-medium text-gray-600 dark:text-gray-300 mb-4" style={{ color: accentColor }}>
+        <div className="px-6 pb-6 overflow-y-auto">
+          <p className="text-label-lg text-primary mb-4">
             {formattedTime} &ndash; {formattedEndTime} ({formatDuration(durationMs)})
           </p>
           
           {programme.desc && (
-            <div className="text-sm text-gray-700 dark:text-gray-400 space-y-2 mb-4 leading-relaxed whitespace-pre-wrap">
+            <div className="text-body-md text-on-surface-variant space-y-2 mb-4 whitespace-pre-wrap">
               {programme.desc}
             </div>
           )}
 
           <div className="flex flex-wrap gap-2 mt-4">
             {programme.category && (
-              <span className="px-2.5 py-1 text-xs font-medium rounded bg-gray-100 dark:bg-white/10 text-gray-700 dark:text-gray-300">
+              <span className="inline-flex items-center h-8 px-3 rounded-lg border border-outline-variant text-label-lg text-on-surface-variant">
                 {programme.category}
               </span>
             )}
             {programme.episodeNum && (
-              <span className="px-2.5 py-1 text-xs font-medium rounded bg-gray-100 dark:bg-white/10 text-gray-700 dark:text-gray-300">
+              <span className="inline-flex items-center h-8 px-3 rounded-lg border border-outline-variant text-label-lg text-on-surface-variant">
                 Ep: {programme.episodeNum}
               </span>
             )}
             {programme.date && (
-              <span className="px-2.5 py-1 text-xs font-medium rounded bg-gray-100 dark:bg-white/10 text-gray-700 dark:text-gray-300">
+              <span className="inline-flex items-center h-8 px-3 rounded-lg border border-outline-variant text-label-lg text-on-surface-variant">
                 Year: {programme.date}
               </span>
             )}
             {programme.rating && (
-              <span className="px-2.5 py-1 text-xs font-medium rounded bg-gray-100 dark:bg-white/10 text-gray-700 dark:text-gray-300">
+              <span className="inline-flex items-center h-8 px-3 rounded-lg border border-outline-variant text-label-lg text-on-surface-variant">
                 Rating: {programme.rating}
               </span>
             )}
@@ -115,11 +115,10 @@ export default function EpgProgramDialog({ programme, onClose, onAssignChannel }
         </div>
 
         {onAssignChannel && (
-          <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100 dark:border-white/10 shrink-0">
+          <div className="flex justify-end gap-2 px-6 pb-6 shrink-0">
             <button
               onClick={() => onAssignChannel(programme.channel)}
-              className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider"
-              style={{ color: accentColor }}
+              className="md-btn btn btn-tonal"
             >
               Assign this channel's EPG
             </button>

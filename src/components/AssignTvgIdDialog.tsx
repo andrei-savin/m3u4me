@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Search, ChevronDown, ChevronRight, Check, Loader2 } from 'lucide-react';
 import { api, usePlaylists, triggerRefresh, Channel } from '../apiClient';
 import { useStore, notifyError, notifyInfo } from '../store';
 import ChannelLogo from './ChannelLogo';
 import Dialog from './Dialog';
+import Icon from './Icon';
 
 interface AssignTvgIdDialogProps {
   open: boolean;
@@ -14,7 +14,7 @@ interface AssignTvgIdDialogProps {
 
 export default function AssignTvgIdDialog({ open, onClose, epgChannelId, epgDisplayName }: AssignTvgIdDialogProps) {
   const { playlists } = usePlaylists();
-  const { accentColor, logoBgColor } = useStore();
+  const { logoBgColor } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedPlaylists, setExpandedPlaylists] = useState<Set<string>>(new Set());
   // Playlists the user has explicitly expanded/collapsed themselves - search-driven
@@ -144,34 +144,31 @@ export default function AssignTvgIdDialog({ open, onClose, epgChannelId, epgDisp
   };
 
   return (
-    <Dialog onClose={onClose} maxWidth="max-w-md" panelClassName="rounded max-h-[70vh]">
+    <Dialog onClose={onClose} maxWidth="max-w-md" panelClassName="max-h-[70vh]">
         {/* Header */}
-        <div className="px-6 pt-6 pb-4 border-b border-gray-100 dark:border-white/10 shrink-0">
-          <h2 className="text-xl font-medium text-gray-900 dark:text-white mb-2">Assign EPG Source</h2>
-          <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-black/20 rounded">
-            <div className="w-10 h-10 rounded bg-gray-200 dark:bg-white/10 flex items-center justify-center shrink-0 overflow-hidden">
-              <span className="text-sm font-bold text-gray-400">EPG</span>
+        <div className="px-6 pt-6 pb-3 shrink-0">
+          <h2 className="text-headline-sm text-on-surface mb-3">Assign this guide channel</h2>
+          <div className="flex items-center gap-3 p-3 bg-surface-container-highest rounded-xl">
+            <div className="w-10 h-10 rounded-lg bg-secondary-container text-on-secondary-container flex items-center justify-center shrink-0 overflow-hidden">
+              <span className="text-label-md font-bold">EPG</span>
             </div>
             <div className="flex flex-col min-w-0">
-              <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{epgDisplayName}</span>
-              <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{epgChannelId}</span>
+              <span className="text-label-lg text-on-surface truncate">{epgDisplayName}</span>
+              <span className="text-body-sm font-mono text-on-surface-variant truncate">{epgChannelId}</span>
             </div>
           </div>
         </div>
 
         {/* Search */}
-        <div className="px-6 py-3 border-b border-gray-100 dark:border-white/10 shrink-0">
+        <div className="px-6 pb-3 border-b border-outline-variant shrink-0">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Icon name="search" className="absolute left-4 top-1/2 -translate-y-1/2 text-[24px] text-on-surface-variant" />
             <input
               type="text"
-              placeholder="Search channels..."
+              placeholder="Search channels"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full border border-gray-300 dark:border-gray-600 rounded-full pl-9 pr-4 py-2 text-sm focus:outline-none bg-gray-50 dark:bg-black/20 text-gray-900 dark:text-white placeholder-gray-400"
-              style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-              onFocus={(e) => (e.target.style.borderColor = accentColor)}
-              onBlur={(e) => (e.target.style.borderColor = '')}
+              className="w-full h-12 pl-11 pr-4 rounded-full bg-surface-container-highest text-body-md max-md:text-base text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
         </div>
@@ -188,17 +185,17 @@ export default function AssignTvgIdDialog({ open, onClose, epgChannelId, epgDisp
               <div key={playlist.id} className="mb-1">
                 <button
                   onClick={() => togglePlaylist(playlist.id)}
-                  className="w-full flex items-center gap-2 p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded text-left"
+                  className="md-btn w-full flex items-center gap-2 h-11 px-3 rounded-full text-left"
                 >
-                  {isExpanded ? <ChevronDown className="h-4 w-4 text-gray-500" /> : <ChevronRight className="h-4 w-4 text-gray-500" />}
-                  <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{playlist.name}</span>
-                  {isLoading && <Loader2 className="h-3 w-3 animate-spin text-gray-400 ml-auto" />}
+                  {isExpanded ? <Icon name="keyboard_arrow_down" className="text-[24px] text-on-surface-variant" /> : <Icon name="chevron_right" className="text-[24px] text-on-surface-variant" />}
+                  <span className="text-label-lg text-on-surface">{playlist.name}</span>
+                  {isLoading && <Icon name="progress_activity" className="text-[16px] animate-spin text-on-surface-variant ml-auto" />}
                 </button>
 
                 {isExpanded && !isLoading && (
                   <div className="pl-6 pr-2 py-1 space-y-1">
                     {filteredChannels.length === 0 ? (
-                      <div className="text-xs text-gray-500 py-2">No matching channels</div>
+                      <div className="text-body-sm text-on-surface-variant py-2">No matching channels</div>
                     ) : (
                       <>
                         {filteredChannels.slice(0, 100).map((channel) => {
@@ -208,19 +205,18 @@ export default function AssignTvgIdDialog({ open, onClose, epgChannelId, epgDisp
                           return (
                             <div
                               key={channel.id}
-                              className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-white/5"
+                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-on-surface/[0.06]"
                             >
                               {isAssigned ? (
-                                <div className="w-4 h-4 flex items-center justify-center rounded-sm" style={{ color: accentColor }}>
-                                  <Check className="w-4 h-4" />
+                                <div className="w-[18px] h-[18px] flex items-center justify-center text-primary" title="Already uses this guide channel">
+                                  <Icon name="check" className="text-[20px]" />
                                 </div>
                               ) : (
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
                                   onChange={() => toggleChannelSelection(channel.id)}
-                                  className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 focus:ring-0"
-                                  style={{ accentColor }}
+                                  className="w-[18px] h-[18px] accent-primary cursor-pointer"
                                 />
                               )}
                               
@@ -228,20 +224,20 @@ export default function AssignTvgIdDialog({ open, onClose, epgChannelId, epgDisp
                                 logo={channel.logo}
                                 name={channel.name}
                                 logoBgColor={logoBgColor}
-                                className="w-6 h-6 rounded"
+                                className="w-10 h-7 rounded-md"
                               />
                               
                               <div className="flex flex-col min-w-0 flex-1">
-                                <span className="text-sm text-gray-800 dark:text-gray-200 truncate">{channel.name || 'Unnamed'}</span>
+                                <span className="text-body-md text-on-surface truncate">{channel.name || 'Unnamed'}</span>
                                 {channel.tvgId && !isAssigned && (
-                                  <span className="text-[10px] text-gray-400 dark:text-gray-500 truncate">{channel.tvgId}</span>
+                                  <span className="text-label-sm font-normal font-mono text-on-surface-variant truncate">{channel.tvgId}</span>
                                 )}
                               </div>
                             </div>
                           );
                         })}
                         {filteredChannels.length > 100 && (
-                          <div className="text-xs text-center text-gray-500 dark:text-gray-400 pt-2 pb-1 italic">
+                          <div className="text-body-sm text-center text-on-surface-variant pt-2 pb-1">
                             Showing 100 of {filteredChannels.length}. Use search to find more.
                           </div>
                         )}
@@ -255,20 +251,19 @@ export default function AssignTvgIdDialog({ open, onClose, epgChannelId, epgDisp
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-100 dark:border-white/10 shrink-0 flex justify-end gap-2">
+        <div className="px-6 py-4 border-t border-outline-variant shrink-0 flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300"
+            className="md-btn btn btn-text"
           >
             Cancel
           </button>
           <button
             onClick={handleAssign}
             disabled={selectedChannels.size === 0 || isSubmitting}
-            className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40 flex items-center gap-2"
-            style={{ color: accentColor }}
+            className="md-btn btn btn-filled"
           >
-            {isSubmitting && <Loader2 className="w-3 h-3 animate-spin" />}
+            {isSubmitting && <Icon name="progress_activity" className="text-[20px] animate-spin" />}
             Assign to {selectedChannels.size} {selectedChannels.size === 1 ? 'channel' : 'channels'}
           </button>
         </div>

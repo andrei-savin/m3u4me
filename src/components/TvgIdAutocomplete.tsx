@@ -5,7 +5,7 @@ import { useStore, notifyError } from '../store';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 
 /* Same look as PlaylistEditor's other click-to-edit fields. */
-const inlineInputCls = 'border-b-2 bg-transparent text-sm text-gray-900 dark:text-white px-0.5 py-0 focus:outline-none w-full';
+const inlineInputCls = 'border-b-2 border-primary bg-transparent text-body-md text-on-surface px-0.5 py-0 focus:outline-none w-full';
 
 /**
  * TVG-ID text field that suggests matching channels from the loaded EPG guides as you type.
@@ -24,7 +24,6 @@ export default function TvgIdAutocomplete({ value, onChange, onSave, onCancel, m
   onCancel?: () => void;
   mode?: 'inline' | 'field';
 }) {
-  const { accentColor } = useStore();
   const isField = mode === 'field';
   const [suggestions, setSuggestions] = useState<EpgChannel[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
@@ -88,7 +87,8 @@ export default function TvgIdAutocomplete({ value, onChange, onSave, onCancel, m
       const viewTop = visible?.offsetTop ?? 0;
       const viewBottom = viewTop + (visible?.height ?? window.innerHeight);
       const anchor = input.getBoundingClientRect();
-      const width = Math.min(Math.max(anchor.width, 280), window.innerWidth - margin * 2);
+      // At least 360px wide, however narrow the column the field sits in, so guide names fit.
+      const width = Math.min(Math.max(anchor.width, 360), window.innerWidth - margin * 2);
       const height = menu.offsetHeight;
       let top = anchor.bottom + 4;
       if (top + height > viewBottom - margin) top = Math.max(viewTop + margin, anchor.top - height - 4);
@@ -173,14 +173,9 @@ export default function TvgIdAutocomplete({ value, onChange, onSave, onCancel, m
         onBlur={e => {
           if (!isField) { finish(true); return; }
           setShowDropdown(false);
-          e.target.style.borderColor = '';
         }}
         onKeyDown={handleKey}
-        className={isField
-          ? 'w-full h-11 px-3 rounded border border-gray-300 dark:border-gray-600 bg-transparent font-mono text-base text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none'
-          : `${inlineInputCls} font-mono text-[11px]`}
-        style={isField ? undefined : { borderColor: accentColor }}
-        onFocus={isField ? e => (e.target.style.borderColor = accentColor) : undefined}
+        className={isField ? 'field h-12 font-mono text-body-lg' : `${inlineInputCls} font-mono text-body-sm`}
         placeholder={isField ? 'Type to search your guides…' : 'Type to search EPG pool…'}
         autoCapitalize="off"
         autoCorrect="off"
@@ -192,25 +187,31 @@ export default function TvgIdAutocomplete({ value, onChange, onSave, onCancel, m
           // Keeps focus in the field when clicking the dropdown (e.g. its scrollbar), since
           // blurring the field saves and closes the edit.
           onMouseDown={e => e.preventDefault()}
-          className="md-menu fixed z-50 bg-white dark:bg-[#2a2a2a] amoled:dark:bg-[#1a1a1a] rounded elev-8 max-h-48 overflow-y-auto border border-gray-200 dark:border-white/10"
+          className="md-menu menu fixed z-50 max-h-72 overflow-y-auto"
         >
           {suggestions.length === 0 && (
-            <p className="px-3 py-2 text-[11px] text-gray-400 dark:text-gray-500">No matching EPG channels</p>
+            <p className="px-4 py-2 text-body-sm text-on-surface-variant">No matching EPG channels</p>
           )}
           {suggestions.map((s, i) => (
             <button
               key={`${s.sourceId}-${s.id}`}
               data-idx={i}
               onMouseDown={e => { e.preventDefault(); selectSuggestion(s.id); }}
-              className={`w-full flex items-center gap-2 px-3 py-2 ${isField ? 'min-h-11 text-sm' : 'text-[11px]'} text-left transition-colors ${
-                i === activeIdx ? 'dark:bg-white/10' : 'hover:bg-gray-50 dark:hover:bg-white/5'
+              className={`w-full flex items-center gap-3 px-4 py-1.5 ${isField ? 'min-h-14' : 'min-h-12'} text-left transition-colors ${
+                i === activeIdx ? 'bg-secondary-container text-on-secondary-container' : 'hover:bg-on-surface/[0.08]'
               }`}
-              style={i === activeIdx ? { backgroundColor: `${accentColor}15` } : undefined}
             >
-              {s.icon && <img src={s.icon} className="w-4 h-4 rounded shrink-0" alt="" onError={e => (e.currentTarget.style.display = 'none')} />}
-              <span className="truncate text-gray-700 dark:text-gray-200">{s.displayName}</span>
-              <span className="ml-auto shrink-0 font-mono text-gray-400 dark:text-gray-500 text-[10px]">{s.id}</span>
-              <span className="shrink-0 text-gray-300 dark:text-gray-600 text-[9px]">{s.sourceName}</span>
+              {s.icon && <img src={s.icon} className="w-6 h-6 rounded-sm shrink-0 object-contain" alt="" onError={e => (e.currentTarget.style.display = 'none')} />}
+              {/* The channel's name gets the whole first line: it's what people look for. The
+                  guide it's from and the TVG-ID (often a long code) share the second line,
+                  where the id is the part that gets cut off. */}
+              <span className="flex-1 min-w-0">
+                <span className="block truncate text-body-md">{s.displayName}</span>
+                <span className="flex gap-1.5 text-label-sm font-normal opacity-70">
+                  <span className="shrink-0">{s.sourceName}</span>
+                  <span className="truncate font-mono">· {s.id}</span>
+                </span>
+              </span>
             </button>
           ))}
         </div>,

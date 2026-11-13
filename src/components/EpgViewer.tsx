@@ -1,16 +1,26 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { api, EpgChannel, EpgProgramme, epgEvents } from '../apiClient';
 import { useStore, notifyError } from '../store';
-import { Search, Loader2, Link as LinkIcon, Crosshair, ZoomIn, ZoomOut } from 'lucide-react';
 import EpgProgramDialog, { parseXmltvTime } from './EpgProgramDialog';
 import ChannelLogo from './ChannelLogo';
 import { formatTime } from '../utils/formatTime';
 import { foldText } from '../utils/foldText';
 import { useIsPhone } from '../utils/useIsPhone';
+import Icon from './Icon';
+import SourceActions from './SourceActions';
 
 export interface EpgViewerProps {
   sourceId: string;
   onAssignChannel: (epgChannelId: string, epgDisplayName: string) => void;
+  /** Shown as the pane's title. */
+  sourceName?: string;
+  /** Downloads the guide again (the header's Refresh button, and the empty state's). */
+  onRefresh: () => void;
+  isRefreshing: boolean;
+  /** Opens the guide's settings (link, refresh interval). */
+  onEdit: () => void;
+  /** Why the last download failed, if it did: shown when there's no data to show. */
+  fetchError?: string | null;
 }
 
 const ROW_HEIGHT = 56;
@@ -40,8 +50,8 @@ interface ProgrammeWithTimes {
   endMs: number;
 }
 
-export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps) {
-  const { accentColor, logoBgColor, is24Hour, scrollTarget, setScrollTarget } = useStore();
+export default function EpgViewer({ sourceId, onAssignChannel, sourceName, onRefresh, isRefreshing, onEdit, fetchError }: EpgViewerProps) {
+  const { logoBgColor, is24Hour, scrollTarget, setScrollTarget } = useStore();
   const scrollToEpgChannelId = scrollTarget?.kind === 'epg' ? scrollTarget.id : null;
   const [data, setData] = useState<{ channels: EpgChannel[], programmes: { [channelId: string]: EpgProgramme[] } } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -296,84 +306,114 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
 
   const nowOffsetPx = (now.getTime() - windowStart) / MS_PER_HOUR * pixelsPerHour;
 
-  if (!sourceId) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 dark:bg-[#121212] amoled:dark:bg-black text-gray-500 dark:text-gray-400">
-        <p>No EPG source selected.</p>
+  // The source's title and its Refresh / Edit buttons (bigger screens; phones show the title
+  // in the top bar and these actions in its ⋮). Shown above every state, including the empty
+  // and failed ones, because that's exactly when Refresh and Edit are needed.
+  const channelCount = data?.channels.length ?? 0;
+  const header = (
+    <div className="shrink-0 hidden md:flex items-end gap-2 pl-6 pr-4 pt-4 pb-1">
+      <div className="flex-1 min-w-0">
+        <p className="text-label-md text-on-surface-variant">EPG source</p>
+        <div className="flex items-baseline gap-2.5 min-w-0">
+          <h2 className="min-w-0 truncate text-headline-sm tracking-[-0.01em] text-on-surface">{sourceName ?? 'TV guide'}</h2>
+          {channelCount > 0 && <span className="shrink-0 text-body-md text-on-surface-variant">{channelCount} channel{channelCount !== 1 ? 's' : ''}</span>}
+        </div>
       </div>
-    );
-  }
+      <SourceActions onRefresh={onRefresh} isRefreshing={isRefreshing} onEdit={onEdit} kind="guide" />
+    </div>
+  );
+
+  // Loading, failed and empty states: the header, then a message in the middle.
+  const emptyState = (body: React.ReactNode) => (
+    <div className="flex flex-col h-full overflow-hidden">
+      {header}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 text-center text-body-md text-on-surface-variant">
+        {body}
+      </div>
+    </div>
+  );
 
   if (loading) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 dark:bg-[#121212] amoled:dark:bg-black text-gray-500 dark:text-gray-400">
-        <Loader2 className="h-8 w-8 animate-spin mb-4" style={{ color: accentColor }} />
-        <p>Loading EPG data...</p>
-      </div>
+    return emptyState(
+      <>
+        <Icon name="progress_activity" className="text-[32px] animate-spin mb-4 text-primary" />
+        <p>Loading EPG data…</p>
+      </>
     );
   }
 
   if (error && (!data || data.channels.length === 0)) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 dark:bg-[#121212] amoled:dark:bg-black text-gray-500 dark:text-gray-400">
-        <p className="text-red-500 dark:text-red-400">{error}</p>
-        <button
-          onClick={() => setRetryTick(t => t + 1)}
-          className="md-btn mt-3 text-sm font-medium underline"
-          style={{ color: accentColor }}
-        >
+    return emptyState(
+      <>
+        <p className="text-error">{error}</p>
+        <button onClick={() => setRetryTick(t => t + 1)} className="md-btn btn btn-text mt-3">
           Retry
         </button>
-      </div>
+      </>
     );
   }
 
   if (!data || data.channels.length === 0) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 dark:bg-[#121212] amoled:dark:bg-black text-gray-500 dark:text-gray-400">
-        <p>No EPG data found for this source.</p>
-      </div>
+    return emptyState(
+      <>
+        <p className="text-title-md text-on-surface">No TV guide data yet</p>
+        <p className="mt-1 max-w-sm">
+          {fetchError
+            ? `The last download failed: ${fetchError}`
+            : 'This guide hasn’t been downloaded yet, or it has no channels in it.'}
+        </p>
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          <button onClick={onEdit} className="md-btn btn btn-outlined">
+            <Icon name="edit" className="text-[20px]" />
+            Edit guide
+          </button>
+          <button onClick={onRefresh} disabled={isRefreshing} className="md-btn btn btn-filled">
+            <Icon name="refresh" className={`text-[20px] ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Downloading…' : 'Download again'}
+          </button>
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black overflow-hidden relative font-sans">
+    <div className="flex flex-col h-full overflow-hidden relative">
+
+      {header}
 
       {/* Toolbar */}
-      <div className="shrink-0 flex items-center justify-between gap-2 px-4 max-md:px-2 py-2 border-b border-gray-200 dark:border-white/10 z-20 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black">
-        <div className="relative w-64 max-md:w-auto max-md:flex-1 max-md:min-w-0">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+      <div className="shrink-0 flex items-center justify-between gap-2 px-4 max-md:px-2 py-3 max-md:py-2 z-20">
+        <div className="relative w-72 max-md:w-auto max-md:flex-1 max-md:min-w-0">
+          <Icon name="search" className="absolute left-4 top-1/2 -translate-y-1/2 text-[24px] text-on-surface-variant" />
           <input
             type="text"
-            placeholder="Search channels..."
+            placeholder="Search channels"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 max-md:py-2 text-sm max-md:text-base rounded border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white focus:outline-none"
-            onFocus={e => (e.target.style.borderColor = accentColor)}
-            onBlur={e => (e.target.style.borderColor = '')}
+            className="w-full h-10 max-md:h-12 pl-11 pr-4 rounded-full bg-surface-container-highest text-body-md max-md:text-base text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:ring-2 focus:ring-primary"
           />
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           <button
             onClick={() => setPixelsPerHour(p => Math.min(p + 100, 600))}
-            className="md-btn flex items-center justify-center w-8 h-8 max-md:w-10 max-md:h-10 rounded text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600"
-            title="Zoom In"
+            className="md-btn icon-btn max-md:w-12 max-md:h-12"
+            title="Zoom in"
           >
-            <ZoomIn className="h-4 w-4" />
+            <Icon name="zoom_in" className="text-[24px]" />
           </button>
           <button
             onClick={() => setPixelsPerHour(p => Math.max(p - 100, 100))}
-            className="md-btn flex items-center justify-center w-8 h-8 max-md:w-10 max-md:h-10 rounded text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600"
-            title="Zoom Out"
+            className="md-btn icon-btn max-md:w-12 max-md:h-12"
+            title="Zoom out"
           >
-            <ZoomOut className="h-4 w-4" />
+            <Icon name="zoom_out" className="text-[24px]" />
           </button>
           <button
             onClick={scrollToNow}
-            className="md-btn flex items-center gap-2 h-8 px-3 max-md:h-10 max-md:px-2.5 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 ml-2 max-md:ml-1"
+            className="md-btn btn btn-tonal ml-1 max-md:px-3"
             title="Jump to now"
           >
-            <Crosshair className="h-4 w-4" />
+            <Icon name="my_location" className="text-[20px]" />
             <span className="hidden md:inline">Now</span>
           </button>
         </div>
@@ -385,7 +425,7 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
         {!isPhone && (
           <div
             onMouseDown={startSidebarResize}
-            className="absolute top-0 bottom-0 w-1 cursor-col-resize hover:bg-gray-300 dark:hover:bg-white/15 transition-colors z-50"
+            className="absolute top-0 bottom-0 w-1 cursor-col-resize hover:bg-on-surface/[0.12] transition-colors z-50"
             style={{ left: sidebarWidth }}
           />
         )}
@@ -404,25 +444,25 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
                 scrolls horizontally in lockstep with the grid since it's the
                 same scroll container. */}
             <div
-              className="sticky top-0 z-40 flex border-b border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#1a1a1a] amoled:dark:bg-[#0a0a0a]"
+              className="sticky top-0 z-40 flex border-y border-outline-variant bg-pane"
               style={{ height: HEADER_HEIGHT }}
             >
               {/* Corner cell: additionally pinned to the left so it stays put
                   on both axes. */}
               <div
-                className="sticky left-0 z-10 shrink-0 flex items-center px-4 max-md:px-3 border-r border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#1a1a1a] amoled:dark:bg-[#0a0a0a]"
+                className="sticky left-0 z-10 shrink-0 flex items-center px-4 max-md:px-3 border-r border-outline-variant bg-pane"
                 style={{ width: channelColWidth, height: HEADER_HEIGHT }}
               >
-                <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Channel</span>
+                <span className="text-label-md text-on-surface-variant">Channel</span>
               </div>
               <div className="relative shrink-0" style={{ width: timelineWidth, height: HEADER_HEIGHT }}>
                 {markers.map(m => (
                   <div
                     key={m.key}
-                    className="absolute top-0 bottom-0 border-l border-gray-300 dark:border-white/10 flex items-center pl-1"
+                    className="absolute top-0 bottom-0 border-l border-outline-variant flex items-center pl-1"
                     style={{ left: m.offsetPx }}
                   >
-                    {m.label && <span className="text-xs font-medium text-gray-500 dark:text-gray-400">{m.label}</span>}
+                    {m.label && <span className="text-label-md text-on-surface-variant">{m.label}</span>}
                   </div>
                 ))}
               </div>
@@ -432,17 +472,15 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
             <div className="flex" style={{ height: filteredChannels.length * ROW_HEIGHT }}>
               {/* Channel sidebar: pinned to the left while scrolling horizontally. */}
               <div
-                className="sticky left-0 z-30 shrink-0 relative border-r border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#1a1a1a] amoled:dark:bg-[#0a0a0a] shadow-[8px_0_24px_-8px_rgba(0,0,0,0.15)] dark:shadow-[8px_0_24px_-8px_rgba(0,0,0,0.6)]"
+                className="sticky left-0 z-30 shrink-0 relative border-r border-outline-variant bg-pane"
                 style={{ width: channelColWidth }}
               >
                 {visibleChannels.map((channel, idx) => {
                   const globalIndex = startIndex + idx;
-                  const isEven = globalIndex % 2 === 0;
+                  // A search jump flashes the row; otherwise a light wash on hover. No zebra stripes.
                   const rowBg = channel.id === highlightedChannelId
-                    ? 'bg-amber-50 dark:bg-amber-900/20 amoled:dark:bg-amber-900/25'
-                    : isEven
-                      ? 'bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black hover:bg-gray-50 dark:hover:bg-white/3 amoled:dark:hover:bg-white/4'
-                      : 'bg-gray-50/70 dark:bg-[#222222] amoled:dark:bg-[#0d0d0d] hover:bg-gray-100/70 dark:hover:bg-white/5 amoled:dark:hover:bg-white/5';
+                    ? 'bg-tertiary-container'
+                    : 'bg-pane hover:bg-on-surface/[0.06]';
 
                   return (
                     isPhone ? (
@@ -451,23 +489,23 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
                       <button
                         key={globalIndex}
                         onClick={() => onAssignChannel(channel.id, channel.displayName)}
-                        className={`absolute left-0 right-0 flex items-center gap-2 px-2 text-left border-b border-gray-200 dark:border-white/5 ${rowBg}`}
+                        className={`absolute left-0 right-0 flex items-center gap-2 px-2 text-left border-b border-outline-variant/60 ${rowBg}`}
                         style={{ top: globalIndex * ROW_HEIGHT, height: ROW_HEIGHT }}
                       >
                         <ChannelLogo
                           logo={channel.icon}
                           name={channel.displayName}
                           logoBgColor={logoBgColor}
-                          className="shrink-0 w-7 h-5 rounded border border-gray-200 dark:border-white/10"
+                          className="shrink-0 w-8 h-6 rounded"
                         />
-                        <span className="flex-1 min-w-0 text-xs font-medium leading-tight text-gray-900 dark:text-white line-clamp-2 break-words">
+                        <span className="flex-1 min-w-0 text-label-md leading-tight text-on-surface line-clamp-2 break-words">
                           {channel.displayName}
                         </span>
                       </button>
                     ) : (
                     <div
                       key={globalIndex}
-                      className={`absolute left-0 right-0 flex items-center px-3 border-b border-gray-200 dark:border-white/5 group transition-colors ${rowBg}`}
+                      className={`absolute left-0 right-0 flex items-center px-3 border-b border-outline-variant/60 group transition-colors ${rowBg}`}
                       style={{ top: globalIndex * ROW_HEIGHT, height: ROW_HEIGHT }}
                     >
                       <div className="shrink-0 mr-3">
@@ -475,24 +513,23 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
                           logo={channel.icon}
                           name={channel.displayName}
                           logoBgColor={logoBgColor}
-                          className="w-10 h-7 rounded border border-gray-200 dark:border-white/10"
+                          className="w-12 h-8 rounded-md"
                         />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white truncate" title={channel.displayName}>
+                        <p className="text-label-lg text-on-surface truncate" title={channel.displayName}>
                           {channel.displayName}
                         </p>
-                        <p className="text-xs font-mono text-gray-500 dark:text-gray-400 truncate" title={channel.id}>
+                        <p className="text-body-sm font-mono text-on-surface-variant truncate" title={channel.id}>
                           {channel.id}
                         </p>
                       </div>
                       <button
                         onClick={() => onAssignChannel(channel.id, channel.displayName)}
-                        className="md-btn p-1.5 rounded-full opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 no-hover:opacity-100 transition-opacity ml-1 bg-white/80 dark:bg-black/50"
-                        title="Assign EPG to current channel"
-                        style={{ color: accentColor }}
+                        className="md-btn icon-btn w-9 h-9 ml-1 bg-secondary-container text-on-secondary-container opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 no-hover:opacity-100 transition-opacity"
+                        title="Assign this guide channel to playlist channels"
                       >
-                        <LinkIcon className="h-4 w-4" />
+                        <Icon name="link" className="text-[20px]" />
                       </button>
                     </div>
                     )
@@ -501,23 +538,18 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
               </div>
 
               {/* Grid: programs, scrolls both directions natively with the container. */}
-              <div className="relative shrink-0 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black" style={{ width: timelineWidth }}>
+              <div className="relative shrink-0 bg-pane" style={{ width: timelineWidth }}>
 
                 {/* Programs */}
                 {visibleChannels.map((channel, idx) => {
                   const globalIndex = startIndex + idx;
                   const programs = programmesByChannel[channel.id] || [];
-                  const isEven = globalIndex % 2 === 0;
-                  const rowBg = channel.id === highlightedChannelId
-                    ? 'bg-amber-50 dark:bg-amber-900/20 amoled:dark:bg-amber-900/25'
-                    : isEven
-                      ? 'bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black'
-                      : 'bg-gray-50/70 dark:bg-[#222222] amoled:dark:bg-[#0d0d0d]';
+                  const rowBg = channel.id === highlightedChannelId ? 'bg-tertiary-container' : '';
 
                   return (
                     <div
                       key={globalIndex}
-                      className={`absolute left-0 right-0 border-b border-gray-200 dark:border-white/5 ${rowBg}`}
+                      className={`absolute left-0 right-0 border-b border-outline-variant/60 ${rowBg}`}
                       style={{ top: globalIndex * ROW_HEIGHT, height: ROW_HEIGHT }}
                     >
                       {programs.map(({ prog, startMs: start, endMs: end }, pIdx) => {
@@ -539,27 +571,32 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
                         }
 
                         const isPast = nowTime >= end;
+                        const isOn = progressPercent > 0 && progressPercent < 100;
 
                         return (
                           <div
                             key={`${channel.id}-${pIdx}`}
                             onClick={() => setSelectedProgramme(prog)}
-                            className={`absolute top-1 bottom-1 rounded-sm border cursor-pointer overflow-hidden transition-colors group z-10 hover:z-20
-                              ${isPast ? 'bg-gray-100 dark:bg-[#2a2a2a] amoled:dark:bg-[#111]' : 'bg-white dark:bg-[#333] amoled:dark:bg-[#1a1a1a]'}
-                              border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-400
+                            // What's on now stands out in the selection colour; what's over is quieter.
+                            // The other blocks are washes of the text colour rather than fixed surface
+                            // tones, so they show on the pane in every theme (a fixed tone matched the
+                            // pane exactly in dark mode).
+                            className={`absolute top-1 bottom-1 rounded-lg cursor-pointer overflow-hidden transition-shadow group z-10 hover:z-20 hover:ring-2 hover:ring-outline
+                              ${isOn ? 'bg-secondary-container text-on-secondary-container' : isPast ? 'bg-on-surface/[0.08] text-on-surface-variant' : 'bg-on-surface/[0.14] text-on-surface'}
                             `}
-                            style={{ left: leftPx, width: widthPx }}
+                            // A pixel of space on each side, so neighbouring programmes don't merge.
+                            style={{ left: leftPx + 1, width: Math.max(1, widthPx - 2) }}
                             title={`${prog.title}\n${formatTime(start, is24Hour)} - ${formatTime(end, is24Hour)}`}
                           >
                             {/* Progress fill */}
-                            {progressPercent > 0 && progressPercent < 100 && (
+                            {isOn && (
                               <div
-                                className="absolute top-0 bottom-0 left-0 pointer-events-none"
-                                style={{ width: `${progressPercent}%`, backgroundColor: accentColor, opacity: 0.2 }}
+                                className="absolute top-0 bottom-0 left-0 pointer-events-none bg-primary/15"
+                                style={{ width: `${progressPercent}%` }}
                               />
                             )}
-                            <div className="px-2 py-1 h-full relative flex flex-col justify-center min-w-0">
-                              <span className="text-xs font-medium text-gray-900 dark:text-gray-100 truncate block">
+                            <div className="px-2.5 py-1 h-full relative flex flex-col justify-center min-w-0">
+                              <span className="text-label-md truncate block">
                                 {prog.title}
                               </span>
                             </div>
@@ -574,7 +611,7 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
                 {markers.map(m => (
                   <div
                     key={`bg-${m.key}`}
-                    className="absolute top-0 bottom-0 border-l border-gray-100 dark:border-white/5 pointer-events-none"
+                    className="absolute top-0 bottom-0 border-l border-outline-variant pointer-events-none"
                     style={{ left: m.offsetPx, width: 1 }}
                   />
                 ))}
@@ -582,8 +619,8 @@ export default function EpgViewer({ sourceId, onAssignChannel }: EpgViewerProps)
                 {/* Current time red line — glides to its new spot each minute instead of jumping */}
                 {nowOffsetPx >= 0 && nowOffsetPx <= timelineWidth && (
                   <div
-                    className="absolute top-0 bottom-0 z-20 pointer-events-none transition-[left] duration-700 ease-[var(--md-standard)]"
-                    style={{ left: nowOffsetPx, width: 2, backgroundColor: accentColor }}
+                    className="absolute top-0 bottom-0 z-20 pointer-events-none bg-primary transition-[left] duration-700 ease-[var(--md-standard)]"
+                    style={{ left: nowOffsetPx, width: 2 }}
                   />
                 )}
 

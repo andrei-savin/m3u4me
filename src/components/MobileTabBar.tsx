@@ -1,16 +1,15 @@
 import { useNavigate } from 'react-router-dom';
-import { Home, FileAudio, Layers, Radio, Settings } from 'lucide-react';
 import { usePlaylists } from '../apiClient';
-import { useStore, accentAlpha } from '../store';
+import Icon from './Icon';
 
 export type MobileTab = 'home' | 'playlists' | 'sources' | 'epg' | 'settings';
 
-const TABS: { id: MobileTab; label: string; path: string; Icon: typeof Home }[] = [
-  { id: 'home', label: 'Home', path: '/', Icon: Home },
-  { id: 'playlists', label: 'Playlists', path: '/playlists', Icon: FileAudio },
-  { id: 'sources', label: 'Sources', path: '/sources', Icon: Layers },
-  { id: 'epg', label: 'EPG', path: '/epg', Icon: Radio },
-  { id: 'settings', label: 'Settings', path: '/settings', Icon: Settings },
+const TABS: { id: MobileTab; label: string; path: string; icon: string }[] = [
+  { id: 'home', label: 'Home', path: '/', icon: 'home' },
+  { id: 'playlists', label: 'Playlists', path: '/playlists', icon: 'queue_music' },
+  { id: 'sources', label: 'Sources', path: '/sources', icon: 'stacks' },
+  { id: 'epg', label: 'EPG', path: '/epg', icon: 'live_tv' },
+  { id: 'settings', label: 'Settings', path: '/settings', icon: 'settings' },
 ];
 
 /**
@@ -24,14 +23,13 @@ const TABS: { id: MobileTab; label: string; path: string; Icon: typeof Home }[] 
  */
 export default function MobileTabBar({
   active,
-  surfaceClassName = 'bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] border-t border-gray-200 dark:border-white/8',
+  surfaceClassName = 'bg-page',
 }: {
   active: MobileTab;
   /** Background of the bar. Home passes its frosted-glass look instead. */
   surfaceClassName?: string;
 }) {
   const navigate = useNavigate();
-  const { accentColor } = useStore();
   const { playlists } = usePlaylists();
   // Same dot as the desktop My Playlists tab: a channel has a change from its source waiting.
   const pendingSyncTotal = playlists.reduce((sum, p) => sum + (p.pendingSyncCount || 0), 0);
@@ -39,26 +37,23 @@ export default function MobileTabBar({
   return (
     <nav className={`md:hidden shrink-0 z-30 pb-safe ${surfaceClassName}`}>
       <div className="h-16 grid grid-cols-5">
-        {TABS.map(({ id, label, path, Icon }) => {
+        {TABS.map(({ id, label, path, icon }) => {
           const isActive = id === active;
           return (
             <button
               key={id}
               onClick={() => { if (!isActive) navigate(path); }}
-              className={`flex flex-col items-center justify-center gap-1 text-[11px] font-medium ${isActive ? '' : 'text-gray-500 dark:text-gray-400'}`}
-              style={isActive ? { color: accentColor } : undefined}
+              className={`flex flex-col items-center justify-center gap-1 text-label-md ${isActive ? 'text-on-surface font-semibold' : 'text-on-surface-variant'}`}
               aria-current={isActive ? 'page' : undefined}
             >
-              {/* The active tab's icon sits in a tinted pill, Android style. */}
+              {/* The active tab's icon sits in a pill, Material 3 style. */}
               <span
-                className="relative flex items-center justify-center w-14 h-8 rounded-full transition-colors"
-                style={isActive ? { backgroundColor: accentAlpha(accentColor, '1f') } : undefined}
+                className={`relative flex items-center justify-center w-14 h-8 rounded-full transition-colors ${isActive ? 'bg-secondary-container text-on-secondary-container' : ''}`}
               >
-                <Icon className="h-5 w-5" />
+                <Icon name={icon} filled={isActive} />
                 {id === 'playlists' && pendingSyncTotal > 0 && (
                   <span
-                    className="absolute top-1 right-3 w-2 h-2 rounded-full"
-                    style={{ backgroundColor: accentColor }}
+                    className="absolute top-1 right-3 w-1.5 h-1.5 rounded-full bg-primary"
                     aria-label="Changes from a source are waiting"
                   />
                 )}

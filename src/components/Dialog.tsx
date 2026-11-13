@@ -11,8 +11,12 @@ import { useEffect, type ReactNode } from 'react';
  * window) can be scrolled to its top and bottom instead of being cut off. `my-auto` on
  * the panel keeps a dialog that fits centered exactly as before.
  *
- * `maxWidth` and `panelClassName` (extra classes appended to the panel — rounding,
- * max-height, overflow) are per-dialog since they vary by content. `dismissible`
+ * The panel is Material 3's dialog surface: 28px corners on `bg-dialog`. Inside, dialogs
+ * use 24px padding, a `text-headline-sm` title, `text-body-md` text in
+ * `text-on-surface-variant`, and text buttons on the right (see the delete dialogs).
+ *
+ * `maxWidth` and `panelClassName` (extra classes appended to the panel — max-height,
+ * overflow) are per-dialog since they vary by content. `dismissible`
  * defaults to true; pass false to suspend backdrop-click/Escape while a dialog is mid
  * an operation that shouldn't be casually abandoned (see BulkEpgAssignDialog's
  * 'applying' step, which already blocks tab-close for the same reason).
@@ -21,8 +25,8 @@ export default function Dialog({
   onClose,
   children,
   maxWidth = 'max-w-sm',
-  panelClassName = 'rounded',
-  scrimClassName = 'bg-black/50',
+  panelClassName = '',
+  scrimClassName = 'bg-black/40',
   dismissible = true,
 }: {
   onClose: () => void;
@@ -47,7 +51,7 @@ export default function Dialog({
       onClick={dismissible ? onClose : undefined}
     >
       <div
-        className={`md-dialog my-auto w-full ${maxWidth} bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] elev-24 flex flex-col ${panelClassName}`}
+        className={`md-dialog my-auto w-full ${maxWidth} rounded-[28px] bg-dialog text-on-surface shadow-level-3 flex flex-col ${panelClassName}`}
         onClick={e => e.stopPropagation()}
       >
         {children}

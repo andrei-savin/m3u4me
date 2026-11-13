@@ -16,7 +16,7 @@ The number at the end is the playlist's number: `/1` for your first playlist, `/
 ## Where to find your links
 
 - **On Home:** the **Download Playlists** card lists every playlist, with a **Copy playlist link** button.
-- **In the playlist itself:** open it in **My Playlists** and press **Export / Download** in the toolbar. You get both the **M3U Playlist** link and the **EPG / XMLTV** link, each with a copy button.
+- **In the playlist itself:** open it in **My Playlists** and press **Link & download** above the channel list (on a phone, under **⋮**). You get both the **Playlist (M3U)** link and the **TV guide (XMLTV)** link, each with a copy button.
 
 > [!IMPORTANT]
 > The copied link uses the same address you opened m3u4me with. If you opened it as `http://localhost:8080`, the link says `localhost`, and that won't work on your TV. Open m3u4me with your server's IP address instead (for example `http://192.168.1.50:8080`), then copy the link again.

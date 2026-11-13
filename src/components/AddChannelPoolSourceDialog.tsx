@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Loader2, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { api, triggerChannelPoolRefresh, ChannelPoolSource } from '../apiClient';
 import { useStore, notifyError, notifyWarning } from '../store';
 import Dialog from './Dialog';
 import { USER_AGENT_PRESETS } from '../utils/userAgents';
+import Icon from './Icon';
 
 interface AddChannelPoolSourceDialogProps {
   open: boolean;
@@ -14,7 +14,7 @@ interface AddChannelPoolSourceDialogProps {
 type TabType = 'playlist-url' | 'xtream' | 'upload';
 
 export default function AddChannelPoolSourceDialog({ open, onClose, editingSource }: AddChannelPoolSourceDialogProps) {
-  const { accentColor, setActiveChannelPoolSourceId } = useStore();
+  const { setActiveChannelPoolSourceId } = useStore();
   const [tab, setTab] = useState<TabType>('playlist-url');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -234,7 +234,7 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
     return false;
   };
 
-  const inputClasses = "w-full border border-gray-400 dark:border-gray-500 rounded px-3 py-2.5 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400";
+  const inputClasses = "field max-md:text-base";
 
   const selectedUserAgentPreset = customUserAgent ? 'custom' : (USER_AGENT_PRESETS.find(p => p.value === userAgent)?.value ?? 'custom');
 
@@ -244,9 +244,9 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
     <button
       type="button"
       onClick={() => setShowUserAgent(true)}
-      className="self-start -mt-1 flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+      className="self-start -mt-1 flex items-center gap-1 text-label-lg text-on-surface-variant hover:text-on-surface"
     >
-      <ChevronRight className="w-3.5 h-3.5" />
+      <Icon name="chevron_right" className="text-[18px]" />
       User agent (optional)
     </button>
   ) : (
@@ -254,9 +254,9 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
       <button
         type="button"
         onClick={() => setShowUserAgent(false)}
-        className="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white mb-1"
+        className="flex items-center gap-1 text-label-lg text-on-surface-variant hover:text-on-surface mb-1"
       >
-        <ChevronDown className="w-3.5 h-3.5" />
+        <Icon name="keyboard_arrow_down" className="text-[18px]" />
         User agent (optional)
       </button>
       <select
@@ -272,7 +272,7 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
             setUserAgent(e.target.value);
           }
         }}
-        className="w-full border border-gray-400 dark:border-gray-500 rounded px-3 py-2.5 text-sm focus:outline-none bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] text-gray-900 dark:text-white"
+        className="field bg-dialog max-md:text-base"
       >
         {USER_AGENT_PRESETS.map(p => <option key={p.label} value={p.value}>{p.label}</option>)}
         <option value="custom">Custom…</option>
@@ -283,12 +283,10 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
           placeholder="e.g. MyPlayer/1.0"
           value={userAgent}
           onChange={(e) => { setUserAgent(e.target.value); setLinkWarning(null); setLinkWarningConfirmed(false); }}
-          className={inputClasses + " mt-2 font-mono text-xs"}
-          onFocus={(e) => (e.target.style.borderColor = accentColor)}
-          onBlur={(e) => (e.target.style.borderColor = '')}
+          className={inputClasses + " mt-2 font-mono text-body-sm"}
         />
       )}
-      <p className="text-[10px] text-gray-500 mt-1">
+      <p className="text-body-sm text-on-surface-variant mt-1.5">
         The app this source pretends to be when downloading. Leave it on "App default" unless your provider only works with certain apps, or downloading fails or is blocked.
       </p>
     </div>
@@ -297,84 +295,78 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
 
   return (
     <Dialog onClose={onClose}>
-        <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-4">
-          {editingSource ? 'Edit Source' : 'Add Channel Pool Source'}
+        <h2 className="text-headline-sm text-on-surface px-6 pt-6 pb-3">
+          {editingSource ? 'Edit source' : 'Add channel source'}
         </h2>
 
         {/* Tabs */}
-        <div className="flex px-6 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex mx-6 border-b border-outline-variant">
           <button
             onClick={() => setTab('playlist-url')}
-            className={`flex-1 pb-2 text-sm font-medium ${tab === 'playlist-url' ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'} relative`}
+            className={`md-btn flex-1 h-12 text-title-sm relative ${tab === 'playlist-url' ? 'text-primary font-semibold' : 'text-on-surface-variant'}`}
             disabled={!!editingSource && editingSource.type !== 'playlist-url'}
             style={editingSource && editingSource.type !== 'playlist-url' ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
           >
-            Playlist Link
+            Playlist link
             {tab === 'playlist-url' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ backgroundColor: accentColor }} />
+              <div className="absolute bottom-0 left-4 right-4 h-[3px] rounded-t-full bg-primary" />
             )}
           </button>
           <button
             onClick={() => setTab('xtream')}
-            className={`flex-1 pb-2 text-sm font-medium ${tab === 'xtream' ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'} relative`}
+            className={`md-btn flex-1 h-12 text-title-sm relative ${tab === 'xtream' ? 'text-primary font-semibold' : 'text-on-surface-variant'}`}
             disabled={!!editingSource && editingSource.type !== 'xtream'}
             style={editingSource && editingSource.type !== 'xtream' ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
           >
             Xtream Codes
             {tab === 'xtream' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ backgroundColor: accentColor }} />
+              <div className="absolute bottom-0 left-4 right-4 h-[3px] rounded-t-full bg-primary" />
             )}
           </button>
           <button
             onClick={() => setTab('upload')}
-            className={`flex-1 pb-2 text-sm font-medium ${tab === 'upload' ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'} relative`}
+            className={`md-btn flex-1 h-12 text-title-sm relative ${tab === 'upload' ? 'text-primary font-semibold' : 'text-on-surface-variant'}`}
             disabled={!!editingSource && editingSource.type !== 'playlist-file'}
             style={editingSource && editingSource.type !== 'playlist-file' ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
           >
-            Upload File
+            Upload file
             {tab === 'upload' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ backgroundColor: accentColor }} />
+              <div className="absolute bottom-0 left-4 right-4 h-[3px] rounded-t-full bg-primary" />
             )}
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4">
+        <form onSubmit={handleSubmit} className="px-6 pt-5 pb-6 flex flex-col gap-4">
           {tab === 'playlist-url' ? (
             <>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
+                <label className="field-label">Name</label>
                 <input
                   type="text"
                   placeholder="My Source"
                   value={linkName}
                   onChange={(e) => setLinkName(e.target.value)}
                   className={inputClasses}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">URL</label>
+                <label className="field-label">URL</label>
                 <input
                   type="url"
                   placeholder="https://example.com/playlist.m3u"
                   value={linkUrl}
                   onChange={(e) => { setLinkUrl(e.target.value); setLinkWarning(null); setLinkWarningConfirmed(false); }}
                   className={inputClasses}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
                 />
-                <p className="text-[10px] text-gray-500 mt-1">Supports M3U, M3U8, and XSPF playlists</p>
+                <p className="text-body-sm text-on-surface-variant mt-1.5">Supports M3U, M3U8, and XSPF playlists</p>
                 {linkWarning && (
-                  <p className="text-[11px] text-amber-500 dark:text-amber-400 font-medium mt-1">
-                    ⚠ {linkWarning}{linkWarningConfirmed ? ` — Click ${editingSource ? 'Save Changes' : 'Add Source'} again to proceed anyway.` : ''}
+                  <p className="text-body-sm text-warning mt-1.5">
+                    ⚠ {linkWarning}{linkWarningConfirmed ? ` — Click ${editingSource ? 'Save changes' : 'Add source'} again to proceed anyway.` : ''}
                   </p>
                 )}
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Refresh Interval</label>
+                <label className="field-label">Refresh Interval</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
@@ -382,11 +374,8 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
                     value={linkInterval}
                     onChange={(e) => setLinkInterval(parseInt(e.target.value) || 1)}
                     className={inputClasses + " w-24"}
-                    style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                    onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                    onBlur={(e) => (e.target.style.borderColor = '')}
                   />
-                  <span className="text-sm text-gray-600 dark:text-gray-400">hours</span>
+                  <span className="text-body-md text-on-surface-variant">hours</span>
                 </div>
               </div>
               {renderUserAgentField()}
@@ -394,59 +383,47 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
           ) : tab === 'xtream' ? (
             <>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
+                <label className="field-label">Name</label>
                 <input
                   type="text"
                   placeholder="My Xtream Source"
                   value={xtreamName}
                   onChange={(e) => setXtreamName(e.target.value)}
                   className={inputClasses}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Server URL</label>
+                <label className="field-label">Server URL</label>
                 <input
                   type="url"
                   placeholder="http://example.com:8080"
                   value={xtreamUrl}
                   onChange={(e) => setXtreamUrl(e.target.value)}
                   className={inputClasses}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
                 />
               </div>
               <div className="flex gap-4">
                 <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Username</label>
+                  <label className="field-label">Username</label>
                   <input
                     type="text"
                     value={xtreamUser}
                     onChange={(e) => setXtreamUser(e.target.value)}
                     className={inputClasses}
-                    style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                    onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                    onBlur={(e) => (e.target.style.borderColor = '')}
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Password</label>
+                  <label className="field-label">Password</label>
                   <input
                     type="password"
                     value={xtreamPass}
                     onChange={(e) => setXtreamPass(e.target.value)}
                     className={inputClasses}
-                    style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                    onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                    onBlur={(e) => (e.target.style.borderColor = '')}
                   />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Refresh Interval</label>
+                <label className="field-label">Refresh Interval</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
@@ -454,50 +431,41 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
                     value={xtreamInterval}
                     onChange={(e) => setXtreamInterval(parseInt(e.target.value) || 1)}
                     className={inputClasses + " w-24"}
-                    style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                    onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                    onBlur={(e) => (e.target.style.borderColor = '')}
                   />
-                  <span className="text-sm text-gray-600 dark:text-gray-400">hours</span>
+                  <span className="text-body-md text-on-surface-variant">hours</span>
                 </div>
-                <p className="text-[10px] text-gray-500 mt-1">Will fetch live stream channels from the Xtream API</p>
+                <p className="text-body-sm text-on-surface-variant mt-1.5">Will fetch live stream channels from the Xtream API</p>
               </div>
               {renderUserAgentField()}
             </>
           ) : (
             <>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
+                <label className="field-label">Name</label>
                 <input
                   type="text"
                   placeholder="My Source"
                   value={uploadName}
                   onChange={(e) => setUploadName(e.target.value)}
                   className={inputClasses}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">File</label>
+                <label className="field-label">File</label>
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept=".m3u,.m3u8,.xspf"
                   onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                  className={inputClasses + " file:mr-4 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-gray-100 dark:file:bg-gray-800 file:text-gray-700 dark:file:text-gray-300"}
-                  style={{ '--tw-ring-color': accentColor } as React.CSSProperties}
-                  onFocus={(e) => (e.target.style.borderColor = accentColor)}
-                  onBlur={(e) => (e.target.style.borderColor = '')}
+                  className={inputClasses + " h-auto py-2 file:mr-3 file:h-8 file:px-4 file:rounded-full file:border-0 file:text-label-lg file:bg-secondary-container file:text-on-secondary-container file:cursor-pointer"}
                 />
               </div>
             </>
           )}
 
           {downloadError && tab !== 'upload' && (
-            <div className="flex gap-2 rounded border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2.5 text-xs text-red-700 dark:text-red-300">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+            <div className="flex gap-2.5 rounded-xl bg-error-container text-on-error-container p-3 text-body-sm">
+              <Icon name="warning" className="text-[20px] shrink-0 mt-0.5" />
               <p>
                 <span className="font-medium">{savedButFailed ? 'Saved, but downloading still failed.' : 'The last download failed.'}</span>{' '}
                 {downloadError}
@@ -505,22 +473,21 @@ export default function AddChannelPoolSourceDialog({ open, onClose, editingSourc
             </div>
           )}
 
-          <div className="flex justify-end gap-1 mt-2">
+          <div className="flex justify-end gap-2 mt-2">
             <button
               type="button"
               onClick={onClose}
-              className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300"
+              className="md-btn btn btn-text"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!isFormValid() || isSubmitting}
-              className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40 flex items-center gap-2"
-              style={{ color: accentColor }}
+              className="md-btn btn btn-filled"
             >
-              {isSubmitting && <Loader2 className="w-3 h-3 animate-spin" />}
-              {editingSource ? 'Save Changes' : 'Add Source'}
+              {isSubmitting && <Icon name="progress_activity" className="text-[20px] animate-spin" />}
+              {editingSource ? 'Save changes' : 'Add source'}
             </button>
           </div>
         </form>

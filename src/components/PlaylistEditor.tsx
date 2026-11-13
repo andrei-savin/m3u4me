@@ -1,14 +1,12 @@
-import React, { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlaylists, useChannels, useChannelPoolSources, Channel, SyncFieldToggles, api, triggerRefresh, triggerChannelPoolRefresh } from '../apiClient';
-import { useStore, contrastText, accentAlpha, notifyError, notifyInfo } from '../store';
+import { useStore, notifyError, notifyInfo } from '../store';
 
-import {
-  Download, Check, Copy,
-  GripVertical, CheckSquare, Square, Trash2, Eye, EyeOff, Plus, ArrowUp, ArrowDown, Activity, X,
-  Replace, Search, Wand2, ChevronLeft, ChevronRight, Layers, Link2, History, Unlink, FileDown, SlidersHorizontal,
-  FolderInput, ArrowUpDown, ListChecks,
-} from 'lucide-react';
+import Checkbox from './Checkbox';
+import Dialog from './Dialog';
+import ConfirmDialog from './ConfirmDialog';
+import SegmentedButtons from './SegmentedButtons';
 import BulkEpgAssignDialog from './BulkEpgAssignDialog';
 import { ChannelSyncPopover, BulkSyncSettingsDialog } from './ChannelSyncPopover';
 import LinkChannelDialog from './LinkChannelDialog';
@@ -19,7 +17,7 @@ import ChannelLogo from './ChannelLogo';
 import TvgIdAutocomplete from './TvgIdAutocomplete';
 import ChannelEditSheet, { type ChannelChanges } from './ChannelEditSheet';
 import OverflowMenu from './OverflowMenu';
-import { useIsPhone } from '../utils/useIsPhone';
+import { useIsPhone, canHover } from '../utils/useIsPhone';
 import { useLongPress } from '../utils/useLongPress';
 import { copyToClipboard } from '../utils/copyToClipboard';
 import { formatTime } from '../utils/formatTime';
@@ -30,9 +28,10 @@ import {
   arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import Icon from './Icon';
 
 /* ── Inline text-field style used for in-row editing ─────────────────────── */
-const inlineInputCls = 'border-b-2 bg-transparent text-sm text-gray-900 dark:text-white px-0.5 py-0 focus:outline-none w-full';
+const inlineInputCls = 'border-b-2 border-primary bg-transparent text-body-md text-on-surface px-0.5 py-0 focus:outline-none w-full';
 
 const restrictToVerticalAxis = ({ transform }: any) => ({ ...transform, x: 0 });
 
@@ -49,18 +48,18 @@ function formatCheckedAt(ts: number, is24Hour: boolean): string {
 
 function HealthDot({ status }: { status: HealthStatus }) {
   const base = 'w-2 h-2 rounded-full shrink-0';
-  if (status === 'checking') return <div className={`${base} bg-gray-400 dark:bg-gray-500 animate-pulse`} />;
-  if (status === 'ok')       return <div className={`${base} bg-green-500`} />;
-  if (status === 'error')    return <div className={`${base} bg-red-500`} />;
-  if (status === 'timeout')  return <div className={`${base} bg-amber-400`} />;
-  return <div className={`${base} bg-gray-300 dark:bg-gray-600`} />;
+  if (status === 'checking') return <div className={`${base} bg-on-surface-variant/50 animate-pulse`} />;
+  if (status === 'ok')       return <div className={`${base} bg-success`} />;
+  if (status === 'error')    return <div className={`${base} bg-error`} />;
+  if (status === 'timeout')  return <div className={`${base} bg-warning`} />;
+  return <div className={`${base} bg-outline-variant`} />;
 }
 
 function SortableChannelItem({
   channel, isSelected, toggleSelection,
   onUpdate, onDelete, onToggleHide,
-  activeEditId, setActiveEditId, colWidths, isHighlighted, rowIndex, onRightClick, healthSt, tvgIdLabel, isSaving,
-  onOpenSync, onEditHeaders,
+  activeEditId, setActiveEditId, colWidths, isHighlighted, onRightClick, healthSt, tvgIdLabel, isSaving,
+  onOpenSync, onEditHeaders, onOpenMenu,
 }: {
   key?: string | number;
   channel: Channel;
@@ -73,7 +72,6 @@ function SortableChannelItem({
   setActiveEditId: (id: string | null) => void;
   colWidths: { name: number };
   isHighlighted: boolean;
-  rowIndex: number;
   onRightClick: (e: React.MouseEvent) => void;
   healthSt?: HealthEntry;
   tvgIdLabel?: { displayName: string; sourceName: string };
@@ -82,8 +80,10 @@ function SortableChannelItem({
   // anchored to the element that was clicked.
   onOpenSync: (channelId: string, anchor: DOMRect) => void;
   onEditHeaders: (channelId: string) => void;
+  // The row's ⋮: opens the same menu as a right-click, below the button.
+  onOpenMenu: (channelId: string, anchor: DOMRect) => void;
 }) {
-  const { logoBgColor, hideUrls, accentColor, is24Hour } = useStore();
+  const { logoBgColor, hideUrls, is24Hour } = useStore();
   const hasPendingSync = !!channel.link && Object.keys(channel.link.pending).length > 0;
   // stopPropagation on mousedown keeps the popover's "click outside closes it" listener from
   // firing for its own trigger, so clicking the trigger again toggles it closed.
@@ -123,102 +123,98 @@ function SortableChannelItem({
     if (e.key === 'Escape') { setEditingField(null); if (activeEditId === channel.id) setActiveEditId(null); }
   };
 
-  const rowBase = 'relative flex items-center h-14 border-b border-gray-100 dark:border-white/6 group transition-colors';
-  const isEven = rowIndex % 2 === 0;
-  const rowBg = channel.isHidden
-    ? 'bg-red-50 dark:bg-red-950/25 amoled:dark:bg-red-950/35'
-    : isHighlighted
-      ? 'bg-amber-50 dark:bg-amber-900/20 amoled:dark:bg-amber-900/25'
-      : isSelected
-        ? ''  // accent tint applied via inline style below
-        : isEven
-          ? 'bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black hover:bg-gray-50 dark:hover:bg-white/3 amoled:dark:hover:bg-white/4'
-          : 'bg-gray-50/70 dark:bg-[#222222] amoled:dark:bg-[#0d0d0d] hover:bg-gray-100/70 dark:hover:bg-white/5 amoled:dark:hover:bg-white/5';
+  // A search jump flashes the row; a selected row uses the selection colour; otherwise a
+  // light wash on hover. No zebra stripes: the hairlines between rows are enough.
+  const rowBg = isHighlighted
+    ? 'bg-tertiary-container'
+    : isSelected
+      ? 'bg-secondary-container'
+      : 'hover:bg-on-surface/[0.06]';
+  // With a mouse, the drag handle and the eye/delete buttons appear when the row is hovered
+  // (or focused from the keyboard); touch screens show them all the time.
+  const reveal = canHover ? 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100' : '';
+  // Hidden channels (left out of the playlist file) are dimmed instead of coloured.
+  const dim = channel.isHidden ? 'opacity-50' : '';
 
   return (
     <div
       id={`ch-${channel.id}`}
       ref={setNodeRef}
-      style={{ ...style, ...(isSelected ? { backgroundColor: `${accentColor}18` } : {}) }}
-      className={`${rowBase} ${rowBg}`}
+      style={style}
+      // Touch screens get taller rows, to fit the 44px buttons with room around them.
+      className={`relative flex items-center h-14 no-hover:h-16 pl-2 border-b border-outline-variant/60 group transition-colors ${rowBg}`}
       onContextMenu={onRightClick}
     >
 
       {/* Drag handle */}
       <div
         {...attributes} {...listeners}
-        className="w-8 shrink-0 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing text-gray-300 dark:text-gray-700"
+        className={`w-6 no-hover:w-10 shrink-0 self-stretch flex items-center justify-center touch-none cursor-grab active:cursor-grabbing text-on-surface-variant ${reveal}`}
       >
-        <GripVertical className="h-4 w-4" />
+        <Icon name="drag_indicator" className="text-[20px]" />
       </div>
 
-      {/* Checkbox */}
-      <div className="w-8 shrink-0 flex items-center justify-center">
-        <button
-          onClick={e => toggleSelection(channel.id, e.shiftKey)}
-          className="md-btn p-1 rounded-full text-gray-400 dark:text-gray-600 hover:text-gray-700 dark:hover:text-gray-200"
-          style={isSelected ? { color: accentColor } : undefined}
-        >
-          {isSelected
-            ? <CheckSquare className="h-4 w-4" />
-            : <Square className="h-4 w-4" />}
-        </button>
-      </div>
+      <button
+        onClick={e => toggleSelection(channel.id, e.shiftKey)}
+        className="md-btn icon-btn w-10 h-10"
+        aria-label={isSelected ? 'Deselect channel' : 'Select channel'}
+      >
+        <Checkbox checked={isSelected} />
+      </button>
 
       {/* Logo — NOTE: no overflow:hidden here so the popup isn't clipped */}
-      <div className="relative w-14 mx-3 shrink-0 flex items-center justify-center">
+      <div className="relative w-16 shrink-0 flex items-center justify-center">
         <div
-          className="cursor-pointer"
+          className={`cursor-pointer ${dim}`}
           onClick={e => { e.stopPropagation(); startEdit('logo', channel.logo || ''); }}
+          title="Click to change the logo"
         >
           <ChannelLogo
             logo={channel.logo}
             name={channel.name}
             logoBgColor={logoBgColor}
-            className="w-10 h-7 rounded border border-gray-200 dark:border-white/10 hover:border-gray-400"
+            className="w-12 h-8 rounded-md hover:ring-2 hover:ring-outline-variant"
           />
         </div>
 
         {/* Logo URL popover */}
         {editingField === 'logo' && (
           <div
-            className="md-menu absolute top-9 left-0 z-30 w-64 bg-white dark:bg-[#272727] rounded elev-8 p-4"
+            className="md-menu menu absolute top-10 left-1 z-30 w-72 p-4"
             onClick={e => e.stopPropagation()}
           >
-            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">Logo URL</label>
+            <label className="field-label">Logo URL</label>
             <input
               autoFocus
               value={editValue}
               onChange={e => setEditValue(e.target.value)}
               onKeyDown={handleKey}
               placeholder="https://…"
-              className="w-full border border-gray-300 dark:border-gray-600 rounded px-2.5 py-1.5 text-xs font-mono focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400 mb-3"
-              onFocus={e => (e.target.style.borderColor = accentColor)}
-              onBlur={e => (e.target.style.borderColor = '')}
+              className="field h-10 font-mono text-body-sm mb-3"
             />
             {editValue ? (
-              <div className="w-10 h-7 mb-3 overflow-hidden rounded border border-gray-200 dark:border-white/10 flex items-center justify-center" style={{ backgroundColor: logoBgColor === 'transparent' ? undefined : logoBgColor }}>
+              <div className="w-12 h-8 mb-3 overflow-hidden rounded-md flex items-center justify-center" style={{ backgroundColor: logoBgColor === 'transparent' ? undefined : logoBgColor }}>
                 <img src={editValue} alt="Preview" className="w-full h-full object-contain" onError={e => (e.currentTarget.style.display = 'none')} />
               </div>
             ) : null}
-            <div className="flex justify-end gap-1">
-              <button onClick={() => setEditingField(null)} className="md-btn h-8 px-3 rounded text-[11px] font-medium uppercase tracking-wider text-gray-600 dark:text-gray-400">Cancel</button>
-              <button onClick={saveEdit} className="md-btn h-8 px-3 rounded text-[11px] font-medium uppercase tracking-wider" style={{ color: accentColor }}>Save</button>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setEditingField(null)} className="md-btn btn btn-text h-9">Cancel</button>
+              <button onClick={saveEdit} className="md-btn btn btn-text h-9">Save</button>
             </div>
           </div>
         )}
       </div>
 
       {/* Name + URL */}
-      <div className="shrink-0 pr-4 flex flex-col justify-center gap-0.5 overflow-hidden" style={{ width: colWidths.name }}>
+      <div className={`shrink-0 pl-3 pr-4 flex flex-col justify-center overflow-hidden ${dim}`} style={{ width: colWidths.name }}>
         {editingField === 'name'
-          ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={handleKey} className={inlineInputCls} style={{ borderColor: accentColor }} onClick={e => e.stopPropagation()} placeholder="Channel name" />
+          ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={handleKey} className={inlineInputCls} onClick={e => e.stopPropagation()} placeholder="Channel name" />
           : <div className="flex items-center gap-1.5 min-w-0">
-              <p onClick={() => startEdit('name', channel.name)} className={`min-w-0 text-sm font-medium truncate cursor-text hover:underline decoration-dashed underline-offset-2 ${isSelected ? '' : 'text-gray-900 dark:text-white'}`} style={isSelected ? { color: accentColor } : undefined} title="Click to edit">{channel.name || 'Unnamed'}</p>
+              <p onClick={() => startEdit('name', channel.name)} className="min-w-0 text-label-lg text-on-surface truncate cursor-text hover:underline decoration-dashed underline-offset-2" title="Click to edit">{channel.name || 'Unnamed'}</p>
               {(channel.httpReferrer || channel.httpUserAgent) && (
                 <button
                   onClick={() => onEditHeaders(channel.id)}
-                  className="md-btn shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 text-gray-600 dark:bg-white/10 dark:text-gray-300"
+                  className={`md-btn tag ${isSelected ? 'tag-on-selected' : ''}`}
                   title={[
                     'This channel sends extra headers so its stream plays.',
                     channel.httpReferrer ? `Referrer: ${channel.httpReferrer}` : '',
@@ -232,7 +228,7 @@ function SortableChannelItem({
               {channel.link?.lost && (
                 <button
                   {...syncTriggerProps}
-                  className="md-btn shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 text-gray-600 dark:bg-white/10 dark:text-gray-300"
+                  className={`md-btn tag ${isSelected ? 'tag-on-selected' : ''}`}
                   title="This channel disappeared from its source. Click for details."
                 >
                   Source lost
@@ -246,19 +242,19 @@ function SortableChannelItem({
                   title="The source changed this channel. Click to review."
                   aria-label="Review changes from source"
                 >
-                  <span className="block w-2 h-2 rounded-full" style={{ backgroundColor: accentColor }} />
+                  <span className="block w-2 h-2 rounded-full bg-primary" />
                 </button>
               )}
             </div>
         }
         {!hideUrls && (editingField === 'url'
-          ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={handleKey} className={`${inlineInputCls} font-mono text-[11px]`} style={{ borderColor: accentColor }} onClick={e => e.stopPropagation()} placeholder="https://…" />
-          : <p onClick={() => startEdit('url', channel.url || '')} className="text-[11px] font-mono text-gray-400 dark:text-gray-500 truncate cursor-text hover:underline decoration-dashed underline-offset-2" title="Click to edit">{channel.url || '— no url —'}</p>
+          ? <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={handleKey} className={`${inlineInputCls} font-mono text-body-sm`} onClick={e => e.stopPropagation()} placeholder="https://…" />
+          : <p onClick={() => startEdit('url', channel.url || '')} className="text-body-sm font-mono text-on-surface-variant truncate cursor-text hover:underline decoration-dashed underline-offset-2" title="Click to edit">{channel.url || '— no url —'}</p>
         )}
       </div>
 
-      {/* TVG ID — fills remaining space */}
-      <div className="flex-1 pr-4 hidden md:flex items-center overflow-hidden relative">
+      {/* TV guide (TVG ID) — fills remaining space */}
+      <div className={`flex-1 pr-4 hidden md:flex items-center overflow-hidden relative ${dim}`}>
         {editingField === 'tvgId'
           ? <TvgIdAutocomplete
               value={editValue}
@@ -267,26 +263,19 @@ function SortableChannelItem({
               onCancel={() => { setEditingField(null); if (activeEditId === channel.id) setActiveEditId(null); }}
             />
           : channel.tvgId && tvgIdLabel
-            ? <span
+            ? <button
                 onClick={() => startEdit('tvgId', channel.tvgId || '')}
-                className="inline-flex items-center gap-1 max-w-full min-w-0 cursor-pointer group/tag opacity-90 hover:opacity-100 transition-opacity"
+                // On a selected row the border takes a stronger colour, or it would vanish
+                // into the selection's background.
+                className={`md-btn inline-flex items-center gap-1.5 h-[26px] max-w-full min-w-0 px-2.5 rounded-lg border text-label-md text-on-surface ${isSelected ? 'border-outline' : 'border-outline-variant'}`}
                 title={`${channel.tvgId}\nClick to edit`}
               >
-                {/* `truncate` on a flex container doesn't actually ellipsize its
-                    children — browsers just hard-clip at the box edge — so only
-                    the displayName span (a plain text run) carries it. The pill
-                    and this wrapper stay `min-w-0 overflow-hidden` so displayName
-                    is the part that gives way, keeping the short source tag intact. */}
-                <span
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium min-w-0 overflow-hidden"
-                  style={{ backgroundColor: `${accentColor}20`, color: accentColor }}
-                >
-                  <span className="truncate min-w-0">{tvgIdLabel.displayName}</span>
-                  <span className="shrink-0 opacity-50">•</span>
-                  <span className="shrink-0 opacity-80">{tvgIdLabel.sourceName}</span>
-                </span>
-              </span>
-            : <span onClick={() => startEdit('tvgId', channel.tvgId || '')} className={`font-mono text-[11px] truncate cursor-text hover:underline decoration-dashed underline-offset-2 ${channel.tvgId ? 'text-gray-500 dark:text-gray-400' : 'text-gray-300 dark:text-gray-600 italic'}`}>{channel.tvgId || '—'}</span>
+                {/* Only the guide's channel name gives way when space runs out, so the short
+                    source name after it stays readable. */}
+                <span className="truncate min-w-0">{tvgIdLabel.displayName}</span>
+                <span className="shrink-0 font-normal text-on-surface-variant">· {tvgIdLabel.sourceName}</span>
+              </button>
+            : <span onClick={() => startEdit('tvgId', channel.tvgId || '')} className={`font-mono text-body-sm truncate cursor-text hover:underline decoration-dashed underline-offset-2 ${channel.tvgId ? 'text-on-surface-variant' : 'text-outline'}`} title="Click to edit">{channel.tvgId || '—'}</span>
         }
       </div>
 
@@ -296,18 +285,17 @@ function SortableChannelItem({
           <HealthDot status={healthSt.status} />
           {healthSt.status !== 'checking' && (
             <>
-              <span className={`text-[11px] font-medium ${
-                healthSt.status === 'ok'      ? 'text-green-600 dark:text-green-400' :
-                healthSt.status === 'error'   ? 'text-red-500 dark:text-red-400' :
-                healthSt.status === 'timeout' ? 'text-amber-500' :
-                'text-gray-400 dark:text-gray-500'
+              <span className={`text-label-md ${
+                healthSt.status === 'ok'      ? 'text-success' :
+                healthSt.status === 'error'   ? 'text-error' :
+                healthSt.status === 'timeout' ? 'text-warning' :
+                'text-on-surface-variant'
               }`}>
                 {healthSt.status === 'ok' ? 'Online' : healthSt.status === 'error' ? 'Offline' : healthSt.status === 'timeout' ? 'Timeout' : 'Skipped'}
               </span>
-              {/* Time-only — the full date rarely adds anything here (a whole category is
-                  usually checked in one batch) and it was crowding out the TVG/EPG badge
-                  next to it. Full date+time still shows via the row's title tooltip above. */}
-              <span className="text-[10px] font-mono text-gray-400 dark:text-gray-500">
+              {/* Time only: a whole category is usually checked in one go. The full date and
+                  time are in the tooltip above. */}
+              <span className="text-label-sm font-mono font-normal text-on-surface-variant">
                 {formatTime(healthSt.checkedAt, is24Hour)}
               </span>
             </>
@@ -315,39 +303,53 @@ function SortableChannelItem({
         </div>
       )}
 
-      {/* Row actions */}
-      <div className="w-24 shrink-0 flex items-center justify-end gap-0.5 pr-2">
+      {/* Row actions. The link button always shows on a linked channel and the eye on a hidden
+          one, because they say something about the channel; the rest appear on hover. The ⋮
+          opens the right-click menu (insert, stream headers, delete), so nothing in it needs a
+          right-click: touch screens can't do one, and many mouse users never try. Touch screens
+          find Delete in that menu instead of as a fourth always-visible button. */}
+      <div className="w-[9.75rem] no-hover:w-[9.5rem] shrink-0 flex items-center justify-end pr-2.5">
         <button
           {...syncTriggerProps}
-          className={`md-btn p-1.5 rounded-full ${channel.link ? '' : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
-          style={channel.link ? { color: accentColor } : undefined}
+          className={`md-btn icon-btn w-9 h-9 ${channel.link ? 'text-primary' : reveal}`}
           title={channel.link ? 'Sync settings' : 'Link to source'}
         >
-          <Link2 className="h-3.5 w-3.5" />
+          <Icon name="link" className="text-[20px]" />
         </button>
         <button
           onClick={() => onToggleHide(channel.id, !!channel.isHidden)}
-          className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+          className={`md-btn icon-btn w-9 h-9 ${channel.isHidden ? '' : reveal}`}
           title={channel.isHidden ? 'Include in export' : 'Exclude from export'}
         >
-          {channel.isHidden ? <EyeOff className="h-3.5 w-3.5 text-amber-500" /> : <Eye className="h-3.5 w-3.5" />}
+          {channel.isHidden ? <Icon name="visibility_off" className="text-[20px]" /> : <Icon name="visibility" className="text-[20px]" />}
         </button>
+        {canHover && (
+          <button
+            onClick={() => onDelete(channel.id)}
+            className={`md-btn icon-btn w-9 h-9 hover:text-error ${reveal}`}
+            title="Delete channel"
+          >
+            <Icon name="delete" className="text-[20px]" />
+          </button>
+        )}
         <button
-          onClick={() => onDelete(channel.id)}
-          className="md-btn p-1.5 rounded-full text-gray-400 hover:text-red-600 dark:hover:text-red-400"
-          title="Delete channel"
+          // Same trick as the sync button: the menu's "click outside closes it" listener mustn't
+          // see this click, so clicking ⋮ again closes the menu instead of reopening it.
+          onMouseDown={e => e.stopPropagation()}
+          onClick={e => onOpenMenu(channel.id, e.currentTarget.getBoundingClientRect())}
+          className={`md-btn icon-btn w-9 h-9 ${reveal}`}
+          title="More: insert a channel, stream headers, delete"
+          aria-label="More channel actions"
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Icon name="more_vert" className="text-[20px]" />
         </button>
       </div>
 
       {/* Saving indicator — a save (rename, hide toggle, URL/TVG-ID edit) round-trips to
           the backend and then waits on a full channels refetch before the row shows the
-          new value, which used to read as a stall. This indeterminate bar (styled after
-          Windows Explorer's copy-progress bar) covers the row for that stretch instead. */}
-      {isSaving && (
-        <div className="md-progress" style={{ color: accentColor, backgroundColor: accentAlpha(accentColor, '20') }} />
-      )}
+          new value, which used to read as a stall. This indeterminate bar covers the row
+          for that stretch instead. */}
+      {isSaving && <div className="md-progress text-primary bg-primary/15" />}
     </div>
   );
 }
@@ -365,7 +367,7 @@ function SortableChannelItem({
  * It's still a dnd-kit sortable item, so reordering works the same as on desktop.
  */
 function PhoneChannelRow({
-  channel, isSelected, selectionMode, reorderMode, isHighlighted, rowIndex, healthSt, isSaving,
+  channel, isSelected, selectionMode, reorderMode, isHighlighted, healthSt, isSaving,
   onOpen, onToggleSelect,
 }: {
   key?: string | number;
@@ -374,13 +376,12 @@ function PhoneChannelRow({
   selectionMode: boolean;
   reorderMode: boolean;
   isHighlighted: boolean;
-  rowIndex: number;
   healthSt?: HealthEntry;
   isSaving?: boolean;
   onOpen: (id: string) => void;
   onToggleSelect: (id: string) => void;
 }) {
-  const { logoBgColor, hideUrls, accentColor } = useStore();
+  const { logoBgColor, hideUrls } = useStore();
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: channel.id });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const longPress = useLongPress(() => { if (!reorderMode) onToggleSelect(channel.id); });
@@ -393,35 +394,25 @@ function PhoneChannelRow({
     else onOpen(channel.id);
   };
 
-  const isEven = rowIndex % 2 === 0;
-  const rowBg = channel.isHidden
-    ? 'bg-red-50 dark:bg-red-950/25 amoled:dark:bg-red-950/35'
-    : isHighlighted
-      ? 'bg-amber-50 dark:bg-amber-900/20 amoled:dark:bg-amber-900/25'
-      : isSelected
-        ? ''  // accent tint applied via inline style below
-        : isEven
-          ? 'bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black'
-          : 'bg-gray-50/70 dark:bg-[#222222] amoled:dark:bg-[#0d0d0d]';
+  const rowBg = isHighlighted ? 'bg-tertiary-container' : isSelected ? 'bg-secondary-container' : '';
+  const dim = channel.isHidden ? 'opacity-50' : '';
 
   return (
     <div
       id={`ch-${channel.id}`}
       ref={setNodeRef}
-      style={{ ...style, ...(isSelected ? { backgroundColor: `${accentColor}18` } : {}) }}
+      style={style}
       // select-none and no callout: a long-press selects the row instead of selecting text or
       // opening the phone's own link/image menu. preventDefault stops Android's long-press
       // from also opening the desktop right-click menu.
-      className={`relative flex items-center h-16 pl-3 border-b border-gray-100 dark:border-white/6 select-none [-webkit-touch-callout:none] ${reorderMode ? '' : 'cursor-pointer active:bg-black/5 dark:active:bg-white/5'} ${rowBg}`}
+      className={`relative flex items-center h-16 pl-4 border-b border-outline-variant/60 select-none [-webkit-touch-callout:none] ${reorderMode ? '' : 'cursor-pointer active:bg-on-surface/[0.08]'} ${rowBg}`}
       onContextMenu={e => e.preventDefault()}
       onClick={handleTap}
       {...(reorderMode ? {} : longPress)}
     >
       {selectionMode && (
-        <span className="shrink-0 mr-3" style={isSelected ? { color: accentColor } : undefined}>
-          {isSelected
-            ? <CheckSquare className="h-5 w-5" />
-            : <Square className="h-5 w-5 text-gray-400 dark:text-gray-600" />}
+        <span className="shrink-0 mr-3.5 flex">
+          <Checkbox checked={isSelected} className="w-5 h-5" />
         </span>
       )}
 
@@ -429,32 +420,27 @@ function PhoneChannelRow({
         logo={channel.logo}
         name={channel.name}
         logoBgColor={logoBgColor}
-        className="shrink-0 w-11 h-8 rounded border border-gray-200 dark:border-white/10"
+        className={`shrink-0 w-12 h-8 rounded-md ${dim}`}
       />
 
-      <div className="flex-1 min-w-0 ml-3 pr-2 flex flex-col justify-center gap-0.5">
-        <p
-          className={`text-sm font-medium truncate ${isSelected ? '' : channel.isHidden ? 'text-gray-500 dark:text-gray-400' : 'text-gray-900 dark:text-white'}`}
-          style={isSelected ? { color: accentColor } : undefined}
-        >
+      <div className={`flex-1 min-w-0 ml-3.5 pr-2 flex flex-col justify-center ${dim}`}>
+        <p className="text-[15px] leading-5 font-medium text-on-surface truncate">
           {channel.name || 'Unnamed'}
         </p>
         {!hideUrls && (
-          <p className="text-[11px] font-mono text-gray-400 dark:text-gray-500 truncate">{channel.url || '— no url —'}</p>
+          <p className="text-body-sm font-mono text-on-surface-variant truncate">{channel.url || '— no url —'}</p>
         )}
       </div>
 
       {/* Small status icons: what the desktop row shows as chips and buttons. */}
-      <div className="shrink-0 flex items-center gap-2 pr-3 text-gray-400 dark:text-gray-500">
+      <div className="shrink-0 flex items-center gap-2.5 pr-3.5 text-on-surface-variant">
         {healthSt && <HealthDot status={healthSt.status} />}
-        {hasHeaders && <SlidersHorizontal className="h-3.5 w-3.5" aria-label="Has stream headers" />}
-        {channel.isHidden && <EyeOff className="h-4 w-4 text-amber-500" aria-label="Hidden" />}
-        {channel.link?.lost && (
-          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-200 text-gray-600 dark:bg-white/10 dark:text-gray-300">Lost</span>
-        )}
-        {channel.link && <Link2 className="h-4 w-4" style={{ color: accentColor }} aria-label="Kept in sync" />}
+        {hasHeaders && <Icon name="tune" className="text-[20px]" aria-label="Has stream headers" />}
+        {channel.isHidden && <Icon name="visibility_off" className="text-[20px]" aria-label="Hidden" />}
+        {channel.link?.lost && <span className={`tag ${isSelected ? 'tag-on-selected' : ''}`}>Lost</span>}
+        {channel.link && <Icon name="link" className="text-[20px] text-primary" aria-label="Kept in sync" />}
         {hasPendingSync && (
-          <span className="block w-2 h-2 rounded-full" style={{ backgroundColor: accentColor }} aria-label="Changes from the source are waiting" />
+          <span className="block w-2 h-2 rounded-full bg-primary" aria-label="Changes from the source are waiting" />
         )}
       </div>
 
@@ -463,16 +449,14 @@ function PhoneChannelRow({
         <div
           {...attributes} {...listeners}
           onClick={e => e.stopPropagation()}
-          className="shrink-0 self-stretch w-12 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing text-gray-400 dark:text-gray-500"
+          className="shrink-0 self-stretch w-12 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing text-on-surface-variant"
           aria-label="Drag to reorder"
         >
-          <GripVertical className="h-5 w-5" />
+          <Icon name="drag_indicator" className="text-[24px]" />
         </div>
       )}
 
-      {isSaving && (
-        <div className="md-progress" style={{ color: accentColor, backgroundColor: accentAlpha(accentColor, '20') }} />
-      )}
+      {isSaving && <div className="md-progress text-primary bg-primary/15" />}
     </div>
   );
 }
@@ -498,11 +482,8 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
   const [newBulkCategoryName, setNewBulkCategoryName] = useState('');
   const [activeEditId, setActiveEditId] = useState<string | null>(null);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
-  const [colWidths, setColWidths] = useState(() => {
-    // Fixed columns: drag(32) + checkbox(32) + logo+margin(80) + actions(96) + sidebar(256) ≈ 496px
-    const available = Math.max(200, window.innerWidth - 496);
-    return { name: Math.round(available * 0.7) };
-  });
+  // The name column's width while its divider is being dragged; saved to the store on release.
+  const [draggedNameWidth, setDraggedNameWidth] = useState<number | null>(null);
   const resizing = useRef<{ startX: number; startW: number } | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const pendingScrollId = useRef<string | null>(null);
@@ -565,7 +546,7 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
     api.resolveTvgIds(unique).then(setTvgIdLabels).catch(e => { console.error(e); notifyError(e, 'Failed to resolve EPG channel names.'); });
   }, [channels]);
 
-  const { activeCategory, setActiveCategory, accentColor, setUndoEntry, scrollTarget, setScrollTarget, syncLogOpenFor, setSyncLogOpenFor, hideUrls, setHideUrls } = useStore();
+  const { activeCategory, setActiveCategory, nameColumnWidth, setNameColumnWidth, setUndoEntry, scrollTarget, setScrollTarget, syncLogOpenFor, setSyncLogOpenFor, hideUrls, setHideUrls } = useStore();
 
   // Sync panels belong to one playlist, so switching playlists closes them. This runs before the
   // effect below, so a sync log requested for the playlist being opened still opens.
@@ -597,8 +578,6 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
     setSyncLogOpenFor(null);
   }, [syncLogOpenFor, playlistId, setSyncLogOpenFor]);
   const scrollToChannelId = scrollTarget?.kind === 'playlist' ? scrollTarget.id : null;
-  const onAccent = contrastText(accentColor); // '#fff' or '#000' depending on luminance
-  const onAccentMuted = onAccent === '#ffffff' ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.60)';
 
   const categories = useMemo(() => playlist?.categories || [], [playlist?.categories]);
 
@@ -614,6 +593,36 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
   const [pageInputValue, setPageInputValue] = useState('1');
   const pageSize = 100;
   const listScrollRef = useRef<HTMLDivElement>(null);
+
+  // ── Column widths ──
+  // The list's own width is measured (it changes with the window, the list pane beside it
+  // and the sync log), so the columns can share it sensibly instead of guessing from the
+  // window's width.
+  const [listEl, setListEl] = useState<HTMLDivElement | null>(null);
+  const [listWidth, setListWidth] = useState(0);
+  const attachList = useCallback((el: HTMLDivElement | null) => {
+    listScrollRef.current = el;
+    setListEl(el);
+  }, []);
+  useEffect(() => {
+    if (!listEl) return;
+    const measure = () => setListWidth(listEl.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(listEl);
+    return () => observer.disconnect();
+  }, [listEl]);
+  // What the name and TV guide columns have to share: the row minus its fixed parts (handle,
+  // checkbox and logo on the left ≈ 136px, the four buttons on the right = 156px; on touch
+  // screens, with their bigger targets, 152px each: three buttons there, Delete is under ⋮).
+  const sharedWidth = Math.max(0, listWidth - (canHover ? 292 : 304));
+  // Left alone, the TV guide column gets about 38% (between 200 and 380px, enough for a
+  // guide name) and the name and stream link get the rest, so no column is left half empty.
+  const autoNameWidth = sharedWidth - Math.max(200, Math.min(380, sharedWidth * 0.38));
+  // A width set by dragging the divider is remembered (nameColumnWidth in the store, kept
+  // across screens and reloads). Either way the TV guide column keeps at least 120px.
+  const nameWidth = Math.round(Math.max(140, Math.min(draggedNameWidth ?? nameColumnWidth ?? autoNameWidth, sharedWidth - 120)));
+  const colWidths = { name: nameWidth };
 
   useEffect(() => {
     setCurrentPage(1);
@@ -939,13 +948,16 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     resizing.current = { startX: e.clientX, startW: colWidths.name };
+    let width = colWidths.name;
     const onMove = (ev: MouseEvent) => {
       if (!resizing.current) return;
-      const w = Math.max(80, resizing.current.startW + ev.clientX - resizing.current.startX);
-      setColWidths({ name: w });
+      width = Math.max(140, resizing.current.startW + ev.clientX - resizing.current.startX);
+      setDraggedNameWidth(width);
     };
     const onUp = () => {
       resizing.current = null;
+      setNameColumnWidth(width);
+      setDraggedNameWidth(null);
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
@@ -1083,179 +1095,36 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
 
   /* ── Render ────────────────────────────────────────────────────────────── */
 
-  /* Toolbar button styles — adapt to whatever is readable on the accent bg */
-  const toolbarBtn = `md-btn flex items-center gap-1.5 h-9 px-3 rounded text-xs font-medium uppercase tracking-wider`;
-  const toolbarBtnOutlined = `${toolbarBtn} border`;
+  const allShownSelected = displayedChannels.length > 0 && selectedIds.size === displayedChannels.length;
+  const headerIcon = 'text-[20px]';
 
   return (
-    <div className="flex flex-col h-full bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black relative">
+    // `@container`: the header buttons show their labels once the pane is wide enough. It's a
+    // container query, so it follows the pane itself, whether or not the list beside it is open.
+    <div className="@container flex flex-col h-full relative">
 
-      {/* ── Toolbar ──────────────────────────────────────────────────────── */}
-      {/* Computers only: on phones these actions are in the top bar's ⋮ menu (see phoneMenu below). */}
-      <header className="shrink-0 z-20 elev-4 hidden md:block" style={{ backgroundColor: accentColor }}>
-        <div className="hidden md:flex items-center h-14 px-6 gap-3">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <h2 className="text-base font-medium truncate" style={{ color: onAccent }}>
-              {playlist.name}
-              {activeCategory && (
-                <span className="font-light" style={{ color: onAccentMuted }}> / {activeCategory}</span>
-              )}
-            </h2>
-          </div>
-
-          <div className="flex items-center gap-1 relative">
-
+      {/* ── Header ───────────────────────────────────────────────────────── */}
+      {/* Tablets and computers only: on phones these actions are in the top bar's ⋮ menu (see
+          the phone menu below). While channels are selected it turns into the selection bar. */}
+      <header className="shrink-0 hidden md:flex items-center gap-1 min-h-[4.875rem] pl-6 pr-4 py-3">
+        {selectedIds.size > 0 ? (
+          // The keys make React build the two sets of buttons separately. Without them it reused
+          // the filled "Link & download" button as Delete, whose background then visibly faded out.
+          <React.Fragment key="selection">
             <button
-              onClick={() => setShowSyncLog(s => !s)}
-              className={`${toolbarBtn} relative`}
-              style={{ color: onAccent, ...(showSyncLog ? { backgroundColor: 'rgba(0,0,0,0.15)' } : {}) }}
-              title={unreadSyncLogCount > 0 ? `Sync log (${unreadSyncLogCount} new)` : 'Sync log'}
+              onClick={() => { setSelectedIds(new Set()); setLastSelectedId(null); }}
+              className="md-btn icon-btn -ml-3 text-on-surface"
+              aria-label="Clear selection"
+              title="Clear selection (Esc)"
             >
-              <History className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">Sync log</span>
-              {unreadSyncLogCount > 0 && (
-                <span
-                  className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold leading-4 text-center"
-                  style={{ backgroundColor: onAccent, color: accentColor }}
-                >
-                  {unreadSyncLogCount > 99 ? '99+' : unreadSyncLogCount}
-                </span>
-              )}
+              <Icon name="close" className="text-[24px]" />
             </button>
-
-            <button
-              onClick={() => setShowPdf(true)}
-              disabled={!channels.some(c => !c.isHidden)}
-              className={`${toolbarBtn} disabled:opacity-40`}
-              style={{ color: onAccent }}
-              title="Channel list PDF"
-            >
-              <FileDown className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">PDF</span>
-            </button>
-
-            <button
-              onClick={openFindReplace}
-              disabled={channels.length === 0}
-              className={`${toolbarBtn} disabled:opacity-40`}
-              style={{ color: onAccent }}
-              title="Find & Replace"
-            >
-              <Replace className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">Replace</span>
-            </button>
-
-            <button
-              onClick={() => setShowBulkEpg(true)}
-              disabled={channels.length === 0}
-              className={`${toolbarBtn} disabled:opacity-40`}
-              style={{ color: onAccent }}
-              title="Bulk EPG Assignment"
-            >
-              <Wand2 className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">Assign EPG</span>
-            </button>
-
-            <button
-              onClick={() => setShowExportDialog(true)}
-              disabled={channels.length === 0}
-              className={`${toolbarBtnOutlined} disabled:opacity-40`}
-              style={{ color: onAccent, borderColor: `${onAccent}55`, backgroundColor: 'rgba(0,0,0,0.15)' }}
-              title="Export / Download"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">Export</span>
-            </button>
-
-            {/* Health check button */}
-            <div className="relative">
-              {healthProgress ? (
-                <div className="flex items-center gap-2 h-9 px-3" style={{ color: onAccentMuted }}>
-                  <Activity className="h-3.5 w-3.5 animate-pulse" />
-                  <span className="text-xs font-medium uppercase tracking-wider tabular-nums">
-                    {healthProgress.done}/{healthProgress.total}
-                  </span>
-                  <button onClick={cancelHealthCheck} className="ml-1 opacity-70 hover:opacity-100" title="Cancel">
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowHealthMenu(s => !s)}
-                  className={toolbarBtn}
-                  style={{ color: onAccent }}
-                >
-                  <Activity className="h-3.5 w-3.5" />
-                  <span className="hidden lg:inline">Check</span>
-                </button>
-              )}
-              {showHealthMenu && (
-                <>
-                  <div className="fixed inset-0 z-30" onClick={() => setShowHealthMenu(false)} />
-                  <div className="md-menu absolute right-0 top-full mt-1 w-52 bg-white dark:bg-[#272727] rounded elev-8 z-40 py-1 text-sm">
-                    <button
-                      onClick={() => runHealthCheck(displayedChannels)}
-                      className="md-btn w-full flex items-center gap-2.5 px-4 py-2 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
-                    >
-                      <Activity className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                      Check this category
-                      <span className="ml-auto text-xs text-gray-400">{displayedChannels.length}</span>
-                    </button>
-                    <button
-                      onClick={() => runHealthCheck(channels)}
-                      className="md-btn w-full flex items-center gap-2.5 px-4 py-2 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
-                    >
-                      <Activity className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                      Check entire playlist
-                      <span className="ml-auto text-xs text-gray-400">{channels.length}</span>
-                    </button>
-                    {selectedIds.size > 0 && (
-                      <button
-                        onClick={() => runHealthCheck(channels.filter(c => selectedIds.has(c.id)))}
-                        className="md-btn w-full flex items-center gap-2.5 px-4 py-2 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
-                      >
-                        <Activity className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                        Check selected
-                        <span className="ml-auto text-xs text-gray-400">{selectedIds.size}</span>
-                      </button>
-                    )}
-                    {healthStatus.size > 0 && (
-                      <>
-                        <div className="border-t border-gray-100 dark:border-white/8 my-1" />
-                        <button
-                          onClick={() => { setHealthStatus(new Map()); setShowHealthMenu(false); }}
-                          className="md-btn w-full flex items-center gap-2.5 px-4 py-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
-                        >
-                          Clear results
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-
-
-          </div>
-        </div>
-      </header>
-
-      {/* ── Bulk-selection bar ────────────────────────────────────────────── */}
-      {selectedIds.size > 0 && (
-        <div
-          className="shrink-0 h-12 border-b px-6 hidden md:flex items-center justify-between gap-4 transition-colors"
-          style={{ backgroundColor: accentAlpha(accentColor, '15'), borderColor: accentAlpha(accentColor, '30') }}
-        >
-          <span className="text-sm font-medium" style={{ color: accentColor }}>
-            {selectedIds.size} selected
-          </span>
-          <div className="flex items-center gap-2">
+            <h2 className="flex-1 min-w-0 truncate pl-1 text-title-lg text-on-surface">{selectedIds.size} selected</h2>
             <select
               value={bulkCategory}
               onChange={e => handleBulkMove(e.target.value)}
-              className="text-xs font-medium border border-gray-300 dark:border-gray-600 rounded h-8 px-2 focus:outline-none bg-white dark:bg-[#1e1e1e] text-gray-700 dark:text-gray-200"
-              onFocus={e => (e.target.style.borderColor = accentColor)}
-              onBlur={e => (e.target.style.borderColor = '')}
+              className="h-10 pl-4 pr-2 mr-1 rounded-full border border-outline bg-pane text-label-lg text-on-surface-variant cursor-pointer focus:outline-none focus:border-primary"
+              aria-label="Move to category"
             >
               <option value="">Move to…</option>
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1265,72 +1134,175 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
               <>
                 <button
                   onClick={() => setShowBulkSyncSettings(true)}
-                  className="md-btn h-8 px-3 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 flex items-center gap-1"
+                  className="md-btn btn btn-text text-on-surface-variant"
                   title={`Sync settings for ${selectedLinkedChannels.length} linked channel${selectedLinkedChannels.length !== 1 ? 's' : ''}`}
                 >
-                  <Link2 className="h-3.5 w-3.5" /> Sync
+                  <Icon name="link" className={headerIcon} /><span className="hidden @3xl:inline">Sync</span>
                 </button>
                 <button
                   onClick={handleBulkUnlink}
-                  className="md-btn h-8 px-3 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 flex items-center gap-1"
+                  className="md-btn btn btn-text text-on-surface-variant"
                   title={`Stop syncing ${selectedLinkedChannels.length} linked channel${selectedLinkedChannels.length !== 1 ? 's' : ''}`}
                 >
-                  <Unlink className="h-3.5 w-3.5" /> Unlink
+                  <Icon name="link_off" className={headerIcon} /><span className="hidden @3xl:inline">Unlink</span>
                 </button>
               </>
             )}
             <button
               onClick={() => runHealthCheck(channels.filter(c => selectedIds.has(c.id)))}
               disabled={!!healthProgress}
-              className="md-btn h-8 px-3 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 flex items-center gap-1 disabled:opacity-40"
+              className="md-btn btn btn-text text-on-surface-variant"
+              title="Check the selected streams"
             >
-              <Activity className="h-3.5 w-3.5" /> Check
+              <Icon name="monitor_heart" className={headerIcon} /><span className="hidden @3xl:inline">Check</span>
             </button>
-            <button onClick={() => setShowBulkDeleteConfirm(true)} className="md-btn h-8 px-3 rounded text-xs font-medium uppercase tracking-wider text-red-600 dark:text-red-400 flex items-center gap-1">
-              <Trash2 className="h-3.5 w-3.5" /> Delete
+            <button onClick={() => setShowBulkDeleteConfirm(true)} className="md-btn btn btn-text text-error" title="Delete the selected channels">
+              <Icon name="delete" className={headerIcon} /><span className="hidden @3xl:inline">Delete</span>
             </button>
-            <button onClick={() => { setSelectedIds(new Set()); setLastSelectedId(null); }} className="md-btn h-8 px-3 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-400">
-              Clear
+          </React.Fragment>
+        ) : (
+          <React.Fragment key="actions">
+            <div className="flex-1 min-w-0">
+              {activeCategory && <p className="text-label-md text-on-surface-variant truncate">{playlist.name}</p>}
+              <div className="flex items-baseline gap-2.5 min-w-0">
+                <h2 className="min-w-0 truncate text-headline-sm tracking-[-0.01em] text-on-surface">{activeCategory || playlist.name}</h2>
+                <span className="shrink-0 text-body-md text-on-surface-variant">
+                  {displayedChannels.length} channel{displayedChannels.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowSyncLog(s => !s)}
+              className={`md-btn btn btn-text ${showSyncLog ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant'}`}
+              title={unreadSyncLogCount > 0 ? `Sync log (${unreadSyncLogCount} new)` : 'Sync log'}
+            >
+              <Icon name="history" className={headerIcon} />
+              <span className="hidden @4xl:inline">Sync log</span>
+              {unreadSyncLogCount > 0 && <span className="badge">{unreadSyncLogCount > 99 ? '99+' : unreadSyncLogCount}</span>}
             </button>
-          </div>
-        </div>
-      )}
+
+            {/* Stream checks: a small menu, or the progress while a check runs. */}
+            <div className="relative">
+              {healthProgress ? (
+                <div className="flex items-center gap-2 h-10 pl-3 pr-1 text-on-surface-variant">
+                  <Icon name="monitor_heart" className={`${headerIcon} animate-pulse text-primary`} />
+                  <span className="text-label-lg tabular-nums">{healthProgress.done}/{healthProgress.total}</span>
+                  <button onClick={cancelHealthCheck} className="md-btn icon-btn w-8 h-8" title="Stop checking">
+                    <Icon name="close" className="text-[20px]" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowHealthMenu(s => !s)}
+                  disabled={channels.length === 0}
+                  className="md-btn btn btn-text text-on-surface-variant"
+                  title="Check streams"
+                >
+                  <Icon name="monitor_heart" className={headerIcon} />
+                  <span className="hidden @4xl:inline">Check streams</span>
+                  <Icon name="keyboard_arrow_down" className="text-[20px] -ml-1" />
+                </button>
+              )}
+              {showHealthMenu && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowHealthMenu(false)} />
+                  <div className="md-menu menu absolute right-0 top-full mt-1 w-64 z-40">
+                    <button onClick={() => runHealthCheck(displayedChannels)} className="md-btn menu-item">
+                      <Icon name="monitor_heart" />
+                      <span className="flex-1">Check this category</span>
+                      <span className="text-label-md text-on-surface-variant">{displayedChannels.length}</span>
+                    </button>
+                    <button onClick={() => runHealthCheck(channels)} className="md-btn menu-item">
+                      <Icon name="monitor_heart" />
+                      <span className="flex-1">Check the whole playlist</span>
+                      <span className="text-label-md text-on-surface-variant">{channels.length}</span>
+                    </button>
+                    {healthStatus.size > 0 && (
+                      <>
+                        <div className="menu-divider" />
+                        <button onClick={() => { setHealthStatus(new Map()); setShowHealthMenu(false); }} className="md-btn menu-item">
+                          <Icon name="close" />
+                          Clear results
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button
+              onClick={() => setShowBulkEpg(true)}
+              disabled={channels.length === 0}
+              className="md-btn btn btn-text text-on-surface-variant"
+              title="Assign EPG automatically"
+            >
+              <Icon name="auto_fix_high" className={headerIcon} /><span className="hidden @4xl:inline">Assign EPG</span>
+            </button>
+
+            <OverflowMenu
+              label="More playlist actions"
+              items={[
+                channels.length > 0 && { label: 'Find & Replace', icon: <Icon name="find_replace" className="text-[24px]" />, onClick: openFindReplace },
+                channels.some(c => !c.isHidden) && { label: 'Channel list PDF', icon: <Icon name="picture_as_pdf" className="text-[24px]" />, onClick: () => setShowPdf(true) },
+                {
+                  label: hideUrls ? 'Show stream links' : 'Hide stream links',
+                  icon: hideUrls ? <Icon name="visibility" className="text-[24px]" /> : <Icon name="visibility_off" className="text-[24px]" />,
+                  onClick: () => setHideUrls(!hideUrls),
+                },
+              ]}
+            />
+
+            <button
+              onClick={() => setShowExportDialog(true)}
+              disabled={channels.length === 0}
+              className="md-btn btn btn-filled ml-2"
+              title="The playlist's link for your player, and downloads"
+            >
+              <Icon name="download" className={headerIcon} />
+              <span className="hidden @2xl:inline">Link &amp; download</span>
+            </button>
+          </React.Fragment>
+        )}
+      </header>
 
       {/* ── Phones: every playlist action, in the top bar's ⋮ ─────────────── */}
       {isPhone && phoneMenuSlot && createPortal(
         <OverflowMenu
           label="Playlist actions"
-          dotColor={unreadSyncLogCount > 0 ? accentColor : undefined}
+          showDot={unreadSyncLogCount > 0}
+          buttonClassName="w-12 h-12 text-on-surface"
           items={[
-            channels.length > 0 && { label: 'Playlist link & download', icon: <Download className="h-4 w-4" />, onClick: () => setShowExportDialog(true) },
+            channels.length > 0 && { label: 'Playlist link & download', icon: <Icon name="download" className="text-[24px]" />, onClick: () => setShowExportDialog(true) },
             {
-              label: 'Sync log', icon: <History className="h-4 w-4" />,
+              label: 'Sync log', icon: <Icon name="history" className="text-[24px]" />,
               hint: unreadSyncLogCount > 0 ? `${unreadSyncLogCount > 99 ? '99+' : unreadSyncLogCount} new` : undefined,
               onClick: () => setShowSyncLog(true),
             },
             displayedChannels.length > 0 && {
-              label: 'Select channels', icon: <ListChecks className="h-4 w-4" />,
+              label: 'Select channels', icon: <Icon name="checklist" className="text-[24px]" />,
               onClick: () => { setReorderMode(false); setSelectedIds(new Set(displayedChannels.map(c => c.id))); },
             },
             displayedChannels.length > 1 && {
-              label: 'Reorder channels', icon: <ArrowUpDown className="h-4 w-4" />,
+              label: 'Reorder channels', icon: <Icon name="swap_vert" className="text-[24px]" />,
               onClick: () => { setSelectedIds(new Set()); setReorderMode(true); },
             },
-            channels.length > 0 && { label: 'Find & Replace', icon: <Replace className="h-4 w-4" />, onClick: openFindReplace },
-            channels.length > 0 && { label: 'Assign EPG automatically', icon: <Wand2 className="h-4 w-4" />, onClick: () => setShowBulkEpg(true) },
+            channels.length > 0 && { label: 'Find & Replace', icon: <Icon name="find_replace" className="text-[24px]" />, onClick: openFindReplace },
+            channels.length > 0 && { label: 'Assign EPG automatically', icon: <Icon name="auto_fix_high" className="text-[24px]" />, onClick: () => setShowBulkEpg(true) },
             !healthProgress && displayedChannels.length > 0 && {
-              label: 'Check streams in this category', icon: <Activity className="h-4 w-4" />,
+              label: 'Check streams in this category', icon: <Icon name="monitor_heart" className="text-[24px]" />,
               hint: String(displayedChannels.length), onClick: () => runHealthCheck(displayedChannels),
             },
             !healthProgress && channels.length > 0 && {
-              label: 'Check the whole playlist', icon: <Activity className="h-4 w-4" />,
+              label: 'Check the whole playlist', icon: <Icon name="monitor_heart" className="text-[24px]" />,
               hint: String(channels.length), onClick: () => runHealthCheck(channels),
             },
-            !healthProgress && healthStatus.size > 0 && { label: 'Clear check results', icon: <X className="h-4 w-4" />, onClick: () => setHealthStatus(new Map()) },
-            channels.some(c => !c.isHidden) && { label: 'Channel list PDF', icon: <FileDown className="h-4 w-4" />, onClick: () => setShowPdf(true) },
+            !healthProgress && healthStatus.size > 0 && { label: 'Clear check results', icon: <Icon name="close" className="text-[24px]" />, onClick: () => setHealthStatus(new Map()) },
+            channels.some(c => !c.isHidden) && { label: 'Channel list PDF', icon: <Icon name="picture_as_pdf" className="text-[24px]" />, onClick: () => setShowPdf(true) },
             {
               label: hideUrls ? 'Show stream links' : 'Hide stream links',
-              icon: hideUrls ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />,
+              icon: hideUrls ? <Icon name="visibility" className="text-[24px]" /> : <Icon name="visibility_off" className="text-[24px]" />,
               onClick: () => setHideUrls(!hideUrls),
             },
           ]}
@@ -1338,17 +1310,14 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
         phoneMenuSlot,
       )}
 
-      {/* ── Phones: stream check progress (on computers it's in the toolbar) ── */}
+      {/* ── Phones: stream check progress (on bigger screens it's in the header) ── */}
       {healthProgress && (
-        <div
-          className="md:hidden shrink-0 flex items-center gap-3 h-12 pl-4 pr-2 border-b"
-          style={{ backgroundColor: accentAlpha(accentColor, '15'), borderColor: accentAlpha(accentColor, '30') }}
-        >
-          <Activity className="h-4 w-4 shrink-0 animate-pulse" style={{ color: accentColor }} />
-          <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-200 tabular-nums">
+        <div className="md:hidden shrink-0 flex items-center gap-3 h-12 pl-4 pr-1 bg-secondary-container text-on-secondary-container">
+          <Icon name="monitor_heart" className="text-[24px] shrink-0 animate-pulse" />
+          <span className="flex-1 min-w-0 text-body-md tabular-nums">
             Checking streams… {healthProgress.done}/{healthProgress.total}
           </span>
-          <button onClick={cancelHealthCheck} className="md-btn h-10 px-4 rounded-full text-sm font-medium text-gray-600 dark:text-gray-300">
+          <button onClick={cancelHealthCheck} className="md-btn btn btn-text text-on-secondary-container">
             Stop
           </button>
         </div>
@@ -1356,97 +1325,71 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
 
       {/* ── Phone Reorder mode ───────────────────────────────────────────── */}
       {reorderMode && (
-        <div
-          className="md:hidden shrink-0 flex items-center gap-3 h-14 pl-4 pr-2 border-b"
-          style={{ backgroundColor: accentAlpha(accentColor, '15'), borderColor: accentAlpha(accentColor, '30') }}
-        >
-          <ArrowUpDown className="h-4 w-4 shrink-0" style={{ color: accentColor }} />
-          <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-200">Drag the handles to reorder</span>
-          <button
-            onClick={() => setReorderMode(false)}
-            className="md-btn h-10 px-5 rounded-full text-sm font-medium text-white"
-            style={{ backgroundColor: accentColor }}
-          >
+        <div className="md:hidden shrink-0 flex items-center gap-3 h-14 pl-4 pr-2 bg-secondary-container text-on-secondary-container">
+          <Icon name="swap_vert" className="text-[24px] shrink-0" />
+          <span className="flex-1 min-w-0 text-body-md">Drag the handles to reorder</span>
+          <button onClick={() => setReorderMode(false)} className="md-btn btn btn-filled">
             Done
           </button>
         </div>
       )}
 
       {/* ── Channel list ─────────────────────────────────────────────────── */}
-      {/* max-md:pb-24 keeps the last row clear of the phone's + button. */}
-      <div ref={listScrollRef} className="flex-1 overflow-y-auto max-md:pb-24">
+      {/* pb-24 keeps the last row clear of the round + button. */}
+      <div ref={attachList} className="flex-1 overflow-y-auto pb-24">
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-sm text-gray-400 dark:text-gray-500 animate-pulse">
+          <div className="flex items-center justify-center py-20 text-body-md text-on-surface-variant animate-pulse">
             Loading channels…
           </div>
         ) : channels.length === 0 && channelsError ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <p className="text-base font-medium text-red-500 dark:text-red-400">{channelsError}</p>
-            <button
-              onClick={() => refetchChannels()}
-              className="mt-5 md-btn flex items-center gap-1.5 h-9 px-4 rounded text-sm font-medium text-white elev-1"
-              style={{ backgroundColor: accentColor }}
-            >
+          <div className="flex flex-col items-center justify-center py-24 px-6 text-center">
+            <p className="text-body-lg text-error">{channelsError}</p>
+            <button onClick={() => refetchChannels()} className="md-btn btn btn-filled mt-5">
               Retry
             </button>
           </div>
         ) : channels.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-16 h-16 rounded-full flex items-center justify-center mb-4" style={{ backgroundColor: accentAlpha(accentColor, '15') }}>
-              <Layers className="w-7 h-7" style={{ color: accentColor }} />
+          <div className="flex flex-col items-center justify-center py-24 px-6 text-center">
+            <div className="w-16 h-16 rounded-full flex items-center justify-center mb-5 bg-secondary-container text-on-secondary-container">
+              <Icon name="stacks" className="text-[28px]" />
             </div>
-            <p className="text-base font-medium text-gray-700 dark:text-gray-300">No channels yet</p>
-            <p className="mt-1 text-sm text-gray-400 dark:text-gray-500 max-w-xs">Add channels manually or import them from the Sources tab.</p>
-            <button
-              onClick={isPhone ? () => setNewChannelDraft({}) : handleAddChannel}
-              className="mt-5 md-btn flex items-center gap-1.5 h-9 px-4 rounded text-sm font-medium text-white elev-1"
-              style={{ backgroundColor: accentColor }}
-            >
-              <Plus className="h-4 w-4" />
+            <p className="text-title-md text-on-surface">No channels yet</p>
+            <p className="mt-1 text-body-md text-on-surface-variant max-w-xs">Add channels yourself, or bring them in from the Sources tab.</p>
+            <button onClick={isPhone ? () => setNewChannelDraft({}) : handleAddChannel} className="md-btn btn btn-filled mt-6">
+              <Icon name="add" className="text-[20px]" />
               Add channel
             </button>
           </div>
         ) : (
-          <div className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black">
+          <div>
 
             {/* Column header */}
-            <div className="sticky top-0 z-10 hidden md:flex items-center h-11 bg-gray-50 dark:bg-[#242424] amoled:dark:bg-[#111] border-b border-gray-200 dark:border-white/8 select-none">
-              {/* drag + checkbox placeholders */}
-              <div className="w-8 shrink-0" />
-              <div className="w-8 shrink-0 flex items-center justify-center">
-                <button onClick={selectAll} className="md-btn p-1 rounded-full text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-400">
-                  {selectedIds.size === displayedChannels.length && displayedChannels.length > 0
-                    ? <CheckSquare className="h-4 w-4" />
-                    : <Square className="h-4 w-4" />}
-                </button>
-              </div>
-              <div className="w-14 mx-3 shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center">Logo</div>
+            <div className="sticky top-0 z-10 hidden md:flex items-center h-10 pl-2 bg-pane border-b border-outline-variant select-none text-label-md text-on-surface-variant">
+              <div className="w-6 no-hover:w-10 shrink-0" />
+              <button onClick={selectAll} className="md-btn icon-btn w-10 h-10" aria-label={allShownSelected ? 'Deselect all' : 'Select all in this category'}>
+                <Checkbox checked={allShownSelected} mixed={!allShownSelected && selectedIds.size > 0} />
+              </button>
+              <div className="w-16 shrink-0" />
               {/* Name column — resizable */}
-              <div className="relative shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400" style={{ width: colWidths.name }}>
-                Channel Name
+              <div className="relative shrink-0 pl-3" style={{ width: colWidths.name }}>
+                Channel
                 <div
                   onMouseDown={startResize}
+                  onDoubleClick={() => setNameColumnWidth(null)}
+                  title="Drag to resize. Double-click to go back to the automatic width."
                   className="absolute right-0 top-0 bottom-0 w-3 flex items-center justify-center cursor-col-resize"
                 >
-                  <div className="w-px h-4 bg-gray-300 dark:bg-white/20 rounded-full" />
+                  <div className="w-px h-4 bg-outline-variant rounded-full" />
                 </div>
               </div>
-              {/* TVG ID column — fills remaining space */}
-              <div className="flex-1 pr-4 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 hidden md:block">
-                TVG / EPG ID
-              </div>
-              <div className="w-24 shrink-0 flex justify-end">
-                <button onClick={handleAddChannel} className="md-btn flex items-center gap-1 h-7 px-3 text-white rounded text-[11px] font-medium uppercase tracking-wider elev-1" style={{ backgroundColor: accentColor }}>
-                  <Plus className="h-3 w-3" />
-                  <span>Add</span>
-                </button>
-              </div>
+              <div className="flex-1 pr-4">TV guide</div>
+              <div className="w-[9.75rem] no-hover:w-[9.5rem] shrink-0" />
             </div>
 
             {/* Rows */}
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis]}>
               <SortableContext items={paginatedChannels.map(c => c.id)} strategy={verticalListSortingStrategy}>
-                {paginatedChannels.map((channel, i) => isPhone ? (
+                {paginatedChannels.map((channel) => isPhone ? (
                   <PhoneChannelRow
                     key={channel.id}
                     channel={channel}
@@ -1454,7 +1397,6 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
                     selectionMode={selectedIds.size > 0}
                     reorderMode={reorderMode}
                     isHighlighted={channel.id === highlightedId}
-                    rowIndex={i}
                     healthSt={healthStatus.get(channel.id)}
                     isSaving={savingIds.has(channel.id)}
                     onOpen={setEditSheetChannelId}
@@ -1473,13 +1415,14 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
                     setActiveEditId={setActiveEditId}
                     colWidths={colWidths}
                     isHighlighted={channel.id === highlightedId}
-                    rowIndex={i}
                     onRightClick={e => { e.preventDefault(); setContextMenu({ channelId: channel.id, x: e.clientX, y: e.clientY }); }}
                     healthSt={healthStatus.get(channel.id)}
                     tvgIdLabel={channel.tvgId ? tvgIdLabels[channel.tvgId] : undefined}
                     isSaving={savingIds.has(channel.id)}
                     onOpenSync={openSync}
                     onEditHeaders={setHeadersChannelId}
+                    onOpenMenu={(id, rect) => setContextMenu(current =>
+                      current?.channelId === id ? null : { channelId: id, x: rect.right - 220, y: rect.bottom + 4 })}
                   />
                 ))}
               </SortableContext>
@@ -1490,18 +1433,18 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
 
       {/* Pagination controls */}
       {totalPages > 1 && (
-        <div className="shrink-0 flex items-center justify-between px-6 max-md:px-3 py-1.5 max-md:py-0.5 border-t border-gray-200 dark:border-white/8 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black">
-          <span className="text-xs text-gray-500 dark:text-gray-400">
-            Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, displayedChannels.length)} of {displayedChannels.length} channels
+        <div className="shrink-0 flex items-center justify-between h-12 pl-6 pr-3 max-md:pl-4 max-md:pr-1 border-t border-outline-variant">
+          <span className="text-body-sm text-on-surface-variant">
+            {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, displayedChannels.length)} of {displayedChannels.length} channels
           </span>
           <div className="flex items-center gap-1">
             <button
               onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
-              className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-600 dark:text-gray-400 disabled:opacity-30 hover:bg-black/5 dark:hover:bg-white/5 disabled:hover:bg-transparent transition-colors"
-              title="Previous Page"
+              className="md-btn icon-btn w-9 h-9 max-md:w-11 max-md:h-11"
+              title="Previous page"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <Icon name="chevron_left" className="text-[24px]" />
             </button>
             <div className="flex items-center gap-1 mx-0.5">
               <input
@@ -1510,10 +1453,8 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
                 max={totalPages}
                 value={pageInputValue}
                 onChange={e => setPageInputValue(e.target.value)}
-                className="w-10 text-center bg-transparent border-b-2 border-transparent hover:border-gray-300 dark:hover:border-gray-600 py-0 text-xs font-medium text-gray-900 dark:text-white focus:outline-none transition-colors"
-                onFocus={e => (e.target.style.borderColor = accentColor)}
-                onBlur={e => {
-                  e.target.style.borderColor = 'transparent';
+                className="w-10 text-center bg-transparent border-b-2 border-transparent hover:border-outline-variant focus:border-primary py-0 text-label-lg text-on-surface focus:outline-none transition-colors"
+                onBlur={() => {
                   const p = parseInt(pageInputValue, 10);
                   if (!isNaN(p) && p >= 1 && p <= totalPages) handlePageChange(p);
                   else setPageInputValue(String(currentPage));
@@ -1526,33 +1467,35 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
                   }
                 }}
               />
-              <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">/ {totalPages}</span>
+              <span className="text-label-lg text-on-surface-variant">/ {totalPages}</span>
             </div>
             <button
               onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
-              className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-600 dark:text-gray-400 disabled:opacity-30 hover:bg-black/5 dark:hover:bg-white/5 disabled:hover:bg-transparent transition-colors"
-              title="Next Page"
+              className="md-btn icon-btn w-9 h-9 max-md:w-11 max-md:h-11"
+              title="Next page"
             >
-              <ChevronRight className="w-4 h-4" />
+              <Icon name="chevron_right" className="text-[24px]" />
             </button>
           </div>
         </div>
       )}
 
-
-      {/* ── Phones: the "add a channel" button (Android's floating action button). It opens an
-          empty channel editor; nothing is created until Add is pressed there. Hidden while
-          selecting or reordering, and lifted above the page buttons when there are pages. */}
-      {isPhone && channels.length > 0 && selectedIds.size === 0 && !reorderMode && (
+      {/* ── The "add a channel" button (Material's floating action button) ──
+          Bottom-right of the list on every screen size. On phones it's round and opens an empty
+          channel editor (nothing is created until Add is pressed there); on bigger screens it
+          says "Add channel" and adds a "New Channel" row straight away for editing in place.
+          Hidden while selecting or reordering, and lifted above the page buttons when there
+          are pages. */}
+      {channels.length > 0 && selectedIds.size === 0 && !reorderMode && (
         <button
-          onClick={() => setNewChannelDraft({})}
-          className={`md-btn md:hidden absolute right-4 ${totalPages > 1 ? 'bottom-16' : 'bottom-4'} z-20 w-14 h-14 flex items-center justify-center rounded-2xl elev-8`}
-          style={{ backgroundColor: accentColor, color: onAccent }}
+          onClick={isPhone ? () => setNewChannelDraft({}) : handleAddChannel}
+          className={`md-btn fab absolute right-5 max-md:right-4 ${totalPages > 1 ? 'bottom-16' : 'bottom-5 max-md:bottom-4'} z-20 max-md:w-14 max-md:px-0`}
           aria-label="Add channel"
           title="Add channel"
         >
-          <Plus className="h-6 w-6" />
+          <Icon name="add" className="text-[24px]" />
+          <span className="hidden md:inline">Add channel</span>
         </button>
       )}
 
@@ -1560,168 +1503,106 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
       {contextMenu && (
         <div
           ref={contextMenuRef}
-          className="fixed z-50 bg-white dark:bg-[#272727] rounded elev-8 py-1 min-w-[200px]"
+          className="md-menu menu fixed z-50 min-w-[220px]"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onMouseDown={e => e.stopPropagation()}
         >
-          <button
-            onClick={() => handleInsertChannel(contextMenu.channelId, 'above')}
-            className="md-btn w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
-          >
-            <ArrowUp className="h-4 w-4 shrink-0 text-gray-400" />
+          <button onClick={() => handleInsertChannel(contextMenu.channelId, 'above')} className="md-btn menu-item">
+            <Icon name="arrow_upward" />
             Insert channel above
           </button>
-          <button
-            onClick={() => handleInsertChannel(contextMenu.channelId, 'below')}
-            className="md-btn w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
-          >
-            <ArrowDown className="h-4 w-4 shrink-0 text-gray-400" />
+          <button onClick={() => handleInsertChannel(contextMenu.channelId, 'below')} className="md-btn menu-item">
+            <Icon name="arrow_downward" />
             Insert channel below
           </button>
-          <div className="border-t border-gray-100 dark:border-white/8 my-1" />
+          <div className="menu-divider" />
           <button
             onClick={() => openSync(contextMenu.channelId, new DOMRect(contextMenu.x, contextMenu.y, 0, 0))}
-            className="md-btn w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
+            className="md-btn menu-item"
           >
-            <Link2 className="h-4 w-4 shrink-0 text-gray-400" />
+            <Icon name="link" />
             {channels.find(c => c.id === contextMenu.channelId)?.link ? 'Sync settings…' : 'Link to source…'}
           </button>
-          <button
-            onClick={() => { setHeadersChannelId(contextMenu.channelId); setContextMenu(null); }}
-            className="md-btn w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/8 text-left"
-          >
-            <SlidersHorizontal className="h-4 w-4 shrink-0 text-gray-400" />
+          <button onClick={() => { setHeadersChannelId(contextMenu.channelId); setContextMenu(null); }} className="md-btn menu-item">
+            <Icon name="tune" />
             Stream headers…
+          </button>
+          <div className="menu-divider" />
+          <button onClick={() => { handleSingleDelete(contextMenu.channelId); setContextMenu(null); }} className="md-btn menu-item text-error">
+            <Icon name="delete" />
+            Delete channel
           </button>
         </div>
       )}
 
       {/* ── Dialog: Bulk move to new category ────────────────────────────── */}
       {showCategoryPrompt && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24 max-w-sm w-full">
-            <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-5">New Category</h2>
-            <div className="px-6 pb-2">
-              <input
-                autoFocus
-                value={newBulkCategoryName}
-                onChange={e => setNewBulkCategoryName(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') { executeBulkMove(newBulkCategoryName.trim()); setShowCategoryPrompt(false); }
-                  if (e.key === 'Escape') { setShowCategoryPrompt(false); setBulkCategory(''); }
-                }}
-                placeholder="Category name"
-                className="w-full border border-gray-400 dark:border-gray-500 rounded px-3 py-2.5 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-                onFocus={e => (e.target.style.borderColor = accentColor)}
-                onBlur={e => (e.target.style.borderColor = '')}
-              />
-            </div>
-            <div className="flex justify-end gap-1 px-4 py-4">
-              <button onClick={() => { setShowCategoryPrompt(false); setBulkCategory(''); }} className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300">Cancel</button>
-              <button
-                onClick={() => { executeBulkMove(newBulkCategoryName.trim()); setShowCategoryPrompt(false); }}
-                disabled={!newBulkCategoryName.trim()}
-                className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40"
-                style={{ color: accentColor }}
-              >
-                Move
-              </button>
-            </div>
+        <Dialog onClose={() => { setShowCategoryPrompt(false); setBulkCategory(''); }}>
+          <h2 className="text-headline-sm text-on-surface px-6 pt-6 pb-4">New category</h2>
+          <div className="px-6 pb-2">
+            <input
+              autoFocus
+              value={newBulkCategoryName}
+              onChange={e => setNewBulkCategoryName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && newBulkCategoryName.trim()) { executeBulkMove(newBulkCategoryName.trim()); setShowCategoryPrompt(false); }
+                if (e.key === 'Escape') { setShowCategoryPrompt(false); setBulkCategory(''); }
+              }}
+              placeholder="Category name"
+              className="field max-md:text-base"
+            />
           </div>
-        </div>
+          <div className="flex justify-end gap-2 px-6 pt-4 pb-6">
+            <button onClick={() => { setShowCategoryPrompt(false); setBulkCategory(''); }} className="md-btn btn btn-text">Cancel</button>
+            <button
+              onClick={() => { executeBulkMove(newBulkCategoryName.trim()); setShowCategoryPrompt(false); }}
+              disabled={!newBulkCategoryName.trim()}
+              className="md-btn btn btn-text"
+            >
+              Move
+            </button>
+          </div>
+        </Dialog>
       )}
 
-      {/* ── Dialog: Bulk delete ───────────────────────────────────────────── */}
-      {/* ── Dialog: Export / Download ────────────────────────────────────── */}
+      {/* ── Dialog: Link & download ──────────────────────────────────────── */}
       {showExportDialog && (
-        <div
-          className="md-scrim fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/50 px-4 py-4"
-          onClick={() => setShowExportDialog(false)}
-        >
-          {/* Scrolls like the shared Dialog on a short screen; my-auto keeps it centered when it fits. */}
-          <div
-            className="md-dialog my-auto w-full max-w-md bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24 overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-6 pt-5 pb-4">
-              <h2 className="text-lg font-medium text-gray-900 dark:text-white">Export Playlist</h2>
-              <button
-                onClick={() => setShowExportDialog(false)}
-                className="md-btn p-1.5 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="px-6 pb-6 space-y-4">
-              {/* M3U Playlist link */}
-              <div>
-                <p className="text-xs font-medium uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400 mb-2">M3U Playlist</p>
-                <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-gray-100 dark:bg-white/6 border border-gray-200 dark:border-white/10">
-                  <span className="flex-1 min-w-0 text-sm font-mono text-gray-700 dark:text-gray-300 truncate" title={exportUrl}>
-                    {exportUrl}
-                  </span>
-                  <button
-                    onClick={copyPlaylistUrl}
-                    className="md-btn shrink-0 p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white transition-colors"
-                    title="Copy playlist link"
-                  >
-                    {copied ? <Check className="h-4 w-4" style={{ color: accentColor }} /> : <Copy className="h-4 w-4" />}
-                  </button>
-                  <a
-                    href={exportUrl}
-                    download={`${playlist.name}.m3u`}
-                    className="md-btn shrink-0 p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white transition-colors"
-                    title="Download playlist"
-                  >
-                    <Download className="h-4 w-4" />
-                  </a>
-                </div>
-              </div>
-
-              {/* EPG / XMLTV link */}
-              <div>
-                <p className="text-xs font-medium uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400 mb-2">EPG / XMLTV</p>
-                <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-gray-100 dark:bg-white/6 border border-gray-200 dark:border-white/10">
-                  <span className="flex-1 min-w-0 text-sm font-mono text-gray-700 dark:text-gray-300 truncate" title={epgUrl}>
-                    {epgUrl}
-                  </span>
-                  <button
-                    onClick={copyEpgUrl}
-                    className="md-btn shrink-0 p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white transition-colors"
-                    title="Copy EPG link"
-                  >
-                    {copiedEpg ? <Check className="h-4 w-4" style={{ color: accentColor }} /> : <Copy className="h-4 w-4" />}
-                  </button>
-                  <a
-                    href={epgUrl}
-                    download={`${playlist.name}.xml`}
-                    className="md-btn shrink-0 p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white transition-colors"
-                    title="Download EPG"
-                  >
-                    <Download className="h-4 w-4" />
-                  </a>
-                </div>
-              </div>
-            </div>
+        <Dialog onClose={() => setShowExportDialog(false)} maxWidth="max-w-lg">
+          <div className="flex items-center justify-between pl-6 pr-3 pt-4 pb-1">
+            <h2 className="text-headline-sm text-on-surface">Link &amp; download</h2>
+            <button onClick={() => setShowExportDialog(false)} className="md-btn icon-btn" aria-label="Close">
+              <Icon name="close" className="text-[24px]" />
+            </button>
           </div>
-        </div>
+          <p className="px-6 pb-5 text-body-md text-on-surface-variant">Paste these links into your IPTV player, or download the files.</p>
+          <div className="px-6 pb-6 space-y-4">
+            {[
+              { label: 'Playlist (M3U)', url: exportUrl, isCopied: copied, onCopy: copyPlaylistUrl, file: `${playlist.name}.m3u`, what: 'playlist' },
+              { label: 'TV guide (XMLTV)', url: epgUrl, isCopied: copiedEpg, onCopy: copyEpgUrl, file: `${playlist.name}.xml`, what: 'EPG' },
+            ].map(link => (
+              <div key={link.label}>
+                <p className="field-label">{link.label}</p>
+                <div className="flex items-center gap-0.5 h-12 pl-4 pr-1 rounded-xl bg-surface-container-highest">
+                  <span className="flex-1 min-w-0 text-body-md font-mono text-on-surface truncate" title={link.url}>
+                    {link.url}
+                  </span>
+                  <button onClick={link.onCopy} className="md-btn icon-btn" title={`Copy ${link.what} link`}>
+                    {link.isCopied ? <Icon name="check" className="text-[24px] text-primary" /> : <Icon name="content_copy" className="text-[24px]" />}
+                  </button>
+                  <a href={link.url} download={link.file} className="md-btn icon-btn" title={`Download ${link.what}`}>
+                    <Icon name="download" className="text-[24px]" />
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Dialog>
       )}
 
       {showBulkDeleteConfirm && (
-        <div className="md-scrim fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="md-dialog w-full max-w-sm bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24">
-            <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-2">Delete Channels</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 px-6 pb-6">
-              Delete {selectedIds.size} selected channel{selectedIds.size !== 1 ? 's' : ''}?
-            </p>
-            <div className="flex justify-end gap-1 px-4 pb-4">
-              <button onClick={() => setShowBulkDeleteConfirm(false)} className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300">Cancel</button>
-              <button onClick={confirmBulkDelete} className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-red-600 dark:text-red-400">Delete</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog title="Delete channels" confirmLabel="Delete" danger onConfirm={confirmBulkDelete} onClose={() => setShowBulkDeleteConfirm(false)}>
+          Delete {selectedIds.size} selected channel{selectedIds.size !== 1 ? 's' : ''}? You can undo this right after.
+        </ConfirmDialog>
       )}
 
       {showPdf && (
@@ -1759,19 +1640,19 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
       {isPhone && selectedIds.size > 0 && (() => {
         const selected = selectedChannels;
         const mostlyHidden = selectionMostlyHidden;
-        const iconBtn = 'md-btn relative w-11 h-11 shrink-0 flex items-center justify-center rounded-full';
+        const iconBtn = 'md-btn icon-btn relative w-12 h-12';
         return (
-          <div className="md:hidden fixed inset-x-0 bottom-0 z-40 pb-safe bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] border-t border-gray-200 dark:border-white/10 elev-8">
+          <div className="md:hidden fixed inset-x-0 bottom-0 z-40 pb-safe bg-surface-container text-on-surface shadow-level-2">
             <div className="h-16 flex items-center gap-0.5 px-1">
-              <button onClick={() => { setSelectedIds(new Set()); setLastSelectedId(null); }} className={`${iconBtn} text-gray-600 dark:text-gray-300`} aria-label="Clear selection">
-                <X className="h-5 w-5" />
+              <button onClick={() => { setSelectedIds(new Set()); setLastSelectedId(null); }} className={`${iconBtn} text-on-surface`} aria-label="Clear selection">
+                <Icon name="close" className="text-[24px]" />
               </button>
-              <span className="flex-1 min-w-0 truncate px-1 text-sm font-medium" style={{ color: accentColor }}>
+              <span className="flex-1 min-w-0 truncate px-1 text-title-md">
                 {selectedIds.size} selected
               </span>
               {/* An invisible native picker laid over the icon, so the phone shows its own list. */}
-              <label className={`${iconBtn} text-gray-600 dark:text-gray-300`} title="Move to category">
-                <FolderInput className="h-5 w-5" />
+              <label className={iconBtn} title="Move to category">
+                <Icon name="drive_file_move" className="text-[24px]" />
                 <select
                   value={bulkCategory}
                   onChange={e => handleBulkMove(e.target.value)}
@@ -1785,26 +1666,27 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
               </label>
               <button
                 onClick={toggleSelectedHidden}
-                className={`${iconBtn} text-gray-600 dark:text-gray-300`}
+                className={iconBtn}
                 aria-label={mostlyHidden ? 'Show in playlist' : 'Hide from playlist'}
                 title={mostlyHidden ? 'Show in playlist' : 'Hide from playlist'}
               >
-                {mostlyHidden ? <Eye className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
+                {mostlyHidden ? <Icon name="visibility" className="text-[24px]" /> : <Icon name="visibility_off" className="text-[24px]" />}
               </button>
-              <button onClick={() => setShowBulkDeleteConfirm(true)} className={`${iconBtn} text-red-600 dark:text-red-400`} aria-label="Delete" title="Delete">
-                <Trash2 className="h-5 w-5" />
+              <button onClick={() => setShowBulkDeleteConfirm(true)} className={`${iconBtn} text-error`} aria-label="Delete" title="Delete">
+                <Icon name="delete" className="text-[24px]" />
               </button>
               <OverflowMenu
                 openUp
+                buttonClassName="w-12 h-12"
                 items={[
                   {
                     label: selectedIds.size === displayedChannels.length ? 'Deselect all' : 'Select all in this category',
-                    icon: <ListChecks className="h-4 w-4" />, onClick: selectAll,
+                    icon: <Icon name="checklist" className="text-[24px]" />, onClick: selectAll,
                   },
-                  !healthProgress && { label: 'Check streams', icon: <Activity className="h-4 w-4" />, hint: String(selected.length), onClick: () => runHealthCheck(selected) },
-                  selectedLinkedChannels.length > 0 && { label: 'Sync settings…', icon: <Link2 className="h-4 w-4" />, onClick: () => setShowBulkSyncSettings(true) },
-                  selectedLinkedChannels.length > 0 && { label: 'Unlink', icon: <Unlink className="h-4 w-4" />, onClick: handleBulkUnlink },
-                  { label: 'Find & Replace in selection', icon: <Replace className="h-4 w-4" />, onClick: openFindReplace },
+                  !healthProgress && { label: 'Check streams', icon: <Icon name="monitor_heart" className="text-[24px]" />, hint: String(selected.length), onClick: () => runHealthCheck(selected) },
+                  selectedLinkedChannels.length > 0 && { label: 'Sync settings…', icon: <Icon name="link" className="text-[24px]" />, onClick: () => setShowBulkSyncSettings(true) },
+                  selectedLinkedChannels.length > 0 && { label: 'Unlink', icon: <Icon name="link_off" className="text-[24px]" />, onClick: handleBulkUnlink },
+                  { label: 'Find & Replace in selection', icon: <Icon name="find_replace" className="text-[24px]" />, onClick: openFindReplace },
                 ]}
               />
             </div>
@@ -1924,144 +1806,108 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
           finally { setFrRunning(false); }
         };
 
+        // One row of the "Which channels" choice.
+        const scopeOption = (value: typeof frScope, label: string, hint: React.ReactNode, disabled = false) => (
+          <label className={`flex items-center gap-3 h-11 px-3 rounded-xl ${disabled ? 'opacity-50 cursor-default' : 'md-btn cursor-pointer'}`}>
+            <input
+              type="radio"
+              name="fr-scope"
+              value={value}
+              checked={frScope === value}
+              disabled={disabled}
+              onChange={() => { if (!disabled) { setFrScope(value); setFrResult(null); } }}
+              className="w-4 h-4 accent-primary"
+            />
+            <span className="flex-1 text-body-md text-on-surface">{label}</span>
+            <span className="text-label-md text-on-surface-variant tabular-nums">{hint}</span>
+          </label>
+        );
+
         return (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-start justify-center overflow-y-auto overscroll-contain p-4">
-            <div className="my-auto bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] rounded elev-24 max-w-md w-full">
-              <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-4 flex items-center gap-2">
-                <Replace className="h-5 w-5" />
-                Find & Replace
-              </h2>
+          <Dialog onClose={() => setShowFindReplace(false)} dismissible={!frRunning} maxWidth="max-w-md">
+            <h2 className="text-headline-sm text-on-surface px-6 pt-6 pb-4">Find and replace</h2>
 
-              <div className="px-6 space-y-4">
-                {/* Search input */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">Find</label>
-                  <input
-                    autoFocus
-                    value={frSearch}
-                    onChange={e => { setFrSearch(e.target.value); setFrResult(null); }}
-                    placeholder={`Text to find in ${frField === 'url' ? 'URLs' : 'names'}…`}
-                    className="w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2.5 text-sm font-mono focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-                    onFocus={e => (e.target.style.borderColor = accentColor)}
-                    onBlur={e => (e.target.style.borderColor = '')}
-                  />
-                </div>
-
-                {/* Replace input */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">Replace with</label>
-                  <input
-                    value={frReplace}
-                    onChange={e => { setFrReplace(e.target.value); setFrResult(null); }}
-                    placeholder="Replacement text…"
-                    className="w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2.5 text-sm font-mono focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-                    onFocus={e => (e.target.style.borderColor = accentColor)}
-                    onBlur={e => (e.target.style.borderColor = '')}
-                  />
-                </div>
-
-                {/* Field selector */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">Target Field</label>
-                  <select
-                    value={frField}
-                    onChange={e => { setFrField(e.target.value as 'url' | 'name'); setFrResult(null); }}
-                    className="w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2.5 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white"
-                    onFocus={e => (e.target.style.borderColor = accentColor)}
-                    onBlur={e => (e.target.style.borderColor = '')}
-                  >
-                    <option value="url">Stream URL</option>
-                    <option value="name">Channel Name</option>
-                  </select>
-                </div>
-
-                {/* Scope selector */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Scope</label>
-                  <div className="space-y-1.5">
-                    <label className="flex items-center gap-2.5 px-3 py-2 rounded hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer">
-                      <input type="radio" name="fr-scope" value="playlist" checked={frScope === 'playlist'}
-                        onChange={() => { setFrScope('playlist'); setFrResult(null); }}
-                         />
-                      <span className="text-sm text-gray-700 dark:text-gray-200">All channels in playlist</span>
-                      <span className="ml-auto text-xs text-gray-400 tabular-nums">{channels.length}</span>
-                    </label>
-                    <label className="flex items-center gap-2.5 px-3 py-2 rounded hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer">
-                      <input type="radio" name="fr-scope" value="category" checked={frScope === 'category'}
-                        onChange={() => { setFrScope('category'); setFrResult(null); }}
-                         />
-                      <span className="text-sm text-gray-700 dark:text-gray-200">All in this category</span>
-                      <span className="ml-auto text-xs text-gray-400">{activeCategory ?? '—'}</span>
-                    </label>
-                    <label className={`flex items-center gap-2.5 px-3 py-2 rounded ${selectedIds.size > 0 ? 'hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer' : 'opacity-60 cursor-default'}`}>
-                      <input type="radio" name="fr-scope" value="selected" checked={frScope === 'selected'}
-                        onChange={() => { if (selectedIds.size > 0) { setFrScope('selected'); setFrResult(null); } }}
-                        disabled={selectedIds.size === 0}
-                         />
-                      <span className="text-sm text-gray-700 dark:text-gray-200">Selected channels only</span>
-                      {selectedIds.size > 0 ? (
-                        <span className="ml-auto text-xs text-gray-400 tabular-nums">{selectedIds.size}</span>
-                      ) : (
-                        <span className="ml-auto text-[10px] text-gray-500 italic">Select channels first</span>
-                      )}
-                    </label>
-
-                  </div>
-                </div>
-
-                {/* Match preview */}
-                {frSearch && (
-                  <div className="flex items-center gap-2 px-3 py-2.5 rounded bg-gray-50 dark:bg-white/5">
-                    <Search className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                    <span className="text-sm font-medium tabular-nums" style={{ color: matchCount > 0 ? accentColor : undefined }}>
-                      {matchCount} of {scopeChannels.length} channel{scopeChannels.length !== 1 ? 's' : ''} match
-                    </span>
-                  </div>
-                )}
-
-                {/* Result message */}
-                {frResult && (
-                  <div className={`flex items-center gap-2 px-3 py-2.5 rounded ${
-                    frResult.modified > 0
-                      ? 'bg-green-50 dark:bg-green-900/20'
-                      : 'bg-gray-50 dark:bg-white/5'
-                  }`}>
-                    <Check className={`h-3.5 w-3.5 shrink-0 ${
-                      frResult.modified > 0 ? 'text-green-600 dark:text-green-400' : 'text-gray-400'
-                    }`} />
-                    <span className={`text-sm font-medium ${
-                      frResult.modified > 0
-                        ? 'text-green-700 dark:text-green-400'
-                        : 'text-gray-500 dark:text-gray-400'
-                    }`}>
-                      {frResult.modified > 0
-                        ? `Replaced in ${frResult.modified} channel${frResult.modified !== 1 ? 's' : ''}`
-                        : 'No channels were modified'
-                      }
-                    </span>
-                  </div>
-                )}
+            <div className="px-6 space-y-4">
+              <div>
+                <label className="field-label">Find</label>
+                <input
+                  autoFocus
+                  value={frSearch}
+                  onChange={e => { setFrSearch(e.target.value); setFrResult(null); }}
+                  placeholder={`Text to find in ${frField === 'url' ? 'stream links' : 'names'}`}
+                  className="field font-mono max-md:text-base"
+                />
               </div>
 
-              {/* Actions */}
-              <div className="flex justify-end gap-1 px-4 py-4">
-                <button
-                  onClick={() => setShowFindReplace(false)}
-                  className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300"
-                >
-                  {frResult ? 'Done' : 'Cancel'}
-                </button>
-                <button
-                  onClick={handleExecuteReplace}
-                  disabled={!frSearch || matchCount === 0 || frRunning}
-                  className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider disabled:opacity-40"
-                  style={{ color: frSearch && matchCount > 0 ? accentColor : undefined }}
-                >
-                  {frRunning ? 'Replacing…' : 'Replace All'}
-                </button>
+              <div>
+                <label className="field-label">Replace with</label>
+                <input
+                  value={frReplace}
+                  onChange={e => { setFrReplace(e.target.value); setFrResult(null); }}
+                  placeholder="Replacement text"
+                  className="field font-mono max-md:text-base"
+                />
               </div>
+
+              {/* Which field: two segmented buttons. */}
+              <div>
+                <p className="field-label">Look in</p>
+                <SegmentedButtons
+                  options={[{ value: 'url', label: 'Stream links' }, { value: 'name', label: 'Channel names' }]}
+                  value={frField}
+                  onChange={v => { setFrField(v); setFrResult(null); }}
+                />
+              </div>
+
+              <div>
+                <p className="field-label">Which channels</p>
+                <div className="space-y-0.5 -mx-3">
+                  {scopeOption('playlist', 'All channels in playlist', channels.length)}
+                  {scopeOption('category', 'All in this category', activeCategory ?? '—')}
+                  {scopeOption('selected', 'Selected channels only', selectedIds.size > 0 ? selectedIds.size : 'Select channels first', selectedIds.size === 0)}
+                </div>
+              </div>
+
+              {/* Match preview */}
+              {frSearch && (
+                <div className="flex items-center gap-2 px-4 h-11 rounded-xl bg-surface-container-highest">
+                  <Icon name="search" className="text-[20px] text-on-surface-variant shrink-0" />
+                  <span className={`text-label-lg tabular-nums ${matchCount > 0 ? 'text-primary' : 'text-on-surface-variant'}`}>
+                    {matchCount} of {scopeChannels.length} channel{scopeChannels.length !== 1 ? 's' : ''} match
+                  </span>
+                </div>
+              )}
+
+              {/* Result message */}
+              {frResult && (
+                <div className={`flex items-center gap-2 px-4 h-11 rounded-xl ${
+                  frResult.modified > 0 ? 'bg-primary-container text-on-primary-container' : 'bg-surface-container-highest text-on-surface-variant'
+                }`}>
+                  <Icon name="check" className="text-[20px] shrink-0" />
+                  <span className="text-label-lg">
+                    {frResult.modified > 0
+                      ? `Replaced in ${frResult.modified} channel${frResult.modified !== 1 ? 's' : ''}`
+                      : 'No channels were changed'
+                    }
+                  </span>
+                </div>
+              )}
             </div>
-          </div>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2 px-6 py-6">
+              <button onClick={() => setShowFindReplace(false)} className="md-btn btn btn-text">
+                {frResult ? 'Done' : 'Cancel'}
+              </button>
+              <button
+                onClick={handleExecuteReplace}
+                disabled={!frSearch || matchCount === 0 || frRunning}
+                className="md-btn btn btn-filled"
+              >
+                {frRunning ? 'Replacing…' : 'Replace all'}
+              </button>
+            </div>
+          </Dialog>
         );
       })()}
 

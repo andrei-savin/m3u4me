@@ -1,7 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { FileJson, Upload, X } from 'lucide-react';
 import { RestoreResult } from '../apiClient';
-import { accentAlpha } from '../store';
+import Icon from './Icon';
 
 /** "48 KB" / "12.3 MB", for showing which file was picked. */
 function formatFileSize(bytes: number): string {
@@ -35,10 +34,9 @@ export function restoreErrorMessage(e: unknown): string {
  * api.restoreBackup(). Any file is accepted (the server checks it), because a db.json copied
  * from an old install may have been renamed.
  */
-export default function BackupDropZone({ file, onFileChange, accentColor, disabled = false }: {
+export default function BackupDropZone({ file, onFileChange, disabled = false }: {
   file: File | null;
   onFileChange: (file: File | null) => void;
-  accentColor: string;
   disabled?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -63,23 +61,23 @@ export default function BackupDropZone({ file, onFileChange, accentColor, disabl
       />
 
       {file ? (
-        <div className="flex items-center gap-3 rounded-xl border border-gray-200 dark:border-white/10 bg-white/70 dark:bg-black/20 px-4 py-3">
-          <div className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center" style={{ backgroundColor: accentAlpha(accentColor, '20') }}>
-            <FileJson className="h-5 w-5" style={{ color: accentColor }} />
+        <div className="flex items-center gap-3 rounded-xl bg-surface-container-highest pl-4 pr-1.5 py-3">
+          <div className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center bg-secondary-container text-on-secondary-container">
+            <Icon name="data_object" className="text-[24px]" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-gray-900 dark:text-white truncate">{file.name}</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">{formatFileSize(file.size)}</div>
+            <div className="text-label-lg text-on-surface truncate">{file.name}</div>
+            <div className="text-body-sm text-on-surface-variant">{formatFileSize(file.size)}</div>
           </div>
           <button
             type="button"
             onClick={clear}
             disabled={disabled}
-            className="md-btn shrink-0 p-1.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white disabled:opacity-40"
+            className="md-btn icon-btn"
             aria-label="Choose a different file"
             title="Choose a different file"
           >
-            <X className="h-4 w-4" />
+            <Icon name="close" className="text-[24px]" />
           </button>
         </div>
       ) : (
@@ -95,12 +93,11 @@ export default function BackupDropZone({ file, onFileChange, accentColor, disabl
             const dropped = e.dataTransfer.files?.[0];
             if (dropped && !disabled) onFileChange(dropped);
           }}
-          className="md-btn w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 dark:border-white/15 px-4 py-8 text-center transition-colors disabled:opacity-40"
-          style={dragging ? { borderColor: accentColor, backgroundColor: accentAlpha(accentColor, '0D') } : undefined}
+          className={`md-btn w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors disabled:opacity-40 ${dragging ? 'border-primary bg-primary/5' : 'border-outline'}`}
         >
-          <Upload className="h-6 w-6" style={{ color: accentColor }} />
-          <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Drop your backup file here</span>
-          <span className="text-xs text-gray-500 dark:text-gray-400">or click to choose it</span>
+          <Icon name="upload" className="text-[24px] text-primary" />
+          <span className="text-label-lg text-on-surface">Drop your backup file here</span>
+          <span className="text-body-sm text-on-surface-variant">or click to choose it</span>
         </button>
       )}
     </div>

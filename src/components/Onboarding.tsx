@@ -1,21 +1,17 @@
 import React, { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertCircle, ArrowLeft, ArrowRight, ArchiveRestore, Check, Copy, Eye, EyeOff, FileAudio, KeyRound, Layers,
-  Loader2, Lock, Moon, Plus, Radio, ShieldCheck, Sparkles, Sun, X,
-} from 'lucide-react';
-import {
   api, setSessionToken, useChannelPoolSources, useEpgSources, triggerChannelPoolRefresh,
   triggerEpgRefresh, ChannelPoolSource, Playlist, RestoreResult,
 } from '../apiClient';
-import { useStore, notifyError, accentAlpha, contrastText, ACCENT_PRESETS, AuthExpiredError } from '../store';
-import { HomeBackground, GLASS } from './Home';
+import { useStore, notifyError, contrastText, ACCENT_PRESETS, AuthExpiredError } from '../store';
 import { Logo } from './Logo';
 import Toast from './Toast';
 import AddChannelPoolSourceDialog from './AddChannelPoolSourceDialog';
 import AddEpgSourceDialog from './AddEpgSourceDialog';
 import BackupDropZone, { describeRestoredBackup, restoreErrorMessage } from './BackupDropZone';
 import { copyToClipboard } from '../utils/copyToClipboard';
+import Icon from './Icon';
 
 // The first-run setup. App.tsx shows it instead of the app until settings.onboardingDone is
 // true, which the server sets when the first playlist is made or a backup with playlists is
@@ -48,14 +44,12 @@ function PrimaryButton({ children, onClick, disabled = false, type = 'button' }:
   disabled?: boolean;
   type?: 'button' | 'submit';
 }) {
-  const { accentColor } = useStore();
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className="md-btn inline-flex items-center justify-center gap-2 h-11 px-6 rounded-full text-sm font-medium shadow-md transition-opacity disabled:opacity-40 disabled:shadow-none"
-      style={{ backgroundColor: accentColor, color: contrastText(accentColor) }}
+      className="md-btn btn btn-filled h-12 px-6"
     >
       {children}
     </button>
@@ -72,7 +66,7 @@ function GhostButton({ children, onClick, disabled = false }: {
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="md-btn inline-flex items-center justify-center gap-1.5 h-11 px-5 rounded-full text-sm font-medium text-gray-600 dark:text-gray-300 disabled:opacity-40"
+      className="md-btn btn btn-text h-12 text-on-surface-variant"
     >
       {children}
     </button>
@@ -85,7 +79,7 @@ function StepFooter({ onBack, children }: { onBack?: () => void; children: React
     <div className="mt-8 flex items-center gap-2">
       {onBack && (
         <GhostButton onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" />
+          <Icon name="arrow_back" className="text-[20px]" />
           Back
         </GhostButton>
       )}
@@ -95,21 +89,19 @@ function StepFooter({ onBack, children }: { onBack?: () => void; children: React
 }
 
 function StepHeading({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
-  const { accentColor } = useStore();
   return (
     <div className="mb-6">
-      <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4" style={{ backgroundColor: accentAlpha(accentColor, '20'), color: accentColor }}>
+      <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4 bg-secondary-container text-on-secondary-container">
         {icon}
       </div>
-      <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">{title}</h1>
-      <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">{children}</p>
+      <h1 className="text-[28px] leading-9 font-semibold tracking-tight text-on-surface">{title}</h1>
+      <p className="mt-2 text-body-md text-on-surface-variant">{children}</p>
     </div>
   );
 }
 
 /** A copyable link on the finished screen, e.g. the playlist's address for a TV app. */
 function LinkRow({ label, url }: { label: string; url: string }) {
-  const { accentColor } = useStore();
   const [copied, setCopied] = useState(false);
   const copy = () => copyText(
     url,
@@ -117,17 +109,17 @@ function LinkRow({ label, url }: { label: string; url: string }) {
     () => notifyError(null, "Couldn't copy the link. Select it and copy it yourself."),
   );
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-gray-200 dark:border-white/10 bg-white/70 dark:bg-black/20 pl-4 pr-1.5 py-1.5">
-      <span className="w-16 shrink-0 text-[11px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">{label}</span>
-      <code className="flex-1 min-w-0 truncate text-sm font-mono text-gray-900 dark:text-white select-all">{url}</code>
-      <button onClick={copy} className="md-btn shrink-0 p-2 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white" title="Copy link" aria-label={`Copy ${label.toLowerCase()} link`}>
-        {copied ? <Check className="h-4 w-4" style={{ color: accentColor }} /> : <Copy className="h-4 w-4" />}
+    <div className="flex items-center gap-3 rounded-xl bg-surface-container-highest pl-4 pr-1 h-12">
+      <span className="w-16 shrink-0 text-label-md text-on-surface-variant">{label}</span>
+      <code className="flex-1 min-w-0 truncate text-body-md font-mono text-on-surface select-all">{url}</code>
+      <button onClick={copy} className="md-btn icon-btn" title="Copy link" aria-label={`Copy ${label.toLowerCase()} link`}>
+        {copied ? <Icon name="check" className="text-[24px] text-primary" /> : <Icon name="content_copy" className="text-[24px]" />}
       </button>
     </div>
   );
 }
 
-const inputClasses = "w-full rounded-xl border border-gray-300 dark:border-white/15 bg-white/70 dark:bg-black/20 px-4 py-3 text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none";
+const inputClasses = "field h-12 max-md:text-base";
 
 // ── Steps ──────────────────────────────────────────────────────────────────
 
@@ -137,8 +129,8 @@ function WelcomeStep({ onStartFresh, onRestore }: { onStartFresh: () => void; on
   return (
     <>
       <div className="text-center">
-        <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900 dark:text-white">Welcome to m3u4me</h1>
-        <p className="mt-3 text-base leading-relaxed text-gray-600 dark:text-gray-300 max-w-md mx-auto">
+        <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-on-surface">Welcome to m3u4me</h1>
+        <p className="mt-3 text-body-lg text-on-surface-variant max-w-md mx-auto">
           Build your own IPTV playlists from your providers' channels, and play them on every TV in your home. Setting up takes a couple of minutes.
         </p>
       </div>
@@ -146,36 +138,37 @@ function WelcomeStep({ onStartFresh, onRestore }: { onStartFresh: () => void; on
       {/* Make it yours: the same accent colours and light/dark choice as in Settings, applied
           right away so the rest of the setup already looks the way the user picked. */}
       <div className="mt-8 flex flex-col items-center gap-3">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Make it yours</span>
+        <span className="text-label-lg text-on-surface-variant">Make it yours</span>
         <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
           <div className="flex items-center gap-2">
             {ACCENT_PRESETS.map(color => (
               <button
                 key={color}
                 onClick={() => setAccentColor(color)}
-                className="md-btn w-7 h-7 rounded-full border-2 transition-transform"
+                className="md-btn w-9 h-9 rounded-full flex items-center justify-center"
                 style={{
                   backgroundColor: color,
-                  borderColor: accentColor === color ? 'white' : 'transparent',
-                  boxShadow: accentColor === color ? `0 0 0 2px ${color}` : undefined,
-                  transform: accentColor === color ? 'scale(1.15)' : undefined,
+                  color: contrastText(color),
+                  boxShadow: accentColor === color ? `0 0 0 3px var(--app-pane), 0 0 0 5px ${color}` : undefined,
                 }}
                 aria-label={`Accent colour ${color}`}
                 aria-pressed={accentColor === color}
-              />
+              >
+                {accentColor === color && <Icon name="check" className="text-[20px]" />}
+              </button>
             ))}
           </div>
-          <div className="inline-flex rounded-full p-1 bg-black/[0.05] dark:bg-white/[0.08]">
+          <div className="inline-flex rounded-full p-1 bg-surface-container-highest">
             {([
-              { dark: false, label: 'Light', icon: <Sun className="h-3.5 w-3.5" /> },
-              { dark: true, label: 'Dark', icon: <Moon className="h-3.5 w-3.5" /> },
+              { dark: false, label: 'Light', icon: <Icon name="light_mode" className="text-[18px]" /> },
+              { dark: true, label: 'Dark', icon: <Icon name="dark_mode" className="text-[18px]" /> },
             ]).map(option => (
               <button
                 key={option.label}
                 // Leaving dark mode turns AMOLED off too, like the switches in Settings do.
                 onClick={() => { setDarkMode(option.dark); if (!option.dark) setAmoledMode(false); }}
-                className={`md-btn inline-flex items-center gap-1.5 h-8 px-3.5 rounded-full text-xs font-medium transition-colors ${
-                  isDarkMode === option.dark ? 'bg-white dark:bg-white/15 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400'
+                className={`md-btn inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-label-lg transition-colors ${
+                  isDarkMode === option.dark ? 'bg-secondary-container text-on-secondary-container' : 'text-on-surface-variant'
                 }`}
                 aria-pressed={isDarkMode === option.dark}
               >
@@ -190,26 +183,25 @@ function WelcomeStep({ onStartFresh, onRestore }: { onStartFresh: () => void; on
       <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-3">
         <button
           onClick={onStartFresh}
-          className="md-btn group text-left rounded-2xl border-2 p-5 transition-transform duration-200 hover:-translate-y-0.5"
-          style={{ borderColor: accentColor, backgroundColor: accentAlpha(accentColor, '12') }}
+          className="md-btn group text-left rounded-2xl p-5 bg-primary-container text-on-primary-container transition-transform duration-200 hover:-translate-y-0.5"
         >
-          <Sparkles className="h-6 w-6" style={{ color: accentColor }} />
-          <div className="mt-3 flex items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white">
+          <Icon name="auto_awesome" className="text-[24px]" />
+          <div className="mt-3 flex items-center gap-1.5 text-title-md">
             Start fresh
-            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            <Icon name="arrow_forward" className="text-[20px] transition-transform group-hover:translate-x-0.5" />
           </div>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Add your provider and make your first playlist.</p>
+          <p className="mt-1 text-body-md opacity-80">Add your provider and make your first playlist.</p>
         </button>
         <button
           onClick={onRestore}
-          className="md-btn group text-left rounded-2xl border-2 border-gray-200 dark:border-white/10 bg-white/50 dark:bg-white/[0.03] p-5 transition-transform duration-200 hover:-translate-y-0.5"
+          className="md-btn group text-left rounded-2xl p-5 bg-surface-container-highest text-on-surface transition-transform duration-200 hover:-translate-y-0.5"
         >
-          <ArchiveRestore className="h-6 w-6 text-gray-500 dark:text-gray-400" />
-          <div className="mt-3 flex items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white">
+          <Icon name="settings_backup_restore" className="text-[24px] text-on-surface-variant" />
+          <div className="mt-3 flex items-center gap-1.5 text-title-md">
             Restore a backup
-            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            <Icon name="arrow_forward" className="text-[20px] transition-transform group-hover:translate-x-0.5" />
           </div>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Moving from another m3u4me? Bring everything with you.</p>
+          <p className="mt-1 text-body-md text-on-surface-variant">Moving from another m3u4me? Bring everything with you.</p>
         </button>
       </div>
     </>
@@ -219,16 +211,16 @@ function WelcomeStep({ onStartFresh, onRestore }: { onStartFresh: () => void; on
 /** One source in a SourceCard's list: its name and how its last fetch went. */
 function SourceRow({ name, status, failed, onRemove }: { name: string; status: string; failed: boolean; onRemove: () => void }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl bg-white/70 dark:bg-black/20 border border-gray-200 dark:border-white/10 pl-3.5 pr-1.5 py-2">
+    <div className="flex items-center gap-3 rounded-xl bg-surface-container-highest pl-4 pr-1 py-2">
       {failed
-        ? <AlertCircle className="h-4 w-4 shrink-0 text-red-500 dark:text-red-400" />
-        : <Check className="h-4 w-4 shrink-0 text-green-500" />}
+        ? <Icon name="error" className="text-[24px] shrink-0 text-error" />
+        : <Icon name="check" className="text-[24px] shrink-0 text-success" />}
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-900 dark:text-white truncate">{name}</div>
-        <div className={`text-xs truncate ${failed ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}>{status}</div>
+        <div className="text-label-lg text-on-surface truncate">{name}</div>
+        <div className={`text-body-sm truncate ${failed ? 'text-error' : 'text-on-surface-variant'}`}>{status}</div>
       </div>
-      <button onClick={onRemove} className="md-btn shrink-0 p-1.5 rounded-full text-gray-400 hover:text-gray-700 dark:hover:text-white" title="Remove" aria-label={`Remove ${name}`}>
-        <X className="h-4 w-4" />
+      <button onClick={onRemove} className="md-btn icon-btn" title="Remove" aria-label={`Remove ${name}`}>
+        <Icon name="close" className="text-[24px]" />
       </button>
     </div>
   );
@@ -242,23 +234,21 @@ function SourceCard({ icon, title, description, addLabel, onAdd, children }: {
   onAdd: () => void;
   children?: ReactNode;
 }) {
-  const { accentColor } = useStore();
   return (
-    <div className="rounded-2xl border border-gray-200 dark:border-white/10 bg-white/50 dark:bg-white/[0.03] p-4">
+    <div className="rounded-2xl border border-outline-variant p-4">
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 shrink-0" style={{ color: accentColor }}>{icon}</div>
+        <div className="mt-0.5 shrink-0 text-primary">{icon}</div>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h2>
-          <p className="mt-0.5 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{description}</p>
+          <h2 className="text-title-sm text-on-surface">{title}</h2>
+          <p className="mt-0.5 text-body-sm text-on-surface-variant">{description}</p>
         </div>
       </div>
       {children && <div className="mt-3 space-y-2">{children}</div>}
       <button
         onClick={onAdd}
-        className="md-btn mt-3 w-full inline-flex items-center justify-center gap-1.5 h-10 rounded-xl border-2 border-dashed text-sm font-medium transition-colors"
-        style={{ borderColor: accentAlpha(accentColor, '55'), color: accentColor }}
+        className="md-btn btn btn-tonal mt-3 w-full"
       >
-        <Plus className="h-4 w-4" />
+        <Icon name="add" className="text-[20px]" />
         {addLabel}
       </button>
     </div>
@@ -271,7 +261,6 @@ function SourcesStep({ onBack, onNext, onAddChannels, onAddGuide }: {
   onAddChannels: () => void;
   onAddGuide: () => void;
 }) {
-  const { accentColor } = useStore();
   const { sources: channelSources } = useChannelPoolSources();
   const { sources: guideSources } = useEpgSources();
   const [addingGuideFor, setAddingGuideFor] = useState<string | null>(null);
@@ -321,13 +310,13 @@ function SourcesStep({ onBack, onNext, onAddChannels, onAddGuide }: {
 
   return (
     <>
-      <StepHeading icon={<Layers className="h-6 w-6" />} title="Add your sources">
+      <StepHeading icon={<Icon name="stacks" className="text-[24px]" />} title="Add your sources">
         Sources are where your channels and TV guide come from, usually your IPTV provider. You'll pick channels from them for your playlists. You can add more, or change these, at any time.
       </StepHeading>
 
       <div className="space-y-3">
         <SourceCard
-          icon={<Layers className="h-5 w-5" />}
+          icon={<Icon name="stacks" className="text-[24px]" />}
           title="Channels"
           description="Your provider's Xtream Codes login, a playlist link, or a playlist file."
           addLabel="Add channel source"
@@ -346,7 +335,7 @@ function SourcesStep({ onBack, onNext, onAddChannels, onAddGuide }: {
         </SourceCard>
 
         <SourceCard
-          icon={<Radio className="h-5 w-5" />}
+          icon={<Icon name="live_tv" className="text-[24px]" />}
           title="TV guide (EPG)"
           description="What's on, for your channels. Providers usually give you an XMLTV link, or it comes with your Xtream Codes login."
           addLabel="Add TV guide"
@@ -365,18 +354,17 @@ function SourcesStep({ onBack, onNext, onAddChannels, onAddGuide }: {
                 </React.Fragment>
               ))}
               {guideSuggestions.map(s => (
-                <div key={s.id} className="flex items-center gap-3 rounded-xl px-3.5 py-2" style={{ backgroundColor: accentAlpha(accentColor, '14') }}>
-                  <Sparkles className="h-4 w-4 shrink-0" style={{ color: accentColor }} />
-                  <span className="flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-200">
-                    Use the TV guide from <span className="font-medium">{s.name}</span>
+                <div key={s.id} className="flex items-center gap-3 rounded-xl pl-4 pr-1.5 py-1.5 bg-primary-container text-on-primary-container">
+                  <Icon name="auto_awesome" className="text-[24px] shrink-0" />
+                  <span className="flex-1 min-w-0 text-body-md">
+                    Use the TV guide from <span className="font-semibold">{s.name}</span>
                   </span>
                   <button
                     onClick={() => addGuideFrom(s)}
                     disabled={addingGuideFor !== null}
-                    className="md-btn shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-medium disabled:opacity-60"
-                    style={{ backgroundColor: accentColor, color: contrastText(accentColor) }}
+                    className="md-btn btn btn-filled h-9 px-4"
                   >
-                    {addingGuideFor === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    {addingGuideFor === s.id ? <Icon name="progress_activity" className="text-[20px] animate-spin" /> : <Icon name="add" className="text-[20px]" />}
                     {addingGuideFor === s.id ? 'Adding…' : 'Add'}
                   </button>
                 </div>
@@ -390,7 +378,7 @@ function SourcesStep({ onBack, onNext, onAddChannels, onAddGuide }: {
         {addedAnything ? (
           <PrimaryButton onClick={onNext}>
             Continue
-            <ArrowRight className="h-4 w-4" />
+            <Icon name="arrow_forward" className="text-[20px]" />
           </PrimaryButton>
         ) : (
           <GhostButton onClick={onNext}>Skip for now</GhostButton>
@@ -401,7 +389,6 @@ function SourcesStep({ onBack, onNext, onAddChannels, onAddGuide }: {
 }
 
 function RestoreStep({ onBack, onRestored }: { onBack: () => void; onRestored: (result: RestoreResult) => void }) {
-  const { accentColor } = useStore();
   // Only to warn that a restore replaces sources added earlier in this setup (via Back).
   const { sources: channelSources } = useChannelPoolSources();
   const { sources: guideSources } = useEpgSources();
@@ -426,15 +413,15 @@ function RestoreStep({ onBack, onRestored }: { onBack: () => void; onRestored: (
 
   return (
     <>
-      <StepHeading icon={<ArchiveRestore className="h-6 w-6" />} title="Restore a backup">
+      <StepHeading icon={<Icon name="settings_backup_restore" className="text-[24px]" />} title="Restore a backup">
         Bring over everything from your old m3u4me: playlists, sources, TV guides and settings.
       </StepHeading>
 
-      <BackupDropZone file={file} onFileChange={f => { setFile(f); setError(''); }} accentColor={accentColor} disabled={restoring} />
+      <BackupDropZone file={file} onFileChange={f => { setFile(f); setError(''); }} disabled={restoring} />
 
-      <div className="mt-4 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-4 py-3 space-y-2 text-xs leading-relaxed text-gray-600 dark:text-gray-400">
+      <div className="mt-4 rounded-xl bg-surface-container-highest px-4 py-3 space-y-2 text-body-sm text-on-surface-variant">
         <p>
-          <span className="font-medium text-gray-800 dark:text-gray-200">Where's my backup?</span>{' '}
+          <span className="font-medium text-on-surface">Where's my backup?</span>{' '}
           In your old m3u4me, open Settings, then Backup, then Download backup.
         </p>
         <p>
@@ -444,15 +431,15 @@ function RestoreStep({ onBack, onRestored }: { onBack: () => void; onRestored: (
       </div>
 
       {(channelSources.length > 0 || guideSources.length > 0) && (
-        <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+        <p className="mt-3 text-body-sm text-warning">
           The sources you added a moment ago will be replaced by the ones in the backup.
         </p>
       )}
-      {error && <p className="mt-3 text-sm text-red-500 dark:text-red-400">{error}</p>}
+      {error && <p className="mt-3 text-body-md text-error">{error}</p>}
 
       <StepFooter onBack={restoring ? undefined : onBack}>
         <PrimaryButton onClick={restore} disabled={!file || restoring}>
-          {restoring && <Loader2 className="h-4 w-4 animate-spin" />}
+          {restoring && <Icon name="progress_activity" className="text-[20px] animate-spin" />}
           {restoring ? 'Restoring…' : 'Restore'}
         </PrimaryButton>
       </StepFooter>
@@ -461,7 +448,6 @@ function RestoreStep({ onBack, onRestored }: { onBack: () => void; onRestored: (
 }
 
 function PasswordStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
-  const { accentColor } = useStore();
   const [status, setStatus] = useState<'checking' | 'off' | 'on'>('checking');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -519,33 +505,33 @@ function PasswordStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
 
   return (
     <>
-      <StepHeading icon={<Lock className="h-6 w-6" />} title="Lock m3u4me with a password?">
+      <StepHeading icon={<Icon name="lock" className="text-[24px]" />} title="Lock m3u4me with a password?">
         Anyone on your home network can open m3u4me in a browser. A password keeps them out. Your TV apps keep loading your playlists without it.
       </StepHeading>
 
       {status === 'checking' ? (
-        <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+        <div className="flex justify-center py-6"><Icon name="progress_activity" className="text-[24px] animate-spin text-on-surface-variant" /></div>
       ) : recoveryKey ? (
-        <div className="rounded-xl border-2 p-4 space-y-3" style={{ borderColor: accentAlpha(accentColor, '40'), backgroundColor: accentAlpha(accentColor, '08') }}>
+        <div className="rounded-xl bg-primary-container text-on-primary-container p-4 space-y-3">
           <div className="flex items-center gap-2">
-            <KeyRound className="h-4 w-4" style={{ color: accentColor }} />
-            <span className="text-sm font-medium text-gray-900 dark:text-white">Save your recovery key</span>
+            <Icon name="key" className="text-[24px]" />
+            <span className="text-title-sm">Save your recovery key</span>
           </div>
-          <p className="text-xs text-gray-600 dark:text-gray-400">If you ever forget your password, this key is the only way back in. Keep it somewhere safe. It won't be shown again.</p>
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10">
-            <code className="flex-1 text-center text-sm font-mono font-medium text-gray-900 dark:text-white tracking-wider break-all">{recoveryKey}</code>
-            <button onClick={copyKey} className="md-btn p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white" title="Copy recovery key">
-              {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+          <p className="text-body-sm">If you ever forget your password, this key is the only way back in. Keep it somewhere safe. It won't be shown again.</p>
+          <div className="flex items-center gap-2 pl-4 pr-1 py-1.5 rounded-lg bg-pane text-on-surface">
+            <code className="flex-1 text-center text-body-md font-mono font-semibold break-all">{recoveryKey}</code>
+            <button onClick={copyKey} className="md-btn icon-btn" title="Copy recovery key">
+              {copied ? <Icon name="check" className="text-[24px] text-success" /> : <Icon name="content_copy" className="text-[24px]" />}
             </button>
           </div>
           {copyFailed && (
-            <p className="text-xs text-red-500 dark:text-red-400">Couldn't copy the recovery key. Select the key and copy it yourself, then keep it somewhere safe.</p>
+            <p className="text-body-sm text-error">Couldn't copy the recovery key. Select the key and copy it yourself, then keep it somewhere safe.</p>
           )}
         </div>
       ) : status === 'on' ? (
-        <div className="flex items-center gap-3 rounded-xl bg-green-500/10 px-4 py-3">
-          <ShieldCheck className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
-          <span className="text-sm text-gray-800 dark:text-gray-200">Password protection is on.</span>
+        <div className="flex items-center gap-3 rounded-xl bg-primary-container text-on-primary-container px-4 py-3">
+          <Icon name="verified_user" className="text-[24px] shrink-0" />
+          <span className="text-body-md">Password protection is on.</span>
         </div>
       ) : (
         <form onSubmit={e => { e.preventDefault(); handleSetPassword(); }} className="space-y-3">
@@ -557,11 +543,9 @@ function PasswordStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
               placeholder="Password"
               autoComplete="new-password"
               className={inputClasses + ' pr-11'}
-              onFocus={e => (e.target.style.borderColor = accentColor)}
-              onBlur={e => (e.target.style.borderColor = '')}
             />
-            <button type="button" onClick={() => setShowPassword(p => !p)} className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" tabIndex={-1} aria-label={showPassword ? 'Hide password' : 'Show password'}>
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            <button type="button" onClick={() => setShowPassword(p => !p)} className="md-btn icon-btn absolute right-1 top-1/2 -translate-y-1/2" tabIndex={-1} aria-label={showPassword ? 'Hide password' : 'Show password'}>
+              {showPassword ? <Icon name="visibility_off" className="text-[20px]" /> : <Icon name="visibility" className="text-[20px]" />}
             </button>
           </div>
           <input
@@ -571,10 +555,8 @@ function PasswordStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
             placeholder="Confirm password"
             autoComplete="new-password"
             className={inputClasses}
-            onFocus={e => (e.target.style.borderColor = accentColor)}
-            onBlur={e => (e.target.style.borderColor = '')}
           />
-          {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
+          {error && <p className="text-body-sm text-error">{error}</p>}
           {/* Lets Enter in either field submit the form; the visible button is in the footer. */}
           <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
         </form>
@@ -585,14 +567,14 @@ function PasswordStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
           <>
             <GhostButton onClick={onNext} disabled={saving}>Skip</GhostButton>
             <PrimaryButton onClick={handleSetPassword} disabled={saving || !password || !confirmPassword}>
-              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {saving && <Icon name="progress_activity" className="text-[20px] animate-spin" />}
               Set password
             </PrimaryButton>
           </>
         ) : (
           <PrimaryButton onClick={onNext} disabled={status === 'checking'}>
             Continue
-            <ArrowRight className="h-4 w-4" />
+            <Icon name="arrow_forward" className="text-[20px]" />
           </PrimaryButton>
         )}
       </StepFooter>
@@ -601,7 +583,6 @@ function PasswordStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
 }
 
 function PlaylistStep({ onBack, onCreated }: { onBack: () => void; onCreated: (playlist: Playlist) => void }) {
-  const { accentColor } = useStore();
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
 
@@ -620,11 +601,11 @@ function PlaylistStep({ onBack, onCreated }: { onBack: () => void; onCreated: (p
 
   return (
     <form onSubmit={create}>
-      <StepHeading icon={<FileAudio className="h-6 w-6" />} title="Name your first playlist">
+      <StepHeading icon={<Icon name="queue_music" className="text-[24px]" />} title="Name your first playlist">
         A playlist is the list of channels your TV app loads. Next, you'll fill it with the channels you want. You can make more playlists later, like one per room or per person.
       </StepHeading>
 
-      <label htmlFor="onboarding-playlist-name" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">Playlist name</label>
+      <label htmlFor="onboarding-playlist-name" className="field-label">Playlist name</label>
       <input
         id="onboarding-playlist-name"
         autoFocus
@@ -632,14 +613,12 @@ function PlaylistStep({ onBack, onCreated }: { onBack: () => void; onCreated: (p
         value={name}
         onChange={e => setName(e.target.value)}
         placeholder="e.g. Living Room"
-        className={inputClasses + ' text-base'}
-        onFocus={e => (e.target.style.borderColor = accentColor)}
-        onBlur={e => (e.target.style.borderColor = '')}
+        className={inputClasses + ' text-body-lg'}
       />
 
       <StepFooter onBack={creating ? undefined : onBack}>
         <PrimaryButton type="submit" disabled={!name.trim() || creating}>
-          {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+          {creating && <Icon name="progress_activity" className="text-[20px] animate-spin" />}
           Create playlist
         </PrimaryButton>
       </StepFooter>
@@ -652,13 +631,13 @@ function DoneStep({ playlist, restored, onFinish }: {
   restored: RestoreResult | null;
   onFinish: (path: string) => void;
 }) {
-  const { accentColor, setActivePlaylistId, setActiveChannelPoolSourceId } = useStore();
+  const { setActivePlaylistId, setActiveChannelPoolSourceId } = useStore();
   const { sources: channelSources } = useChannelPoolSources();
   const { sources: guideSources } = useEpgSources();
 
   const checkMark = (
-    <div className="onboarding-pop mx-auto w-16 h-16 rounded-full flex items-center justify-center shadow-lg" style={{ backgroundColor: accentColor }}>
-      <Check className="h-8 w-8" strokeWidth={3} style={{ color: contrastText(accentColor) }} />
+    <div className="onboarding-pop mx-auto w-16 h-16 rounded-full flex items-center justify-center shadow-level-2 bg-primary text-on-primary">
+      <Icon name="check" className="text-[32px]" />
     </div>
   );
 
@@ -667,13 +646,13 @@ function DoneStep({ playlist, restored, onFinish }: {
     return (
       <div className="text-center">
         {checkMark}
-        <h1 className="mt-5 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Welcome back</h1>
-        <p className="mt-3 text-base text-gray-600 dark:text-gray-300">Your backup is restored: {describeRestoredBackup(restored)}.</p>
-        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">Your sources are refreshing in the background, so their channels and TV guide can take a few minutes to show up.</p>
+        <h1 className="mt-5 text-3xl font-bold tracking-tight text-on-surface">Welcome back</h1>
+        <p className="mt-3 text-body-lg text-on-surface-variant">Your backup is restored: {describeRestoredBackup(restored)}.</p>
+        <p className="mt-2 text-body-md text-on-surface-variant">Your sources are refreshing in the background, so their channels and TV guide can take a few minutes to show up.</p>
         <div className="mt-8 flex justify-center">
           <PrimaryButton onClick={() => onFinish('/')}>
             Open m3u4me
-            <ArrowRight className="h-4 w-4" />
+            <Icon name="arrow_forward" className="text-[20px]" />
           </PrimaryButton>
         </div>
       </div>
@@ -699,9 +678,9 @@ function DoneStep({ playlist, restored, onFinish }: {
     <>
       <div className="text-center">
         {checkMark}
-        <h1 className="mt-5 text-3xl font-bold tracking-tight text-gray-900 dark:text-white">You're all set</h1>
-        <p className="mt-3 text-base text-gray-600 dark:text-gray-300">
-          <span className="font-medium text-gray-900 dark:text-white">{playlist.name}</span> is ready. Add this link to your TV app to watch it:
+        <h1 className="mt-5 text-3xl font-bold tracking-tight text-on-surface">You're all set</h1>
+        <p className="mt-3 text-body-lg text-on-surface-variant">
+          <span className="font-medium text-on-surface">{playlist.name}</span> is ready. Add this link to your TV app to watch it:
         </p>
       </div>
 
@@ -709,7 +688,7 @@ function DoneStep({ playlist, restored, onFinish }: {
         <LinkRow label="Playlist" url={base} />
         {guideSources.length > 0 && <LinkRow label="TV guide" url={`${base}/epg`} />}
       </div>
-      <p className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">
+      <p className="mt-4 text-center text-body-sm text-on-surface-variant">
         It's empty for now. Add channels to it{channelSources.length > 0 ? ' from your sources' : ''}, and your TV app picks them up the next time it loads the playlist.
       </p>
 
@@ -717,7 +696,7 @@ function DoneStep({ playlist, restored, onFinish }: {
         <GhostButton onClick={() => onFinish('/')}>Go to Home</GhostButton>
         <PrimaryButton onClick={addChannels}>
           Add channels
-          <ArrowRight className="h-4 w-4" />
+          <Icon name="arrow_forward" className="text-[20px]" />
         </PrimaryButton>
       </div>
     </>
@@ -728,16 +707,15 @@ function DoneStep({ playlist, restored, onFinish }: {
 
 export default function Onboarding({ onFinish }: { onFinish: () => void }) {
   const navigate = useNavigate();
-  const { accentColor } = useStore();
   const [path, setPath] = useState<Path>('fresh');
   const [step, setStep] = useState<Step>('welcome');
   // Which way the last move went, so the next step slides in from the matching side.
   const [direction, setDirection] = useState<'forward' | 'back'>('forward');
   const [restored, setRestored] = useState<RestoreResult | null>(null);
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
-  // The source dialogs are opened from the Sources step but rendered out here, outside the glass
-  // card: the card's backdrop blur (and the step's slide-in transform) would otherwise make the
-  // dialogs' position: fixed relative to the card instead of the window.
+  // The source dialogs are opened from the Sources step but rendered out here, outside the
+  // card: the step's slide-in transform would otherwise make the dialogs' position: fixed
+  // relative to the card instead of the window.
   const [openDialog, setOpenDialog] = useState<'channels' | 'guide' | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -767,24 +745,23 @@ export default function Onboarding({ onFinish }: { onFinish: () => void }) {
   };
 
   return (
-    <div className="md-page-in relative h-dvh overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
-      <HomeBackground logos={[]} accentColor={accentColor} />
-
-      <div ref={scrollRef} className="relative z-10 h-full overflow-y-auto">
+    <div className="md-page-in relative h-dvh overflow-hidden bg-page text-on-surface">
+      <div ref={scrollRef} className="h-full overflow-y-auto">
         <div className="min-h-full flex flex-col items-center justify-center px-4 py-10">
-          <Logo className="h-7 w-auto text-gray-900 dark:text-white mb-8 shrink-0" />
+          <Logo className="h-7 w-auto text-on-surface mb-8 shrink-0" />
 
-          <div className={`w-full max-w-xl rounded-3xl overflow-hidden ${GLASS}`}>
+          {/* One card on the tinted page, like a dialog that can't be closed. */}
+          <div className="w-full max-w-xl rounded-[28px] overflow-hidden bg-pane border border-pane-border">
             {index !== -1 && (
               <div className="px-6 sm:px-10 pt-7">
                 <div className="flex gap-1.5" aria-hidden="true">
                   {sequence.map((s, i) => (
-                    <div key={s} className="h-1 flex-1 rounded-full bg-gray-300/60 dark:bg-white/10 overflow-hidden">
-                      <div className="h-full rounded-full transition-[width] duration-500" style={{ width: i <= index ? '100%' : '0%', backgroundColor: accentColor }} />
+                    <div key={s} className="h-1 flex-1 rounded-full bg-secondary-container overflow-hidden">
+                      <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: i <= index ? '100%' : '0%' }} />
                     </div>
                   ))}
                 </div>
-                <p className="mt-3 text-xs font-medium text-gray-500 dark:text-gray-400">
+                <p className="mt-3 text-label-md text-on-surface-variant">
                   Step {index + 1} of {sequence.length} · {STEP_LABELS[step]}
                 </p>
               </div>

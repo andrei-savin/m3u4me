@@ -256,9 +256,6 @@ export interface Stats {
   /** Linked channels with a sync suggestion waiting, across all playlists. */
   pendingSyncCount: number;
   pendingSyncPlaylists: { id: string; name: string; count: number }[];
-  /** Small, purely decorative sample of distinct channel logo URLs from the user's own
-   * playlists — powers the homescreen's scrolling background wall. */
-  sampleLogos: string[];
 }
 
 /** Response shape of POST /api/backup/restore: what the restored backup contains. */
@@ -284,6 +281,8 @@ export const api = {
   importPlaylist: (data: { name: string; url?: string; content?: string; confirmWarning?: boolean }) =>
     authFetch('/api/playlists/import', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(r => r.json()) as Promise<Playlist | { warning: string } | { error: string }>,
   updatePlaylist: (playlistId: string, updates: any) => authFetch(`/api/playlists/${playlistId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(updates) }),
+  /** Saves the order playlists are listed in. Their links don't change. */
+  reorderPlaylists: (ids: string[]) => authFetch('/api/playlists/reorder', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids}) }),
   deletePlaylist: (playlistId: string) => authFetch(`/api/playlists/${playlistId}`, { method: 'DELETE' }),
   getChannels: (playlistId: string) => authFetch(`/api/playlists/${playlistId}/channels`).then(r => r.json()),
   updateChannel: (playlistId: string, channelId: string, updates: any) => authFetch(`/api/playlists/${playlistId}/channels/${channelId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(updates) }),

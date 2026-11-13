@@ -52,7 +52,7 @@ Each source refreshes on its own. You can set how often, in hours, with **Refres
 
 For your TV app to show what's on, each channel needs a [TVG ID](glossary.md#tvg-id) that exists in your guide. Channels from Xtream Codes sources often have one already. For the rest:
 
-- **Many at once:** open the playlist and press **Bulk EPG Assignment**. m3u4me matches your channel names to the guide's channel names, and you check the matches before applying them.
+- **Many at once:** open the playlist and press **Assign EPG**. m3u4me matches your channel names to the guide's channel names, and you check the matches before applying them.
 - **One at a time:** click a channel's TVG ID and start typing. Suggestions come from your guides.
 - **From the guide:** in **EPG**, pick a guide channel and assign it to channels in any playlist.
 

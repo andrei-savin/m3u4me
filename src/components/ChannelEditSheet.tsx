@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { ArrowUp, ArrowDown, Trash2, Link2, ChevronRight } from 'lucide-react';
+import Switch from './Switch';
 import { Channel, SyncFieldToggles as Toggles } from '../apiClient';
 import { useStore } from '../store';
 import BottomSheet from './BottomSheet';
 import ChannelLogo from './ChannelLogo';
 import TvgIdAutocomplete from './TvgIdAutocomplete';
 import { ChannelSyncDetails } from './ChannelSyncPopover';
+import Icon from './Icon';
 
 /** The channel's text fields in the form. */
 type TextField = 'name' | 'url' | 'logo' | 'tvgId' | 'category' | 'httpReferrer' | 'httpUserAgent';
@@ -14,11 +15,11 @@ const TEXT_FIELDS: TextField[] = ['name', 'url', 'logo', 'tvgId', 'category', 'h
 /** What Save sends for the channel itself: only the fields that changed. */
 export type ChannelChanges = Partial<Record<TextField, string | null>> & { isHidden?: boolean };
 
-const labelCls = 'block text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1.5';
-// text-base (16px) on purpose: iPhones zoom the whole page in on any smaller input.
-const inputCls = 'w-full h-11 px-3 rounded border border-gray-300 dark:border-gray-600 bg-transparent text-base text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none';
+const labelCls = 'field-label';
+// text-body-lg (16px) on purpose: iPhones zoom the whole page in on any smaller input.
+const inputCls = 'field h-12 text-body-lg';
 const monoInputProps = { inputMode: 'url' as const, autoCapitalize: 'off', autoCorrect: 'off', spellCheck: false };
-const actionRowCls = 'md-btn w-full h-12 flex items-center gap-3 px-5 text-left text-sm';
+const actionRowCls = 'md-btn w-full h-14 flex items-center gap-4 px-6 text-left text-body-lg';
 
 /**
  * The channel editor on phones: tapping a channel in PlaylistEditor opens this sheet with
@@ -71,7 +72,7 @@ export default function ChannelEditSheet({
   onInsert?: (position: 'above' | 'below') => void;
   onDelete?: () => void;
 }) {
-  const { accentColor, logoBgColor } = useStore();
+  const { logoBgColor } = useStore();
   const [text, setText] = useState<Partial<Record<TextField, string>>>({});
   const [isHiddenDraft, setIsHiddenDraft] = useState<boolean | null>(null);
   const [syncFieldsDraft, setSyncFieldsDraft] = useState<Toggles | null>(null);
@@ -131,26 +132,25 @@ export default function ChannelEditSheet({
       canClose={!saving}
       title={isNew ? 'New channel' : channel.name || 'Unnamed'}
       footer={
-        <div className="flex justify-end gap-2 px-4 py-3">
+        <div className="flex justify-end gap-2 px-4 py-4">
           <button
             onClick={onClose}
             disabled={saving}
-            className="md-btn h-11 px-5 rounded-full text-sm font-medium text-gray-600 dark:text-gray-300 disabled:opacity-40"
+            className="md-btn btn btn-text"
           >
             Cancel
           </button>
           <button
             onClick={save}
             disabled={!canSave || saving}
-            className="md-btn h-11 px-6 rounded-full text-sm font-medium text-white disabled:opacity-40"
-            style={{ backgroundColor: accentColor }}
+            className="md-btn btn btn-filled"
           >
             {isNew ? (saving ? 'Adding…' : 'Add') : (saving ? 'Saving…' : 'Save')}
           </button>
         </div>
       }
     >
-      <div className="px-5 py-4 space-y-4">
+      <div className="px-6 py-4 space-y-5">
         <div>
           <label className={labelCls} htmlFor="sheet-name">Name</label>
           <input id="sheet-name" value={valueOf('name')} onChange={e => setField('name', e.target.value)} className={inputCls} placeholder="Channel name" autoFocus={isNew} />
@@ -168,7 +168,7 @@ export default function ChannelEditSheet({
               logo={valueOf('logo') || null}
               name={valueOf('name')}
               logoBgColor={logoBgColor}
-              className="shrink-0 w-12 h-9 rounded border border-gray-200 dark:border-white/10"
+              className="shrink-0 w-14 h-10 rounded-md"
             />
             <input id="sheet-logo" value={valueOf('logo')} onChange={e => setField('logo', e.target.value)} className={`${inputCls} font-mono`} placeholder="https://…" {...monoInputProps} />
           </div>
@@ -179,12 +179,10 @@ export default function ChannelEditSheet({
           <TvgIdAutocomplete mode="field" value={valueOf('tvgId')} onChange={v => setField('tvgId', v)} />
           {showingSavedTvgId && tvgIdLabel && (
             <span
-              className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-full text-xs font-medium max-w-full"
-              style={{ backgroundColor: `${accentColor}20`, color: accentColor }}
+              className="inline-flex items-center gap-1.5 mt-2 h-7 px-2.5 rounded-lg border border-outline-variant text-label-md text-on-surface max-w-full"
             >
               <span className="truncate">{tvgIdLabel.displayName}</span>
-              <span className="shrink-0 opacity-50">•</span>
-              <span className="shrink-0 opacity-80">{tvgIdLabel.sourceName}</span>
+              <span className="shrink-0 font-normal text-on-surface-variant">· {tvgIdLabel.sourceName}</span>
             </span>
           )}
         </div>
@@ -201,30 +199,21 @@ export default function ChannelEditSheet({
         {!isNew && (
           <div className="flex items-center gap-3 pt-1">
             <div className="flex-1 min-w-0">
-              <p className="text-sm text-gray-900 dark:text-white">Show in playlist</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
+              <p className="text-body-lg text-on-surface">Show in playlist</p>
+              <p className="text-body-sm text-on-surface-variant">
                 {isHidden ? 'Hidden: players won’t see this channel.' : 'Players see this channel.'}
               </p>
             </div>
-            <button
-              role="switch"
-              aria-checked={!isHidden}
-              aria-label="Show in playlist"
-              onClick={() => setIsHiddenDraft(!isHidden)}
-              className={`shrink-0 w-11 h-6 rounded-full relative transition-colors ${isHidden ? 'bg-gray-300 dark:bg-gray-600' : ''}`}
-              style={isHidden ? undefined : { backgroundColor: accentColor }}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${isHidden ? '' : 'translate-x-5'}`} />
-            </button>
+            <Switch checked={!isHidden} onChange={show => setIsHiddenDraft(!show)} label="Show in playlist" />
           </div>
         )}
       </div>
 
       {/* ── Stream headers ─────────────────────────────────────────────── */}
-      <div className="border-t border-gray-100 dark:border-white/10 px-5 py-4 space-y-4">
+      <div className="border-t border-outline-variant px-6 py-5 space-y-5">
         <div>
-          <p className="text-sm text-gray-900 dark:text-white">Stream headers</p>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-title-md text-on-surface">Stream headers</p>
+          <p className="text-body-sm text-on-surface-variant">
             Only for channels that won't play without them. Leave both empty otherwise.
           </p>
         </div>
@@ -239,14 +228,14 @@ export default function ChannelEditSheet({
       </div>
 
       {isNew ? (
-        <p className="border-t border-gray-100 dark:border-white/10 px-5 py-4 text-xs text-gray-500 dark:text-gray-400">
+        <p className="border-t border-outline-variant px-6 py-4 text-body-sm text-on-surface-variant">
           Once it's added, tap the channel to hide it or keep it in sync with a source.
         </p>
       ) : (<>
         {/* ── Sync ───────────────────────────────────────────────────────── */}
-        <div className="border-t border-gray-100 dark:border-white/10 py-2">
+        <div className="border-t border-outline-variant py-2">
           {channel.link ? (
-            <div className="mx-4 rounded border border-gray-200 dark:border-white/10">
+            <div className="mx-4 rounded-xl bg-surface-container-high">
               <ChannelSyncDetails
                 playlistId={playlistId}
                 channel={channel}
@@ -258,30 +247,30 @@ export default function ChannelEditSheet({
               />
             </div>
           ) : (
-            <button onClick={() => onLinkToSource?.()} className={`${actionRowCls} text-gray-700 dark:text-gray-200`}>
-              <Link2 className="h-4 w-4 shrink-0 text-gray-400" />
+            <button onClick={() => onLinkToSource?.()} className={`${actionRowCls} text-on-surface`}>
+              <Icon name="link" className="text-[24px] shrink-0 text-on-surface-variant" />
               <span className="flex-1 min-w-0">
                 Link to source…
-                <span className="block text-xs text-gray-500 dark:text-gray-400">Keep this channel in sync with a channel from your sources.</span>
+                <span className="block text-body-sm text-on-surface-variant">Keep this channel in sync with a channel from your sources.</span>
               </span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" />
+              <Icon name="chevron_right" className="text-[20px] shrink-0 text-on-surface-variant" />
             </button>
           )}
         </div>
 
         {/* ── Insert and delete ─────────────────────────────────────────── */}
-        <div className="border-t border-gray-100 dark:border-white/10 py-1">
+        <div className="border-t border-outline-variant py-1">
           {/* Not while there are unsaved changes: the new channel's form replaces this one. */}
-          <button onClick={() => onInsert?.('above')} disabled={isDirty} className={`${actionRowCls} text-gray-700 dark:text-gray-200 disabled:opacity-40`}>
-            <ArrowUp className="h-4 w-4 shrink-0 text-gray-400" />
+          <button onClick={() => onInsert?.('above')} disabled={isDirty} className={`${actionRowCls} text-on-surface disabled:opacity-40`}>
+            <Icon name="arrow_upward" className="text-[24px] shrink-0 text-on-surface-variant" />
             Insert a new channel above
           </button>
-          <button onClick={() => onInsert?.('below')} disabled={isDirty} className={`${actionRowCls} text-gray-700 dark:text-gray-200 disabled:opacity-40`}>
-            <ArrowDown className="h-4 w-4 shrink-0 text-gray-400" />
+          <button onClick={() => onInsert?.('below')} disabled={isDirty} className={`${actionRowCls} text-on-surface disabled:opacity-40`}>
+            <Icon name="arrow_downward" className="text-[24px] shrink-0 text-on-surface-variant" />
             Insert a new channel below
           </button>
-          <button onClick={() => onDelete?.()} className={`${actionRowCls} text-red-600 dark:text-red-400`}>
-            <Trash2 className="h-4 w-4 shrink-0" />
+          <button onClick={() => onDelete?.()} className={`${actionRowCls} text-error`}>
+            <Icon name="delete" className="text-[24px] shrink-0" />
             Delete channel
           </button>
         </div>

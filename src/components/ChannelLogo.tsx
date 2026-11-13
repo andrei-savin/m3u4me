@@ -34,6 +34,8 @@ export default function ChannelLogo({ logo, name, logoBgColor, className }: {
       />
     );
   }
+  // A fixed mid-grey, not a theme colour: it sits on the logo background the user picked
+  // (light by default), which doesn't change with dark mode.
   return (
     <div
       className={`${className} flex items-center justify-center text-[8px] font-bold text-gray-400 uppercase`}

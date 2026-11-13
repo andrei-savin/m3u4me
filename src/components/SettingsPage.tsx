@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../store';
 import { api, clearSessionToken, setSessionToken, triggerRefresh, triggerEpgRefresh, triggerChannelPoolRefresh, SyncFieldToggles as SyncFieldTogglesValue } from '../apiClient';
-import { ArrowLeft, Shield, Palette, Eye, EyeOff, Copy, Check, KeyRound, Lock, Unlock, Github, ArrowUpCircle, Info, Coffee, Link2, DatabaseBackup, Download, ArchiveRestore, Loader2 } from 'lucide-react';
+import Switch from './Switch';
+import { COLOR_STYLES, previewColorStyle } from '../utils/materialTheme';
+import SegmentedButtons from './SegmentedButtons';
 import { Logo } from './Logo';
 import { useVersionInfo } from './AppInfo';
 import { contrastText, notifyError, notifyInfo, ACCENT_PRESETS, AuthExpiredError } from '../store';
@@ -14,9 +16,11 @@ import { useIsPhone } from '../utils/useIsPhone';
 import SyncFieldToggles from './SyncFieldToggles';
 import Dialog from './Dialog';
 import BackupDropZone, { describeRestoredBackup, restoreErrorMessage } from './BackupDropZone';
+import Icon from './Icon';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const isPhone = useIsPhone();
   const {
     isDarkMode, setDarkMode,
@@ -24,6 +28,8 @@ export default function SettingsPage() {
     logoBgColor, setLogoBgColor,
     accentColor, setAccentColor,
     is24Hour, set24Hour,
+    fontFamily, setFontFamily,
+    colorStyle, setColorStyle,
     setActivePlaylistId, setActiveChannelPoolSourceId, setActiveEpgSourceId, setUndoEntry,
   } = useStore();
 
@@ -226,187 +232,192 @@ export default function SettingsPage() {
     }
   };
 
+  const theme: 'light' | 'dark' | 'amoled' = isAmoledMode ? 'amoled' : isDarkMode ? 'dark' : 'light';
+  const setTheme = (t: 'light' | 'dark' | 'amoled') => {
+    setDarkMode(t !== 'light');
+    setAmoledMode(t === 'amoled');
+  };
+  const passwordInputCls = 'field h-12 pr-12 max-md:text-base';
+  const eyeButton = (
+    <button type="button" onClick={() => setShowPasswordVis(p => !p)} className="md-btn icon-btn absolute right-1 top-1/2 -translate-y-1/2" tabIndex={-1} aria-label={showPassword ? 'Hide password' : 'Show password'}>
+      {showPassword ? <Icon name="visibility_off" className="text-[24px]" /> : <Icon name="visibility" className="text-[24px]" />}
+    </button>
+  );
+
   return (
-    <div className="md-page-in flex flex-col h-dvh overflow-hidden bg-gray-100 dark:bg-[#121212] amoled:dark:bg-black font-sans">
+    <div className="md-page-in flex flex-col h-dvh overflow-hidden bg-page text-on-surface">
       {/* Phones get the shared phone bars instead (Settings is one of the tabs there, so no Back button). */}
       <MobileTopBar title="Settings" showSearch={false} />
       {/* Top bar */}
-      <nav className="h-16 shrink-0 z-30 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] elev-4 hidden md:flex items-center px-2 gap-2">
+      <nav className="h-16 shrink-0 z-30 hidden md:flex items-center pl-2 pr-4 gap-2">
         <button
-          onClick={() => navigate(-1)}
-          className="md-btn p-2 rounded-full text-gray-600 dark:text-gray-300"
+          // Back to wherever Settings was opened from. Opened directly (a bookmark, a new tab)
+          // there's nothing in this app to go back to, so it goes Home instead of leaving the app.
+          onClick={() => (location.key === 'default' ? navigate('/') : navigate(-1))}
+          className="md-btn icon-btn w-12 h-12 text-on-surface"
           aria-label="Back to dashboard"
         >
-          <ArrowLeft className="h-6 w-6" />
+          <Icon name="arrow_back" className="text-[24px]" />
         </button>
-        <h1 className="text-lg font-medium text-gray-900 dark:text-white">Settings</h1>
+        <h1 className="text-title-lg text-on-surface">Settings</h1>
       </nav>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        <div className="max-w-2xl mx-auto px-4 max-md:px-2 pt-2 pb-8 space-y-4">
 
           {/* ── Appearance ────────────────────────────────────────────────── */}
-          <section className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] rounded-lg elev-1 overflow-hidden">
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 dark:border-white/8">
-              <Palette className="h-5 w-5" style={{ color: accentColor }} />
-              <h2 className="text-base font-medium text-gray-900 dark:text-white">Appearance</h2>
-            </div>
-            <div className="px-5 py-4 space-y-5">
+          <SettingsSection icon={<Icon name="palette" className="text-[24px]" />} title="Appearance">
+            <SettingsRow title="Theme" description="AMOLED black keeps the background pure black, for OLED screens.">
+              <SegmentedButtons
+                className="w-full sm:w-80"
+                options={[
+                  { value: 'light', label: 'Light' },
+                  { value: 'dark', label: 'Dark' },
+                  { value: 'amoled', label: 'AMOLED' },
+                ]}
+                value={theme}
+                onChange={setTheme}
+              />
+            </SettingsRow>
 
-              {/* Dark mode */}
-              <div className="flex items-center justify-between">
-                <label className="text-sm text-gray-800 dark:text-gray-200">Dark Mode</label>
-                <button
-                  role="switch" aria-checked={isDarkMode}
-                  onClick={() => { const v = !isDarkMode; setDarkMode(v); if (!v) setAmoledMode(false); }}
-                  className={`w-11 h-6 rounded-full relative transition-colors ${isDarkMode ? '' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  style={isDarkMode ? { backgroundColor: accentColor } : undefined}
-                >
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${isDarkMode ? 'translate-x-5' : ''}`} />
-                </button>
-              </div>
+            <SettingsRow title="Font" description="Geist is the app's own font. System uses your device's font.">
+              <SegmentedButtons
+                className="w-full sm:w-80"
+                options={[
+                  { value: 'geist', label: 'Geist', style: { fontFamily: "'Geist Variable', sans-serif" } },
+                  { value: 'system', label: 'System', style: { fontFamily: 'system-ui, -apple-system, sans-serif' } },
+                ]}
+                value={fontFamily}
+                onChange={setFontFamily}
+              />
+            </SettingsRow>
 
-              {/* AMOLED */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <label className="text-sm text-gray-800 dark:text-gray-200">AMOLED Dark</label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Pure black for OLED displays</p>
-                </div>
-                <button
-                  role="switch" aria-checked={isAmoledMode}
-                  onClick={() => { const v = !isAmoledMode; setAmoledMode(v); if (v) setDarkMode(true); }}
-                  className={`w-11 h-6 rounded-full relative transition-colors ${isAmoledMode ? '' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  style={isAmoledMode ? { backgroundColor: accentColor } : undefined}
-                >
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${isAmoledMode ? 'translate-x-5' : ''}`} />
-                </button>
-              </div>
-
-              {/* Logo background */}
-              <div>
-                <label className="text-sm text-gray-800 dark:text-gray-200 block mb-2">Logo Background</label>
-                <div className="flex gap-2">
-                  {['#f1f5f9', '#ffffff', '#000000', 'transparent'].map(color => (
-                    <button
-                      key={color}
-                      onClick={() => setLogoBgColor(color)}
-                      className={`md-btn w-8 h-8 rounded border-2 transition-all ${logoBgColor === color ? 'scale-110' : 'border-gray-300 dark:border-gray-600'}`}
-                      style={{
-                        backgroundColor: color === 'transparent' ? undefined : color,
-                        borderColor: logoBgColor === color ? accentColor : undefined,
-                        backgroundImage: color === 'transparent' ? 'linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%)' : undefined,
-                        backgroundSize: '8px 8px',
-                        backgroundPosition: '0 0,4px 4px',
-                      }}
-                      title={color}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Accent color */}
-              <div>
-                <label className="text-sm text-gray-800 dark:text-gray-200 block mb-2">Accent Color</label>
-                <div className="flex gap-2 flex-wrap">
-                  {ACCENT_PRESETS.map(color => (
-                    <button
-                      key={color}
-                      onClick={() => setAccentColor(color)}
-                      className="md-btn w-8 h-8 rounded-full border-2 transition-all"
-                      style={{
-                        backgroundColor: color,
-                        borderColor: accentColor === color ? 'white' : 'transparent',
-                        boxShadow: accentColor === color ? `0 0 0 2px ${color}` : undefined,
-                        transform: accentColor === color ? 'scale(1.15)' : undefined,
-                      }}
-                      title={color}
-                    />
-                  ))}
-                  <label
-                    className="w-8 h-8 rounded-full border-2 border-dashed border-gray-400 dark:border-gray-500 flex items-center justify-center cursor-pointer relative overflow-hidden"
-                    title="Custom color"
+            <SettingsRow title="Accent color" description="The whole app's colours are made from this one.">
+              <div className="flex gap-2.5 flex-wrap">
+                {ACCENT_PRESETS.map(color => (
+                  <button
+                    key={color}
+                    onClick={() => setAccentColor(color)}
+                    className="md-btn w-10 h-10 rounded-full flex items-center justify-center transition-transform"
+                    style={{
+                      backgroundColor: color,
+                      color: contrastText(color),
+                      boxShadow: accentColor.toLowerCase() === color.toLowerCase() ? `0 0 0 3px var(--app-pane), 0 0 0 5px ${color}` : undefined,
+                    }}
+                    title={color}
+                    aria-label={`Accent colour ${color}`}
                   >
-                    <span className="text-gray-400 dark:text-gray-500 text-xs leading-none select-none">+</span>
-                    <input
-                      type="color"
-                      value={accentColor}
-                      onChange={e => setAccentColor(e.target.value)}
-                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                    />
-                  </label>
-                </div>
-              </div>
-
-              {/* 24-Hour Time */}
-              <div className="flex items-center justify-between">
-                <label className="text-sm text-gray-800 dark:text-gray-200">24-Hour Time</label>
-                <button
-                  role="switch" aria-checked={is24Hour}
-                  onClick={() => set24Hour(!is24Hour)}
-                  className={`w-11 h-6 rounded-full relative transition-colors ${is24Hour ? '' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  style={is24Hour ? { backgroundColor: accentColor } : undefined}
+                    {accentColor.toLowerCase() === color.toLowerCase() && <Icon name="check" className="text-[24px]" />}
+                  </button>
+                ))}
+                {/* Any colour: the colour picker sits invisibly over this round button. */}
+                <label
+                  className="md-btn w-10 h-10 rounded-full border-2 border-dashed border-outline flex items-center justify-center cursor-pointer relative overflow-hidden text-on-surface-variant"
+                  title="Custom colour"
                 >
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${is24Hour ? 'translate-x-5' : ''}`} />
-                </button>
+                  <Icon name="add" className="text-[24px]" />
+                  <input
+                    type="color"
+                    value={accentColor}
+                    onChange={e => setAccentColor(e.target.value)}
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  />
+                </label>
               </div>
+            </SettingsRow>
 
-            </div>
-          </section>
+            <SettingsRow title="Color style" description={COLOR_STYLES.find(s => s.id === colorStyle)?.description}>
+              {/* Each style shows three colours it makes from the current accent. */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {COLOR_STYLES.map(style => {
+                  const selected = style.id === colorStyle;
+                  const [primary, container, tertiary] = previewColorStyle(accentColor, style.id, isDarkMode);
+                  return (
+                    <button
+                      key={style.id}
+                      onClick={() => setColorStyle(style.id)}
+                      role="radio"
+                      aria-checked={selected}
+                      className={`md-btn flex items-center gap-2.5 h-12 pl-2.5 pr-3 rounded-xl border text-left text-label-lg ${
+                        selected ? 'border-transparent bg-secondary-container text-on-secondary-container' : 'border-outline-variant text-on-surface'
+                      }`}
+                    >
+                      <span className="flex shrink-0 w-9 h-6 rounded-full overflow-hidden ring-1 ring-outline-variant" aria-hidden="true">
+                        <span className="flex-1" style={{ backgroundColor: primary }} />
+                        <span className="flex-1" style={{ backgroundColor: container }} />
+                        <span className="flex-1" style={{ backgroundColor: tertiary }} />
+                      </span>
+                      <span className="truncate">{style.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </SettingsRow>
+
+            <SettingsRow title="Logo background" description="Behind channel logos, so dark and light logos both stay visible.">
+              <div className="flex gap-2.5">
+                {['#f1f5f9', '#ffffff', '#000000', 'transparent'].map(color => (
+                  <button
+                    key={color}
+                    onClick={() => setLogoBgColor(color)}
+                    className={`md-btn w-12 h-10 rounded-lg border ${logoBgColor === color ? 'border-transparent ring-2 ring-primary ring-offset-2 ring-offset-pane' : 'border-outline-variant'}`}
+                    style={{
+                      backgroundColor: color === 'transparent' ? undefined : color,
+                      backgroundImage: color === 'transparent' ? 'linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%)' : undefined,
+                      backgroundSize: '8px 8px',
+                      backgroundPosition: '0 0,4px 4px',
+                    }}
+                    title={color === 'transparent' ? 'None' : color}
+                  />
+                ))}
+              </div>
+            </SettingsRow>
+
+            <SettingsRow title="24-hour time" inline>
+              <Switch checked={is24Hour} onChange={set24Hour} label="24-hour time" />
+            </SettingsRow>
+          </SettingsSection>
 
           {/* ── Channel sync ──────────────────────────────────────────────── */}
-          <section className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] rounded-lg elev-1 overflow-hidden">
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 dark:border-white/8">
-              <Link2 className="h-5 w-5" style={{ color: accentColor }} />
-              <h2 className="text-base font-medium text-gray-900 dark:text-white">Channel Sync</h2>
-            </div>
-            <div className="px-5 py-4 space-y-3">
-              <div>
-                <label className="text-sm text-gray-800 dark:text-gray-200">Default sync settings</label>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                  What gets updated in your playlists when you add channels from a source with "Keep in sync with source" turned on, unless you pick custom settings. Changing this doesn't affect channels you've already linked.
-                </p>
-              </div>
+          <SettingsSection icon={<Icon name="link" className="text-[24px]" />} title="Channel sync">
+            <SettingsRow
+              title="Default sync settings"
+              description={`What gets updated in your playlists when you add channels from a source with "Keep in sync with source" turned on, unless you pick custom settings. Changing this doesn't affect channels you've already linked.`}
+            >
               {syncDefaults ? (
-                <SyncFieldToggles value={syncDefaults} onChange={handleSyncDefaultsChange} accentColor={accentColor} />
+                <SyncFieldToggles value={syncDefaults} onChange={handleSyncDefaultsChange} />
               ) : (
-                <p className="text-sm text-gray-400">Loading…</p>
+                <p className="text-body-md text-on-surface-variant">Loading…</p>
               )}
-            </div>
-          </section>
+            </SettingsRow>
+          </SettingsSection>
 
           {/* ── Security ──────────────────────────────────────────────────── */}
-          <section className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] rounded-lg elev-1 overflow-hidden">
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 dark:border-white/8">
-              <Shield className="h-5 w-5" style={{ color: accentColor }} />
-              <h2 className="text-base font-medium text-gray-900 dark:text-white">Security</h2>
-            </div>
-            <div className="px-5 py-4 space-y-4">
+          <SettingsSection icon={<Icon name="shield" className="text-[24px]" />} title="Security">
+            <div className="px-6 py-4 space-y-4">
 
               {authLoading ? (
-                <p className="text-sm text-gray-400">Loading…</p>
+                <p className="text-body-md text-on-surface-variant">Loading…</p>
               ) : authStatusError ? (
                 <div>
-                  <p className="text-sm text-red-500 dark:text-red-400">Couldn't load security status. Check your connection.</p>
-                  <button
-                    onClick={checkAuthStatus}
-                    className="md-btn mt-2 text-xs font-medium underline text-gray-600 dark:text-gray-300"
-                  >
+                  <p className="text-body-md text-error">Couldn't load security status. Check your connection.</p>
+                  <button onClick={checkAuthStatus} className="md-btn btn btn-text mt-2 -ml-3">
                     Retry
                   </button>
                 </div>
               ) : (
                 <>
                   {/* Status */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {authEnabled
-                        ? <Lock className="h-4 w-4 text-green-500" />
-                        : <Unlock className="h-4 w-4 text-gray-400" />
-                      }
-                      <span className="text-sm text-gray-800 dark:text-gray-200">
-                        Password protection {authEnabled ? 'enabled' : 'disabled'}
-                      </span>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${authEnabled ? 'bg-primary-container text-on-primary-container' : 'bg-surface-container-highest text-on-surface-variant'}`}>
+                      {authEnabled ? <Icon name="lock" className="text-[24px]" /> : <Icon name="lock_open" className="text-[24px]" />}
+                    </div>
+                    <div>
+                      <p className="text-body-lg text-on-surface">Password protection {authEnabled ? 'is on' : 'is off'}</p>
+                      <p className="text-body-sm text-on-surface-variant">
+                        {authEnabled ? 'Opening m3u4me asks for your password.' : 'Anyone on your network can open m3u4me.'}
+                      </p>
                     </div>
                   </div>
 
@@ -414,28 +425,17 @@ export default function SettingsPage() {
                   {securityAction === 'none' && (
                     <div className="flex flex-wrap gap-2">
                       {!authEnabled && (
-                        <button
-                          onClick={() => { resetSecurityForm(); setSecurityAction('enable'); }}
-                          className="md-btn h-9 px-4 rounded-lg text-sm font-medium text-white"
-                          style={{ backgroundColor: accentColor }}
-                        >
-                          Enable Password
+                        <button onClick={() => { resetSecurityForm(); setSecurityAction('enable'); }} className="md-btn btn btn-filled">
+                          Turn on password
                         </button>
                       )}
                       {authEnabled && (
                         <>
-                          <button
-                            onClick={() => { resetSecurityForm(); setSecurityAction('change'); }}
-                            className="md-btn h-9 px-4 rounded-lg text-sm font-medium text-white"
-                            style={{ backgroundColor: accentColor }}
-                          >
-                            Change Password
+                          <button onClick={() => { resetSecurityForm(); setSecurityAction('change'); }} className="md-btn btn btn-tonal">
+                            Change password
                           </button>
-                          <button
-                            onClick={() => { resetSecurityForm(); setSecurityAction('remove'); }}
-                            className="md-btn h-9 px-4 rounded-lg text-sm font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-500/30"
-                          >
-                            Remove Password
+                          <button onClick={() => { resetSecurityForm(); setSecurityAction('remove'); }} className="md-btn btn btn-outlined text-error">
+                            Remove password
                           </button>
                         </>
                       )}
@@ -444,22 +444,18 @@ export default function SettingsPage() {
 
                   {/* Recovery key display */}
                   {recoveryKey && (
-                    <div className="rounded-lg border-2 p-4 space-y-3" style={{ borderColor: accentColor + '40', backgroundColor: accentColor + '08' }}>
+                    <div className="rounded-xl bg-primary-container text-on-primary-container p-4 space-y-3">
                       <div className="flex items-center gap-2">
-                        <KeyRound className="h-4 w-4" style={{ color: accentColor }} />
-                        <span className="text-sm font-medium text-gray-900 dark:text-white">Your Recovery Key</span>
+                        <Icon name="key" className="text-[24px]" />
+                        <span className="text-title-sm">Your recovery key</span>
                       </div>
-                      <p className="text-xs text-gray-600 dark:text-gray-400">Save this key in a safe place. You'll need it if you forget your password. It won't be shown again.</p>
-                      <div className="flex items-center gap-2 p-3 rounded-lg bg-white dark:bg-black/20 border border-gray-200 dark:border-white/10">
-                        <code className="flex-1 text-center text-sm font-mono font-medium text-gray-900 dark:text-white tracking-wider">
+                      <p className="text-body-sm">Save this key in a safe place. You'll need it if you forget your password. It won't be shown again.</p>
+                      <div className="flex items-center gap-2 pl-4 pr-1 h-12 rounded-lg bg-pane text-on-surface">
+                        <code className="flex-1 text-center text-body-md font-mono font-semibold tracking-wider">
                           {recoveryKey}
                         </code>
-                        <button
-                          onClick={handleCopyKey}
-                          className="md-btn p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-white"
-                          title="Copy"
-                        >
-                          {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                        <button onClick={handleCopyKey} className="md-btn icon-btn" title="Copy">
+                          {copied ? <Icon name="check" className="text-[24px] text-success" /> : <Icon name="content_copy" className="text-[24px]" />}
                         </button>
                       </div>
                     </div>
@@ -467,8 +463,8 @@ export default function SettingsPage() {
 
                   {/* Success message */}
                   {securitySuccess && !recoveryKey && (
-                    <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1.5">
-                      <Check className="h-4 w-4" />
+                    <p className="text-body-md text-success flex items-center gap-1.5">
+                      <Icon name="check" className="text-[24px]" />
                       {securitySuccess}
                     </p>
                   )}
@@ -483,13 +479,9 @@ export default function SettingsPage() {
                             value={currentPassword}
                             onChange={e => setCurrentPassword(e.target.value)}
                             placeholder="Current password"
-                            className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-                            onFocus={e => (e.target.style.borderColor = accentColor)}
-                            onBlur={e => (e.target.style.borderColor = '')}
+                            className={passwordInputCls}
                           />
-                          <button type="button" onClick={() => setShowPasswordVis(p => !p)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400" tabIndex={-1}>
-                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </button>
+                          {eyeButton}
                         </div>
                       )}
                       <div className="relative">
@@ -498,16 +490,10 @@ export default function SettingsPage() {
                           value={password}
                           onChange={e => setPassword(e.target.value)}
                           placeholder={securityAction === 'change' ? 'New password' : 'Password'}
-                          className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-                          onFocus={e => (e.target.style.borderColor = accentColor)}
-                          onBlur={e => (e.target.style.borderColor = '')}
+                          className={passwordInputCls}
                           autoFocus
                         />
-                        {securityAction === 'enable' && (
-                          <button type="button" onClick={() => setShowPasswordVis(p => !p)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400" tabIndex={-1}>
-                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </button>
-                        )}
+                        {securityAction === 'enable' && eyeButton}
                       </div>
                       <input
                         type={showPassword ? 'text' : 'password'}
@@ -515,24 +501,14 @@ export default function SettingsPage() {
                         onChange={e => setConfirmPassword(e.target.value)}
                         onKeyDown={e => e.key === 'Enter' && handleSetPassword()}
                         placeholder="Confirm password"
-                        className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2.5 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-                        onFocus={e => (e.target.style.borderColor = accentColor)}
-                        onBlur={e => (e.target.style.borderColor = '')}
+                        className="field h-12 max-md:text-base"
                       />
-                      {securityError && <p className="text-xs text-red-500 dark:text-red-400">{securityError}</p>}
+                      {securityError && <p className="text-body-sm text-error">{securityError}</p>}
                       <div className="flex gap-2 pt-1">
-                        <button
-                          onClick={handleSetPassword}
-                          disabled={savingPassword}
-                          className="md-btn h-9 px-4 rounded-lg text-sm font-medium text-white disabled:opacity-40"
-                          style={{ backgroundColor: accentColor }}
-                        >
-                          {savingPassword ? 'Saving…' : securityAction === 'change' ? 'Change Password' : 'Set Password'}
+                        <button onClick={handleSetPassword} disabled={savingPassword} className="md-btn btn btn-filled">
+                          {savingPassword ? 'Saving…' : securityAction === 'change' ? 'Change password' : 'Set password'}
                         </button>
-                        <button
-                          onClick={resetSecurityForm}
-                          className="md-btn h-9 px-4 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300"
-                        >
+                        <button onClick={resetSecurityForm} className="md-btn btn btn-text">
                           Cancel
                         </button>
                       </div>
@@ -542,7 +518,7 @@ export default function SettingsPage() {
                   {/* Remove password form */}
                   {securityAction === 'remove' && (
                     <div className="space-y-3 pt-1">
-                      <p className="text-sm text-gray-600 dark:text-gray-400">Enter your current password to remove password protection.</p>
+                      <p className="text-body-md text-on-surface-variant">Enter your current password to remove password protection.</p>
                       <div className="relative">
                         <input
                           type={showPassword ? 'text' : 'password'}
@@ -550,28 +526,17 @@ export default function SettingsPage() {
                           onChange={e => setCurrentPassword(e.target.value)}
                           onKeyDown={e => e.key === 'Enter' && handleRemovePassword()}
                           placeholder="Current password"
-                          className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2.5 pr-10 text-sm focus:outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-400"
-                          onFocus={e => (e.target.style.borderColor = accentColor)}
-                          onBlur={e => (e.target.style.borderColor = '')}
+                          className={passwordInputCls}
                           autoFocus
                         />
-                        <button type="button" onClick={() => setShowPasswordVis(p => !p)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400" tabIndex={-1}>
-                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
+                        {eyeButton}
                       </div>
-                      {securityError && <p className="text-xs text-red-500 dark:text-red-400">{securityError}</p>}
+                      {securityError && <p className="text-body-sm text-error">{securityError}</p>}
                       <div className="flex gap-2 pt-1">
-                        <button
-                          onClick={handleRemovePassword}
-                          disabled={savingPassword}
-                          className="md-btn h-9 px-4 rounded-lg text-sm font-medium text-white bg-red-600 disabled:opacity-40"
-                        >
-                          {savingPassword ? 'Removing…' : 'Remove Password'}
+                        <button onClick={handleRemovePassword} disabled={savingPassword} className="md-btn btn bg-error text-on-error">
+                          {savingPassword ? 'Removing…' : 'Remove password'}
                         </button>
-                        <button
-                          onClick={resetSecurityForm}
-                          className="md-btn h-9 px-4 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300"
-                        >
+                        <button onClick={resetSecurityForm} className="md-btn btn btn-text">
                           Cancel
                         </button>
                       </div>
@@ -580,99 +545,66 @@ export default function SettingsPage() {
                 </>
               )}
             </div>
-          </section>
+          </SettingsSection>
 
           {/* ── Backup ────────────────────────────────────────────────────── */}
-          <section className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] rounded-lg elev-1 overflow-hidden">
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 dark:border-white/8">
-              <DatabaseBackup className="h-5 w-5" style={{ color: accentColor }} />
-              <h2 className="text-base font-medium text-gray-900 dark:text-white">Backup</h2>
-            </div>
-            <div className="px-5 py-4 space-y-4">
-              <div>
-                <p className="text-sm text-gray-800 dark:text-gray-200">Save everything in one file</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                  Your playlists, sources, TV guides and settings. Use it to move m3u4me to a new server, or to go back to how things were. It contains your providers' logins, so keep it somewhere private. Your m3u4me password isn't included.
-                </p>
-              </div>
+          <SettingsSection icon={<Icon name="database" className="text-[24px]" />} title="Backup">
+            <SettingsRow
+              title="Save everything in one file"
+              description="Your playlists, sources, TV guides and settings. Use it to move m3u4me to a new server, or to go back to how things were. It contains your providers' logins, so keep it somewhere private. Your m3u4me password isn't included."
+            >
               <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={handleDownloadBackup}
-                  disabled={downloadingBackup}
-                  className="md-btn inline-flex items-center gap-2 h-9 px-4 rounded-lg text-sm font-medium disabled:opacity-60"
-                  style={{ backgroundColor: accentColor, color: contrastText(accentColor) }}
-                >
-                  {downloadingBackup ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                <button onClick={handleDownloadBackup} disabled={downloadingBackup} className="md-btn btn btn-filled">
+                  {downloadingBackup ? <Icon name="progress_activity" className="text-[20px] animate-spin" /> : <Icon name="download" className="text-[20px]" />}
                   Download backup
                 </button>
-                <button
-                  onClick={() => setRestoreOpen(true)}
-                  className="md-btn inline-flex items-center gap-2 h-9 px-4 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-white/15"
-                >
-                  <ArchiveRestore className="h-4 w-4" />
+                <button onClick={() => setRestoreOpen(true)} className="md-btn btn btn-outlined">
+                  <Icon name="settings_backup_restore" className="text-[20px]" />
                   Restore from backup…
                 </button>
               </div>
-            </div>
-          </section>
+            </SettingsRow>
+          </SettingsSection>
 
           {/* ── About ─────────────────────────────────────────────────────── */}
-          <section className="bg-white dark:bg-[#1e1e1e] amoled:dark:bg-[#0a0a0a] rounded-lg elev-1 overflow-hidden">
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 dark:border-white/8">
-              <Info className="h-5 w-5" style={{ color: accentColor }} />
-              <h2 className="text-base font-medium text-gray-900 dark:text-white">About</h2>
-            </div>
-            <div className="px-5 py-6 flex flex-col items-center text-center">
-              {/* Logo */}
+          <SettingsSection icon={<Icon name="info" className="text-[24px]" />} title="About">
+            <div className="px-6 pt-4 pb-6 flex flex-col items-center text-center">
               <div className="mb-4">
-                <Logo className="h-10 w-auto text-gray-900 dark:text-white" />
+                <Logo className="h-10 w-auto text-on-surface" />
               </div>
 
-              {/* Description */}
-              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed max-w-sm">
+              <p className="text-body-md text-on-surface-variant max-w-sm">
                 Your new favourite IPTV playlist manager!
               </p>
-              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1.5 leading-relaxed max-w-sm">
+              <p className="text-body-sm text-on-surface-variant mt-1.5 max-w-sm">
                 This app is AI-generated. Nothing ever leaves your device, no data is being collected.
               </p>
 
               {/* GitHub & Buy Me a Coffee buttons */}
-              <div className="mt-5 mb-5 flex items-center gap-3">
-                <a
-                  href={GITHUB_REPO}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 h-9 px-5 rounded-full text-sm font-medium transition-colors"
-                  style={{
-                    backgroundColor: accentColor,
-                    color: contrastText(accentColor),
-                  }}
-                >
-                  <Github className="h-4 w-4" />
+              <div className="mt-5 mb-5 flex flex-wrap justify-center items-center gap-2">
+                <a href={GITHUB_REPO} target="_blank" rel="noopener noreferrer" className="md-btn btn btn-tonal">
+                  <Icon name="code" className="text-[20px]" />
                   View on GitHub
                 </a>
                 <a
                   href={BMC_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 h-9 px-5 rounded-full text-sm font-medium transition-colors"
-                  style={{
-                    backgroundColor: BMC_YELLOW,
-                    color: contrastText(BMC_YELLOW),
-                  }}
+                  className="md-btn btn"
+                  style={{ backgroundColor: BMC_YELLOW, color: contrastText(BMC_YELLOW) }}
                 >
-                  <Coffee className="h-4 w-4" />
+                  <Icon name="coffee" className="text-[20px]" />
                   Buy me a coffee
                 </a>
               </div>
 
               {/* Version & Update */}
               <div className="flex flex-col items-center gap-2">
-                <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
+                <span className="text-body-sm text-on-surface-variant font-mono">
                   {versionInfo.versionCheckFailed ? 'Couldn\'t determine app version' : `v${versionInfo.current}`}
                 </span>
                 {versionInfo.updateCheckFailed && !versionInfo.versionCheckFailed && (
-                  <span className="text-xs text-gray-400 dark:text-gray-500">
+                  <span className="text-body-sm text-on-surface-variant">
                     Couldn't check for updates
                   </span>
                 )}
@@ -681,44 +613,35 @@ export default function SettingsPage() {
                     href={versionInfo.releaseUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition-colors mt-2"
-                    style={{ backgroundColor: accentColor + '18', color: accentColor }}
+                    className="md-btn inline-flex items-center gap-1.5 h-8 px-3 rounded-lg mt-2 text-label-lg bg-primary-container text-on-primary-container"
                   >
-                    <ArrowUpCircle className="h-3.5 w-3.5" />
+                    <Icon name="arrow_circle_up" className="text-[20px]" />
                     Update available: v{versionInfo.latest}
                   </a>
                 )}
               </div>
             </div>
-          </section>
+          </SettingsSection>
 
         </div>
       </div>
 
       {restoreOpen && (
         <Dialog onClose={closeRestore} dismissible={!restoring} maxWidth="max-w-md">
-          <h2 className="text-xl font-medium text-gray-900 dark:text-white px-6 pt-6 pb-3">Restore from backup</h2>
+          <h2 className="text-headline-sm text-on-surface px-6 pt-6 pb-4">Restore from backup</h2>
           <div className="px-6 space-y-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-body-md text-on-surface-variant">
               This replaces all your playlists, sources, TV guides and settings with the ones in the backup. A copy of what you have now is kept in m3u4me's data folder on the server, just in case.
             </p>
-            <BackupDropZone file={restoreFile} onFileChange={f => { setRestoreFile(f); setRestoreError(''); }} accentColor={accentColor} disabled={restoring} />
-            {restoreError && <p className="text-xs text-red-500 dark:text-red-400">{restoreError}</p>}
+            <BackupDropZone file={restoreFile} onFileChange={f => { setRestoreFile(f); setRestoreError(''); }} disabled={restoring} />
+            {restoreError && <p className="text-body-sm text-error">{restoreError}</p>}
           </div>
-          <div className="flex justify-end gap-1 px-6 py-4 mt-2">
-            <button
-              onClick={closeRestore}
-              disabled={restoring}
-              className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300 disabled:opacity-40"
-            >
+          <div className="flex justify-end gap-2 px-6 py-6">
+            <button onClick={closeRestore} disabled={restoring} className="md-btn btn btn-text">
               Cancel
             </button>
-            <button
-              onClick={handleRestore}
-              disabled={!restoreFile || restoring}
-              className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-red-600 dark:text-red-400 disabled:opacity-40 flex items-center gap-2"
-            >
-              {restoring && <Loader2 className="w-3 h-3 animate-spin" />}
+            <button onClick={handleRestore} disabled={!restoreFile || restoring} className="md-btn btn btn-text text-error">
+              {restoring && <Icon name="progress_activity" className="text-[20px] animate-spin" />}
               Replace everything
             </button>
           </div>
@@ -728,6 +651,35 @@ export default function SettingsPage() {
       {isPhone && <MobileTabBar active="settings" />}
       {/* Error/info snackbar, same as Dashboard and Home, so failures here aren't silent */}
       <Toast withTabBar />
+    </div>
+  );
+}
+
+/** One card on the Settings screen: an icon and title, then its rows. */
+function SettingsSection({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+  return (
+    <section className="bg-pane border border-pane-border rounded-2xl overflow-hidden">
+      <div className="flex items-center gap-3 px-6 pt-5 pb-1">
+        <span className="text-primary flex">{icon}</span>
+        <h2 className="text-title-md text-on-surface">{title}</h2>
+      </div>
+      <div className="divide-y divide-outline-variant/60">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * One setting: its name and an optional explanation, with the control below (or on the right
+ * with `inline`, for a single switch).
+ */
+function SettingsRow({ title, description, inline = false, children }: { title: string; description?: string; inline?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={`px-6 py-4 ${inline ? 'flex items-center justify-between gap-4' : 'space-y-3'}`}>
+      <div className="min-w-0">
+        <p className="text-body-lg text-on-surface">{title}</p>
+        {description && <p className="text-body-sm text-on-surface-variant mt-0.5">{description}</p>}
+      </div>
+      {children}
     </div>
   );
 }

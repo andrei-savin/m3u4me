@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { isPhoneNow } from './utils/useIsPhone';
+import { isNarrowNow } from './utils/useIsPhone';
+import type { ColorStyle } from './utils/materialTheme';
 
 interface AppState {
   activePlaylistId: string | null;
@@ -45,6 +46,18 @@ interface AppState {
   setHideUrls: (hide: boolean) => void;
   is24Hour: boolean;
   set24Hour: (is24Hour: boolean) => void;
+  /** 'geist' (Geist + Geist Mono, the default) or 'system' (the device's own fonts). */
+  fontFamily: FontFamily;
+  setFontFamily: (font: FontFamily) => void;
+  /** How the palette is built from the accent colour (see COLOR_STYLES in materialTheme.ts). */
+  colorStyle: ColorStyle;
+  setColorStyle: (style: ColorStyle) => void;
+  /**
+   * Width in pixels of the channel name column in a playlist, once its divider has been
+   * dragged. null = automatic (PlaylistEditor shares the row between name and TV guide).
+   */
+  nameColumnWidth: number | null;
+  setNameColumnWidth: (width: number | null) => void;
   undoEntry: { description: string; restore: () => Promise<void> } | null;
   setUndoEntry: (entry: { description: string; restore: () => Promise<void> } | null) => void;
   /**
@@ -56,6 +69,8 @@ interface AppState {
   toast: { id: number; type: 'error' | 'warning' | 'info'; message: string } | null;
   setToast: (toast: { id: number; type: 'error' | 'warning' | 'info'; message: string } | null) => void;
 }
+
+export type FontFamily = 'geist' | 'system';
 
 /** The accent colour swatches offered in Settings and on the first-run setup's welcome screen.
  * The first one is the default accentColor below. */
@@ -81,8 +96,8 @@ export const useStore = create<AppState>()(
       setChannelPoolLogOpen: (open) => set({ channelPoolLogOpen: open }),
       syncLogOpenFor: null,
       setSyncLogOpenFor: (playlistId) => set({ syncLogOpenFor: playlistId }),
-      // Starts closed on phones, where the drawer floats over the whole screen.
-      isSidebarOpen: !isPhoneNow(),
+      // Starts closed on phones and upright tablets, where the drawer floats over the page.
+      isSidebarOpen: !isNarrowNow(),
       setSidebarOpen: (isOpen) => set({ isSidebarOpen: isOpen }),
       logoBgColor: '#f1f5f9',
       setLogoBgColor: (color) => set({ logoBgColor: color }),
@@ -96,6 +111,12 @@ export const useStore = create<AppState>()(
       setHideUrls: (hide) => set({ hideUrls: hide }),
       is24Hour: false,
       set24Hour: (is24Hour) => set({ is24Hour }),
+      fontFamily: 'geist',
+      setFontFamily: (fontFamily) => set({ fontFamily }),
+      colorStyle: 'tonalSpot',
+      setColorStyle: (colorStyle) => set({ colorStyle }),
+      nameColumnWidth: null,
+      setNameColumnWidth: (nameColumnWidth) => set({ nameColumnWidth }),
       undoEntry: null,
       setUndoEntry: (entry) => set({ undoEntry: entry }),
       toast: null,
@@ -109,6 +130,16 @@ export const useStore = create<AppState>()(
         isDarkMode: state.isDarkMode,
         isAmoledMode: state.isAmoledMode,
         is24Hour: state.is24Hour,
+        fontFamily: state.fontFamily,
+        colorStyle: state.colorStyle,
+        nameColumnWidth: state.nameColumnWidth,
+        // What was open last, so a reload (or a phone browser that dropped the tab) comes back
+        // to the same playlist, category, source and guide instead of an empty screen. Dashboard
+        // falls back to the first one when a remembered one has since been deleted.
+        activePlaylistId: state.activePlaylistId,
+        activeCategory: state.activeCategory,
+        activeEpgSourceId: state.activeEpgSourceId,
+        activeChannelPoolSourceId: state.activeChannelPoolSourceId,
       }),
     }
   )
@@ -159,9 +190,4 @@ export function contrastText(hex: string): string {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return (r * 299 + g * 587 + b * 114) / 1000 > 145 ? '#000000' : '#ffffff';
-}
-
-/** Appends a two-hex-digit alpha to a #RRGGBB string (e.g. 0x18 ≈ 9 %). */
-export function accentAlpha(hex: string, alpha: string): string {
-  return `${hex}${alpha}`;
 }

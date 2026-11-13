@@ -1,21 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api, ChannelPoolEntry, ChannelPoolSource, usePlaylists, Playlist, channelPoolEvents, triggerRefresh, triggerChannelPoolRefresh, SyncFieldToggles as SyncFieldTogglesValue } from '../apiClient';
 import { useStore, notifyError, notifyInfo } from '../store';
-import { Search, Loader2, Plus, Check, X, CheckSquare, Square, Link2, AlertTriangle, RefreshCw, Pencil, SlidersHorizontal, Copy } from 'lucide-react';
+import Checkbox from './Checkbox';
 import ChannelLogo from './ChannelLogo';
 import { useDebouncedValue } from '../utils/useDebouncedValue';
 import { formatTime } from '../utils/formatTime';
 import Dialog from './Dialog';
 import SyncFieldToggles, { describeSyncFields, anySyncFieldOn } from './SyncFieldToggles';
-import { useIsPhone } from '../utils/useIsPhone';
+import { useIsPhone, canHover } from '../utils/useIsPhone';
 import { copyToClipboard } from '../utils/copyToClipboard';
+import Icon from './Icon';
+import SourceActions from './SourceActions';
 
 interface ChannelPoolViewerProps {
   sourceId: string;
   // Undefined while the source list is still loading. Sync is only offered once it's known.
   source?: ChannelPoolSource;
   // Re-downloads the source (Dashboard's sidebar refresh), and opens its edit dialog. Both are
-  // offered next to a failed download's reason.
+  // next to the title (SourceActions) and next to a failed download's reason.
   onRetry: () => void;
   isRetrying: boolean;
   onEdit: () => void;
@@ -35,7 +37,6 @@ function formatWhen(ts: number, is24Hour: boolean): string {
 function DownloadErrorNotice({
   source,
   full,
-  accentColor,
   is24Hour,
   onRetry,
   isRetrying,
@@ -43,7 +44,6 @@ function DownloadErrorNotice({
 }: {
   source: ChannelPoolSource;
   full: boolean;
-  accentColor: string;
   is24Hour: boolean;
   onRetry: () => void;
   isRetrying: boolean;
@@ -55,22 +55,13 @@ function DownloadErrorNotice({
   ].filter(Boolean).join(' ');
 
   const buttons = (
-    <div className={`flex items-center gap-1 ${full ? 'justify-center mt-4' : 'mt-2 -ml-2'}`}>
-      <button
-        onClick={onRetry}
-        disabled={isRetrying}
-        className="md-btn h-8 px-3 rounded text-xs font-medium uppercase tracking-wider flex items-center gap-1.5 disabled:opacity-50"
-        style={{ color: accentColor }}
-      >
-        <RefreshCw className={`h-3.5 w-3.5 ${isRetrying ? 'animate-spin' : ''}`} />
+    <div className={`flex items-center gap-1 ${full ? 'justify-center mt-5' : 'mt-2 -ml-3'}`}>
+      <button onClick={onRetry} disabled={isRetrying} className={`md-btn btn btn-text ${full ? '' : 'text-on-error-container'}`}>
+        <Icon name="refresh" className={`text-[20px] ${isRetrying ? 'animate-spin' : ''}`} />
         {isRetrying ? 'Trying…' : 'Try again'}
       </button>
-      <button
-        onClick={onEdit}
-        className="md-btn h-8 px-3 rounded text-xs font-medium uppercase tracking-wider flex items-center gap-1.5"
-        style={{ color: accentColor }}
-      >
-        <Pencil className="h-3.5 w-3.5" />
+      <button onClick={onEdit} className={`md-btn btn btn-text ${full ? '' : 'text-on-error-container'}`}>
+        <Icon name="edit" className="text-[20px]" />
         Edit source
       </button>
     </div>
@@ -79,24 +70,24 @@ function DownloadErrorNotice({
   if (full) {
     return (
       <div className="flex flex-col items-center justify-center h-full px-6 text-center">
-        <div className="w-12 h-12 rounded-full flex items-center justify-center bg-red-50 dark:bg-red-500/10 mb-4">
-          <AlertTriangle className="h-6 w-6 text-red-500 dark:text-red-400" />
+        <div className="w-16 h-16 rounded-full flex items-center justify-center bg-error-container text-on-error-container mb-5">
+          <Icon name="warning" className="text-[28px]" />
         </div>
-        <h3 className="text-base font-medium text-gray-900 dark:text-white">Couldn't download this source</h3>
-        <p className="mt-2 max-w-md text-sm text-gray-600 dark:text-gray-300">{source.lastFetchError}</p>
-        {details && <p className="mt-2 max-w-md text-xs text-gray-400 dark:text-gray-500">{details}</p>}
+        <h3 className="text-title-md text-on-surface">Couldn't download this source</h3>
+        <p className="mt-2 max-w-md text-body-md text-on-surface-variant">{source.lastFetchError}</p>
+        {details && <p className="mt-2 max-w-md text-body-sm text-on-surface-variant">{details}</p>}
         {buttons}
       </div>
     );
   }
 
   return (
-    <div className="shrink-0 flex gap-3 px-4 py-3 border-b border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-500/10">
-      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-red-500 dark:text-red-400" />
+    <div className="shrink-0 flex gap-3 mx-4 mb-2 px-4 py-3 rounded-xl bg-error-container text-on-error-container">
+      <Icon name="warning" className="text-[24px] shrink-0 mt-0.5" />
       <div className="min-w-0">
-        <p className="text-sm font-medium text-red-700 dark:text-red-300">Couldn't download the latest channels</p>
-        <p className="mt-0.5 text-sm text-red-700/90 dark:text-red-300/90">{source.lastFetchError}</p>
-        {details && <p className="mt-1 text-xs text-red-700/70 dark:text-red-300/70">{details}</p>}
+        <p className="text-label-lg">Couldn't download the latest channels</p>
+        <p className="mt-0.5 text-body-md">{source.lastFetchError}</p>
+        {details && <p className="mt-1 text-body-sm opacity-80">{details}</p>}
         {buttons}
       </div>
     </div>
@@ -106,13 +97,11 @@ function DownloadErrorNotice({
 function AddToPlaylistModal({
   channels,
   playlists,
-  accentColor,
   canSync,
   onClose,
 }: {
   channels: ChannelPoolEntry[];
   playlists: Playlist[];
-  accentColor: string;
   // False for uploaded-file sources: the file never changes, so there'd be nothing to sync.
   canSync: boolean;
   // `added` is true only after a successful add, so Cancel doesn't report anything.
@@ -174,22 +163,22 @@ function AddToPlaylistModal({
 
   return (
     <Dialog onClose={() => onClose()}>
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100 dark:border-white/10">
-          <h2 className="text-base font-medium text-gray-900 dark:text-white">
+        <div className="flex items-center justify-between pl-6 pr-3 pt-4 pb-2">
+          <h2 className="text-headline-sm text-on-surface">
             Add {channels.length} channel{channels.length !== 1 ? 's' : ''} to playlist
           </h2>
-          <button onClick={() => onClose()} className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/10 transition-colors">
-            <X className="h-4 w-4" />
+          <button onClick={() => onClose()} className="md-btn icon-btn" aria-label="Close">
+            <Icon name="close" className="text-[24px]" />
           </button>
         </div>
 
-        <div className="px-6 py-4 flex flex-col gap-4">
+        <div className="px-6 pt-2 pb-2 flex flex-col gap-4">
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Playlist</label>
+            <label className="field-label">Playlist</label>
             <select
               value={selectedPlaylist}
               onChange={e => setSelectedPlaylist(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#333] text-gray-900 dark:text-white focus:outline-none"
+              className="field bg-dialog max-md:text-base"
             >
               {playlists.map(pl => <option key={pl.id} value={pl.id}>{pl.name}</option>)}
               {playlists.length === 0 && <option value="">No playlists available</option>}
@@ -197,13 +186,13 @@ function AddToPlaylistModal({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">
-              Category override <span className="normal-case font-normal">(optional)</span>
+            <label className="field-label">
+              Category override <span className="font-normal">(optional)</span>
             </label>
             <select
               value={categoryOverride}
               onChange={e => setCategoryOverride(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#333] text-gray-900 dark:text-white focus:outline-none"
+              className="field bg-dialog max-md:text-base"
             >
               <option value="">Keep original categories</option>
               {playlists.find(p => p.id === selectedPlaylist)?.categories?.map(cat => (
@@ -213,18 +202,17 @@ function AddToPlaylistModal({
           </div>
 
           {canSync && (
-            <div className="rounded border border-gray-200 dark:border-white/10 p-3 flex flex-col gap-3">
-              <label className="flex items-start gap-2.5 cursor-pointer">
+            <div className="rounded-xl bg-surface-container-highest p-4 flex flex-col gap-3">
+              <label className="flex items-start gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={keepInSync}
                   onChange={e => setKeepInSync(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer"
-                  style={{ accentColor }}
+                  className="mt-0.5 h-[18px] w-[18px] shrink-0 cursor-pointer accent-primary"
                 />
                 <span>
-                  <span className="block text-sm text-gray-900 dark:text-white">Keep in sync with source</span>
-                  <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  <span className="block text-body-lg text-on-surface">Keep in sync with source</span>
+                  <span className="block text-body-sm text-on-surface-variant mt-0.5">
                     When the provider changes {channels.length === 1 ? 'this channel' : 'these channels'}, your playlist updates too.
                   </span>
                 </span>
@@ -234,16 +222,16 @@ function AddToPlaylistModal({
                   <select
                     value={syncMode}
                     onChange={e => setSyncMode(e.target.value as 'default' | 'custom')}
-                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#333] text-gray-900 dark:text-white focus:outline-none"
+                    className="field bg-dialog max-md:text-base"
                   >
                     <option value="default">Default settings{defaultFields ? ` (${describeSyncFields(defaultFields)})` : ''}</option>
                     <option value="custom">Custom settings</option>
                   </select>
                   {syncMode === 'custom' && (
-                    <SyncFieldToggles value={customFields} onChange={setCustomFields} accentColor={accentColor} />
+                    <SyncFieldToggles value={customFields} onChange={setCustomFields} />
                   )}
                   {nothingToSync && (
-                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                    <p className="text-body-sm text-error">
                       {syncMode === 'custom'
                         ? 'Pick at least one thing to sync, or turn off "Keep in sync with source".'
                         : "Your default sync settings don't sync anything. Pick custom settings, or change the defaults in Settings."}
@@ -255,31 +243,31 @@ function AddToPlaylistModal({
           )}
         </div>
 
-        <div className="flex justify-end gap-1 px-4 pb-4">
+        <div className="flex justify-end gap-2 px-6 pt-4 pb-6">
           <button
             onClick={() => onClose()}
             disabled={adding}
-            className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-gray-600 dark:text-gray-300"
+            className="md-btn btn btn-text"
           >
             Cancel
           </button>
           <button
             onClick={handleAdd}
             disabled={adding || !selectedPlaylist || done || nothingToSync}
-            className="md-btn h-9 px-4 rounded text-xs font-medium uppercase tracking-wider text-white disabled:opacity-50 flex items-center gap-2"
-            style={{ backgroundColor: accentColor }}
+            className="md-btn btn btn-filled"
           >
-            {done ? 'Added!' : adding ? 'Adding...' : 'Add'}
+            {done ? 'Added' : adding ? 'Adding…' : 'Add'}
           </button>
         </div>
     </Dialog>
   );
 }
 
-const ROW = 56;
+// Row height: taller on touch screens, to fit 44px buttons with room around them.
+const ROW = canHover ? 56 : 64;
 
 export default function ChannelPoolViewer({ sourceId, source, onRetry, isRetrying, onEdit }: ChannelPoolViewerProps) {
-  const { accentColor, logoBgColor, hideUrls, scrollTarget, setScrollTarget, is24Hour } = useStore();
+  const { logoBgColor, hideUrls, setHideUrls, scrollTarget, setScrollTarget, is24Hour } = useStore();
   const scrollToChannelPoolEntryId = scrollTarget?.kind === 'channelPool' ? scrollTarget.id : null;
   const [channels, setChannels] = useState<ChannelPoolEntry[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -444,8 +432,8 @@ export default function ChannelPoolViewer({ sourceId, source, onRetry, isRetryin
 
   if (!sourceId) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 dark:bg-[#121212] amoled:dark:bg-black text-gray-500 dark:text-gray-400">
-        <p>No Channel Pool source selected.</p>
+      <div className="flex-1 flex flex-col items-center justify-center text-body-md text-on-surface-variant">
+        <p>No channel source selected.</p>
       </div>
     );
   }
@@ -458,72 +446,94 @@ export default function ChannelPoolViewer({ sourceId, source, onRetry, isRetryin
   const startIdx = Math.max(0, Math.floor(scrollTop / ROW) - 5);
   const endIdx = Math.min(channels.length, Math.ceil((scrollTop + containerHeight) / ROW) + 10);
 
+  // Outlined pill for the category and sort pickers on bigger screens.
+  const pickerCls = 'h-10 pl-4 pr-2 rounded-full border border-outline bg-pane text-label-lg text-on-surface-variant cursor-pointer focus:outline-none focus:border-primary';
+  // With a mouse, a row's copy and add buttons appear on hover; touch screens always show them.
+  const reveal = canHover ? 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100' : '';
+
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black overflow-hidden relative">
-      {/* Toolbar */}
-      <div className="shrink-0 h-12 max-md:h-14 flex items-center justify-between px-4 max-md:px-2 border-b border-gray-200 dark:border-white/10 z-20 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black gap-4 max-md:gap-1">
-        <div className="flex items-center gap-4 max-md:gap-1 flex-1 min-w-0">
-          <div className="relative w-64 max-md:w-auto max-md:flex-1 max-md:min-w-0">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search channels..."
-              value={searchInput}
-              onChange={e => setSearchInput(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 max-md:py-2 text-sm max-md:text-base rounded border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white focus:outline-none"
-              onFocus={e => (e.target.style.borderColor = accentColor)}
-              onBlur={e => (e.target.style.borderColor = '')}
-            />
+    <div className="flex flex-col h-full overflow-hidden relative">
+      {/* ── Header: the source's name, then search, filters and actions ── */}
+      <div className="shrink-0 hidden md:flex items-end gap-2 pl-6 pr-4 pt-4 pb-1">
+        <div className="flex-1 min-w-0">
+          <p className="text-label-md text-on-surface-variant">Channel source</p>
+          <div className="flex items-baseline gap-2.5 min-w-0">
+            <h2 className="min-w-0 truncate text-headline-sm tracking-[-0.01em] text-on-surface">{source?.name ?? 'Channels'}</h2>
+            <span className="shrink-0 text-body-md text-on-surface-variant">{channels.length} channel{channels.length !== 1 ? 's' : ''}</span>
           </div>
+        </div>
+        {/* Uploaded files can't be downloaded again, so they only get Edit. */}
+        <SourceActions
+          kind="source"
+          onRefresh={source?.type === 'playlist-file' ? undefined : onRetry}
+          isRefreshing={isRetrying}
+          onEdit={onEdit}
+        />
+      </div>
 
-          {/* Phones: category and sort live behind this button (second row below). */}
-          <button
-            onClick={() => setShowPhoneFilters(v => !v)}
-            className="md-btn md:hidden relative w-10 h-10 shrink-0 flex items-center justify-center rounded-full text-gray-600 dark:text-gray-300"
-            style={showPhoneFilters ? { color: accentColor } : undefined}
-            aria-label="Category and sort"
-            title="Category and sort"
-          >
-            <SlidersHorizontal className="h-5 w-5" />
-            {filtersActive && <span className="absolute top-2 right-2 w-2 h-2 rounded-full" style={{ backgroundColor: accentColor }} />}
-          </button>
-
-          <select
-            value={selectedCategory}
-            onChange={e => setSelectedCategory(e.target.value)}
-            className="hidden md:block px-3 py-1.5 text-sm rounded border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white focus:outline-none max-w-xs"
-          >
-            <option value="">All Categories</option>
-            {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-          </select>
-
-          <select
-            value={sortMode}
-            onChange={e => setSortMode(e.target.value as 'name' | 'original')}
-            title="Sort order"
-            className="hidden md:block px-3 py-1.5 text-sm rounded border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white focus:outline-none"
-          >
-            <option value="name">Sort: A–Z</option>
-            <option value="original">Sort: Original order</option>
-          </select>
-
-          <span className="hidden md:inline text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">{channels.length} channels</span>
+      <div className="shrink-0 flex items-center gap-2 px-4 max-md:px-2 py-3 max-md:py-2 z-20">
+        <div className="relative w-72 max-md:w-auto max-md:flex-1 max-md:min-w-0">
+          <Icon name="search" className="absolute left-4 top-1/2 -translate-y-1/2 text-[24px] text-on-surface-variant" />
+          <input
+            type="text"
+            placeholder="Search channels"
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
+            className="w-full h-10 max-md:h-12 pl-11 pr-4 rounded-full bg-surface-container-highest text-body-md max-md:text-base text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:ring-2 focus:ring-primary"
+          />
         </div>
 
-        <div className="hidden md:flex items-center gap-2">
+        {/* Phones: category and sort live behind this button (second row below). */}
+        <button
+          onClick={() => setShowPhoneFilters(v => !v)}
+          className={`md-btn icon-btn md:hidden relative w-12 h-12 ${showPhoneFilters ? 'bg-secondary-container text-on-secondary-container' : ''}`}
+          aria-label="Category and sort"
+          title="Category and sort"
+        >
+          <Icon name="tune" className="text-[24px]" />
+          {filtersActive && <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-primary" />}
+        </button>
+
+        <select
+          value={selectedCategory}
+          onChange={e => setSelectedCategory(e.target.value)}
+          className={`hidden md:block max-w-xs ${pickerCls}`}
+          aria-label="Category"
+        >
+          <option value="">All categories</option>
+          {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+        </select>
+
+        <select
+          value={sortMode}
+          onChange={e => setSortMode(e.target.value as 'name' | 'original')}
+          title="Sort order"
+          className={`hidden md:block ${pickerCls}`}
+        >
+          <option value="name">Sort: A–Z</option>
+          <option value="original">Sort: Original order</option>
+        </select>
+
+        <div className="flex-1 hidden md:block" />
+
+        <div className="hidden md:flex items-center gap-1">
           {addedMessage && (
-            <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-              <Check className="h-3 w-3" />{addedMessage}
+            <span className="text-label-md text-success flex items-center gap-1 mr-2">
+              <Icon name="check" className="text-[20px]" />{addedMessage}
             </span>
           )}
+          <button
+            onClick={() => setHideUrls(!hideUrls)}
+            className="md-btn icon-btn"
+            title={hideUrls ? 'Show stream links' : 'Hide stream links'}
+            aria-label={hideUrls ? 'Show stream links' : 'Hide stream links'}
+          >
+            {hideUrls ? <Icon name="visibility" className="text-[24px]" /> : <Icon name="visibility_off" className="text-[24px]" />}
+          </button>
           {selectedEntries.size > 0 && (
-            <button
-              onClick={() => openAddModal(null)}
-              className="md-btn flex items-center gap-2 h-9 px-3 rounded text-xs font-medium uppercase tracking-wider text-white"
-              style={{ backgroundColor: accentColor }}
-            >
-              <Plus className="h-4 w-4" />
-              Add Selected ({selectedEntries.size})
+            <button onClick={() => openAddModal(null)} className="md-btn btn btn-filled ml-1">
+              <Icon name="add" className="text-[20px]" />
+              Add {selectedEntries.size} to playlist
             </button>
           )}
         </div>
@@ -531,20 +541,20 @@ export default function ChannelPoolViewer({ sourceId, source, onRetry, isRetryin
 
       {/* Phones: the category and sort pickers, full width so they're easy to tap. */}
       {showPhoneFilters && (
-        <div className="md:hidden shrink-0 flex gap-2 px-2 pb-2 pt-2 border-b border-gray-200 dark:border-white/10 bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black">
+        <div className="md:hidden shrink-0 flex gap-2 px-2 pb-2">
           <select
             value={selectedCategory}
             onChange={e => setSelectedCategory(e.target.value)}
-            className="flex-1 min-w-0 h-10 px-2 text-base rounded border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white focus:outline-none"
+            className="field flex-1 min-w-0 h-12 text-body-lg"
             aria-label="Category"
           >
-            <option value="">All Categories</option>
+            <option value="">All categories</option>
             {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
           </select>
           <select
             value={sortMode}
             onChange={e => setSortMode(e.target.value as 'name' | 'original')}
-            className="flex-1 min-w-0 h-10 px-2 text-base rounded border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white focus:outline-none"
+            className="field flex-1 min-w-0 h-12 text-body-lg"
             aria-label="Sort order"
           >
             <option value="name">A–Z</option>
@@ -554,7 +564,7 @@ export default function ChannelPoolViewer({ sourceId, source, onRetry, isRetryin
       )}
 
       {downloadFailed && !neverDownloaded && source && (
-        <DownloadErrorNotice source={source} full={false} accentColor={accentColor} is24Hour={is24Hour} onRetry={onRetry} isRetrying={isRetrying} onEdit={onEdit} />
+        <DownloadErrorNotice source={source} full={false} is24Hour={is24Hour} onRetry={onRetry} isRetrying={isRetrying} onEdit={onEdit} />
       )}
 
       {/* List */}
@@ -564,148 +574,136 @@ export default function ChannelPoolViewer({ sourceId, source, onRetry, isRetryin
         onScroll={e => setScrollTop(e.currentTarget.scrollTop)}
       >
         {loading ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-            <Loader2 className="h-8 w-8 animate-spin mb-4" style={{ color: accentColor }} /><p>Loading channels...</p>
+          <div className="flex flex-col items-center justify-center h-full text-body-md text-on-surface-variant">
+            <Icon name="progress_activity" className="text-[32px] animate-spin mb-4 text-primary" /><p>Loading channels…</p>
           </div>
         ) : neverDownloaded && source && channels.length === 0 ? (
-          <DownloadErrorNotice source={source} full accentColor={accentColor} is24Hour={is24Hour} onRetry={onRetry} isRetrying={isRetrying} onEdit={onEdit} />
+          <DownloadErrorNotice source={source} full is24Hour={is24Hour} onRetry={onRetry} isRetrying={isRetrying} onEdit={onEdit} />
         ) : channels.length === 0 && loadError ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-            <p className="text-red-500 dark:text-red-400">{loadError}</p>
-            <button onClick={() => setRetryTick(t => t + 1)} className="md-btn mt-2 text-sm font-medium underline" style={{ color: accentColor }}>
+          <div className="flex flex-col items-center justify-center h-full text-body-md">
+            <p className="text-error">{loadError}</p>
+            <button onClick={() => setRetryTick(t => t + 1)} className="md-btn btn btn-text mt-2">
               Retry
             </button>
           </div>
         ) : channels.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400"><p>No channels found.</p></div>
+          <div className="flex flex-col items-center justify-center h-full text-body-md text-on-surface-variant"><p>No channels found.</p></div>
         ) : (
           <div className="w-full">
-            <div className="flex items-center border-b border-gray-200 dark:border-white/5 bg-gray-50 dark:bg-[#1a1a1a] amoled:dark:bg-[#0a0a0a] sticky top-0 z-20 h-10">
-              <div className="w-12 shrink-0 flex items-center justify-center pl-2">
+            <div className="flex items-center border-y border-outline-variant bg-pane sticky top-0 z-20 h-10 text-label-md text-on-surface-variant">
+              <div className="w-14 shrink-0 flex items-center justify-center pl-2">
                 <button
                   onClick={toggleSelectAll}
-                  className="md-btn p-1 rounded-full text-gray-400 dark:text-gray-600 hover:text-gray-700 dark:hover:text-gray-200"
-                  style={allVisibleSelected ? { color: accentColor } : undefined}
+                  className="md-btn icon-btn w-10 h-10"
+                  aria-label={allVisibleSelected ? 'Deselect all' : 'Select all'}
                 >
-                  {allVisibleSelected
-                    ? <CheckSquare className="h-4 w-4" />
-                    : <Square className="h-4 w-4" />}
+                  <Checkbox checked={allVisibleSelected} />
                 </button>
               </div>
-              <div className="w-14 mr-3 shrink-0"></div>
-              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Channel</span>
-              {/* The toolbar's channel count doesn't fit on a phone, so it moves here. */}
-              <span className="md:hidden ml-auto pr-4 text-xs text-gray-500 dark:text-gray-400">{channels.length} channels</span>
+              <div className="w-16 max-md:w-14 shrink-0"></div>
+              <span className="pl-3">Channel</span>
+              {/* The header's channel count isn't shown on a phone, so it moves here. */}
+              <span className="md:hidden ml-auto pr-4">{channels.length} channels</span>
             </div>
 
             <div style={{ height: channels.length * ROW, position: 'relative' }}>
               {channels.slice(startIdx, endIdx).map((channel, idx) => {
                 const globalIndex = startIdx + idx;
                 const top = globalIndex * ROW;
-                const isEven = globalIndex % 2 === 0;
                 const isSelected = selectedEntries.has(channel.id);
                 const isHighlighted = channel.id === highlightedId;
                 const rowBg = isHighlighted
-                  ? 'bg-amber-50 dark:bg-amber-900/20 amoled:dark:bg-amber-900/25'
-                  : isEven
-                    ? 'bg-white dark:bg-[#1e1e1e] amoled:dark:bg-black hover:bg-gray-50 dark:hover:bg-white/3 amoled:dark:hover:bg-white/4'
-                    : 'bg-gray-50/70 dark:bg-[#222222] amoled:dark:bg-[#0d0d0d] hover:bg-gray-100/70 dark:hover:bg-white/5 amoled:dark:hover:bg-white/5';
+                  ? 'bg-tertiary-container'
+                  : isSelected
+                    ? 'bg-secondary-container'
+                    : 'hover:bg-on-surface/[0.06]';
 
                 return (
                   <div
                     key={channel.id}
                     // Phones: tapping anywhere on the row selects it (the checkbox alone is a small target).
                     onClick={isPhone ? () => toggleSelect(channel) : undefined}
-                    className={`absolute left-0 right-0 flex items-center border-b border-gray-100 dark:border-white/6 group transition-colors max-md:select-none max-md:cursor-pointer ${rowBg}`}
-                    style={{ height: ROW, top, ...(isSelected && !isHighlighted ? { backgroundColor: `${accentColor}18` } : {}) }}
+                    className={`absolute left-0 right-0 flex items-center border-b border-outline-variant/60 group transition-colors max-md:select-none max-md:cursor-pointer ${rowBg}`}
+                    style={{ height: ROW, top }}
                   >
                     {/* Checkbox */}
-                    <div className="w-12 shrink-0 flex items-center justify-center pl-2 max-md:pl-1">
+                    <div className="w-14 shrink-0 flex items-center justify-center pl-2 max-md:pl-1">
                       <button
                         onClick={e => { e.stopPropagation(); toggleSelect(channel); }}
-                        className="md-btn p-1 max-md:p-2.5 rounded-full text-gray-400 dark:text-gray-600 hover:text-gray-700 dark:hover:text-gray-200"
-                        style={isSelected ? { color: accentColor } : undefined}
+                        className="md-btn icon-btn w-10 h-10"
+                        aria-label={isSelected ? 'Deselect channel' : 'Select channel'}
                       >
-                        {isSelected
-                          ? <CheckSquare className="h-4 w-4" />
-                          : <Square className="h-4 w-4" />}
+                        <Checkbox checked={isSelected} />
                       </button>
                     </div>
 
                     {/* Logo — falls back to initials if there's no URL or it fails to load */}
-                    <div className="w-14 mr-3 max-md:w-11 max-md:mr-2 shrink-0 flex items-center justify-center">
+                    <div className="w-16 max-md:w-14 shrink-0 flex items-center justify-center">
                       <ChannelLogo
                         logo={channel.logo}
                         name={channel.name}
                         logoBgColor={logoBgColor}
-                        className="w-10 h-7 rounded border border-gray-200 dark:border-white/10"
+                        className="w-12 h-8 rounded-md"
                       />
                     </div>
 
-                    {/* Name + URL — flex-1 so it always claims space before the
-                        category pill; previously flex-initial let the pill's
-                        flex-auto (grow) outcompete it and collapse the name to
-                        zero width on narrower screens. */}
-                    <div className="flex-1 min-w-0 pr-4 max-md:pr-2 flex flex-col justify-center gap-0.5 overflow-hidden">
+                    {/* Name + URL — flex-1 so it always claims space before the category tag. */}
+                    <div className="flex-1 min-w-0 pl-3 pr-4 max-md:pr-2 flex flex-col justify-center overflow-hidden">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <p className={`text-sm font-medium truncate ${isSelected ? '' : 'text-gray-900 dark:text-white'}`} style={isSelected ? { color: accentColor } : undefined} title={channel.name}>
+                        <p className="text-label-lg max-md:text-[15px] text-on-surface truncate" title={channel.name}>
                           {channel.name || 'Unnamed'}
                         </p>
                         {channel.linkedPlaylistIds && (
                           <span
-                            className="shrink-0 flex items-center"
-                            style={{ color: accentColor }}
+                            className="shrink-0 flex items-center text-primary"
                             title={`Kept in sync in: ${channel.linkedPlaylistIds.map(id => playlists.find(p => p.id === id)?.name).filter(Boolean).join(', ')}`}
                           >
-                            <Link2 className="h-3.5 w-3.5" />
+                            <Icon name="link" className="text-[20px]" />
                           </span>
                         )}
                       </div>
                       {!hideUrls && (
-                        <p className="text-[11px] font-mono text-gray-400 dark:text-gray-500 truncate" title={channel.url}>
+                        <p className="text-body-sm font-mono text-on-surface-variant truncate" title={channel.url}>
                           {channel.url || '— no url —'}
                         </p>
                       )}
                     </div>
 
-                    {/* Category pill (styled like TVG ID in Playlists) — fixed
-                        width, never grows, so it can't steal space from the name. */}
-                    <div className="flex-none w-40 min-w-0 pr-4 hidden md:flex items-center justify-end overflow-hidden ml-auto">
+                    {/* Category tag — fixed width, never grows, so it can't steal space from the name. */}
+                    <div className="flex-none w-44 min-w-0 pr-4 hidden md:flex items-center justify-end overflow-hidden ml-auto">
                       {channel.category && (
-                        <span 
-                          className="inline-flex items-center max-w-full gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium truncate"
-                          style={{ backgroundColor: `${accentColor}20`, color: accentColor }}
+                        <span
+                          className={`inline-flex items-center max-w-full h-[26px] px-2.5 rounded-lg border text-label-md text-on-surface-variant truncate ${isSelected ? 'border-outline' : 'border-outline-variant'}`}
                           title={channel.category}
                         >
-                          {channel.category}
+                          <span className="truncate">{channel.category}</span>
                         </span>
                       )}
                     </div>
 
-                    {/* Copy the stream link. Like the + next to it: shown on hover with a mouse,
-                        always on touch screens, and it stays visible while showing its check. */}
+                    {/* Copy the stream link. It stays visible while showing its check. */}
                     <div className="w-10 shrink-0 flex items-center justify-center">
                       {channel.url && (
                         <button
                           onClick={e => { e.stopPropagation(); copyStreamLink(channel); }}
-                          className={`md-btn p-1.5 max-md:p-2 rounded-full transition-opacity ${copiedEntryId === channel.id ? 'opacity-100 text-green-600 dark:text-green-400' : 'opacity-0 group-hover:opacity-100 no-hover:opacity-100 text-gray-500 dark:text-gray-400'}`}
+                          className={`md-btn icon-btn w-9 h-9 max-md:w-10 max-md:h-10 ${copiedEntryId === channel.id ? 'text-success' : reveal}`}
                           title={copiedEntryId === channel.id ? 'Copied' : 'Copy stream link'}
                           aria-label="Copy stream link"
                         >
-                          {copiedEntryId === channel.id ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          {copiedEntryId === channel.id ? <Icon name="check" className="text-[20px]" /> : <Icon name="content_copy" className="text-[20px]" />}
                         </button>
                       )}
                     </div>
 
-                    {/* Add action */}
-                    <div className="w-12 shrink-0 flex items-center justify-center pr-2">
+                    {/* Add to a playlist: a small tonal button. */}
+                    <div className="w-14 shrink-0 flex items-center justify-center pr-2">
                       <button
                         onClick={e => { e.stopPropagation(); openAddModal(channel); }}
-                        className="md-btn p-1.5 max-md:p-2 rounded-full opacity-0 group-hover:opacity-100 no-hover:opacity-100 transition-opacity bg-white border border-gray-200 shadow-sm dark:bg-[#2a2a2a] dark:border-white/10"
+                        className={`md-btn icon-btn w-9 h-9 max-md:w-10 max-md:h-10 bg-secondary-container text-on-secondary-container ${reveal}`}
                         title="Add to playlist"
-                        style={{ color: accentColor }}
+                        aria-label="Add to playlist"
                       >
-                        <Plus className="h-4 w-4" />
+                        <Icon name="add" className="text-[20px]" />
                       </button>
                     </div>
                   </div>
@@ -717,27 +715,22 @@ export default function ChannelPoolViewer({ sourceId, source, onRetry, isRetryin
       </div>
 
       {/* Phones: while channels are selected, this bar covers the tab bar (like Android's own
-          selection bars) with the one thing to do with them. The desktop toolbar button doesn't
-          fit on a phone. */}
+          selection bars) with the one thing to do with them. */}
       {isPhone && selectedEntries.size > 0 && (
-        <div className="md:hidden fixed inset-x-0 bottom-0 z-40 pb-safe bg-white dark:bg-[#272727] amoled:dark:bg-[#1a1a1a] border-t border-gray-200 dark:border-white/10 elev-8">
-          <div className="h-16 flex items-center gap-1 px-2">
+        <div className="md:hidden fixed inset-x-0 bottom-0 z-40 pb-safe bg-surface-container text-on-surface shadow-level-2">
+          <div className="h-16 flex items-center gap-1 pl-1 pr-3">
             <button
               onClick={() => setSelectedEntries(new Map())}
-              className="md-btn w-11 h-11 flex items-center justify-center rounded-full text-gray-600 dark:text-gray-300"
+              className="md-btn icon-btn w-12 h-12 text-on-surface"
               aria-label="Clear selection"
             >
-              <X className="h-5 w-5" />
+              <Icon name="close" className="text-[24px]" />
             </button>
-            <span className="flex-1 min-w-0 truncate text-sm font-medium text-gray-900 dark:text-white">
+            <span className="flex-1 min-w-0 truncate text-title-md">
               {selectedEntries.size} selected
             </span>
-            <button
-              onClick={() => openAddModal(null)}
-              className="md-btn flex items-center gap-2 h-11 px-4 rounded-full text-sm font-medium text-white"
-              style={{ backgroundColor: accentColor }}
-            >
-              <Plus className="h-4 w-4" />
+            <button onClick={() => openAddModal(null)} className="md-btn btn btn-filled">
+              <Icon name="add" className="text-[20px]" />
               Add to playlist
             </button>
           </div>
@@ -748,7 +741,6 @@ export default function ChannelPoolViewer({ sourceId, source, onRetry, isRetryin
         <AddToPlaylistModal
           channels={modalChannels}
           playlists={playlists}
-          accentColor={accentColor}
           canSync={source?.type === 'xtream' || source?.type === 'playlist-url'}
           onClose={handleModalClose}
         />
