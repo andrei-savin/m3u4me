@@ -22,3 +22,11 @@ data/*.json
 data/*.json.tmp
 data/*.json.corrupt-*
 data/*.json.before-restore-*
+
+# Each source's saved channels (one file per source), and the copy of db.json kept from
+# before it was split into several files
+data/pool/
+data/*.json.before-split-*
+
+# Downloaded TV guides (programmes are kept on disk)
+data/epg/

@@ -39,6 +39,9 @@ Older versions of m3u4me don't have the **Download backup** button. Use the `db.
 | One-line install | `/opt/m3u4me/data` |
 | Docker or PM2 | the `data` folder inside the m3u4me folder |
 
+> [!NOTE]
+> This only applies to those older versions. Newer versions keep their data in several files, so `db.json` on its own is no longer everything. Use **Download backup** instead.
+
 ---
 
 [← Updating](updating.md) | 🏠 [Help center](README.md) | [Next: Password & recovery key →](password.md)

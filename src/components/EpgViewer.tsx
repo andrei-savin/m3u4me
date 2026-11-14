@@ -6,6 +6,7 @@ import ChannelLogo from './ChannelLogo';
 import { formatTime } from '../utils/formatTime';
 import { foldText } from '../utils/foldText';
 import { useIsPhone } from '../utils/useIsPhone';
+import { useDebouncedValue } from '../utils/useDebouncedValue';
 import Icon from './Icon';
 import SourceActions from './SourceActions';
 
@@ -53,7 +54,16 @@ interface ProgrammeWithTimes {
 export default function EpgViewer({ sourceId, onAssignChannel, sourceName, onRefresh, isRefreshing, onEdit, fetchError }: EpgViewerProps) {
   const { logoBgColor, is24Hour, scrollTarget, setScrollTarget } = useStore();
   const scrollToEpgChannelId = scrollTarget?.kind === 'epg' ? scrollTarget.id : null;
-  const [data, setData] = useState<{ channels: EpgChannel[], programmes: { [channelId: string]: EpgProgramme[] } } | null>(null);
+  // The guide's channel list. Programmes aren't part of it: they're loaded for the rows on
+  // screen only (see programmesByChannel below), because a big guide has millions of them.
+  const [data, setData] = useState<{ channels: EpgChannel[] } | null>(null);
+  // The programmes loaded so far, per channel, with their times already worked out.
+  const [programmesByChannel, setProgrammesByChannel] = useState<{ [channelId: string]: ProgrammeWithTimes[] }>({});
+  // Channels whose programmes were already asked for, so scrolling back doesn't ask again.
+  const requestedChannelsRef = useRef(new Set<string>());
+  // Goes up every time the guide is (re)loaded, so an answer that arrives late for the
+  // previous guide, or from before a refresh, is ignored.
+  const guideLoadRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
@@ -106,12 +116,17 @@ export default function EpgViewer({ sourceId, onAssignChannel, sourceName, onRef
     const fetchData = () => {
       if (!isMounted) return;
       setLoading(true);
-      api.getEpgNow(sourceId)
-        .then(res => {
+      api.getEpgChannels(sourceId)
+        .then(channels => {
           if (isMounted) {
             // Sort channels alphabetically
-            res.channels.sort((a: EpgChannel, b: EpgChannel) => a.displayName.localeCompare(b.displayName));
-            setData(res);
+            channels.sort((a: EpgChannel, b: EpgChannel) => a.displayName.localeCompare(b.displayName));
+            // Start again with no programmes loaded: this is a different guide, or the same
+            // one after a fresh download.
+            guideLoadRef.current++;
+            requestedChannelsRef.current = new Set();
+            setProgrammesByChannel({});
+            setData({ channels });
             setLoading(false);
             setError(null);
 
@@ -201,35 +216,29 @@ export default function EpgViewer({ sourceId, onAssignChannel, sourceName, onRef
     return () => clearTimeout(t);
   }, [scrollToEpgChannelId, filteredChannels, search, containerHeight, setScrollTarget]);
 
-  // Parse each programme's XMLTV timestamps once per data fetch instead of on
-  // every scroll-triggered re-render — this used to run for every visible
+  // Parse each programme's XMLTV timestamps once, when a channel's programmes arrive,
+  // instead of on every scroll-triggered re-render — this used to run for every visible
   // program, on every single scroll event, which was a real source of the
   // mobile scroll jank (string parsing + regex on the hot scroll path).
-  const programmesByChannel = useMemo(() => {
-    const result: { [channelId: string]: ProgrammeWithTimes[] } = {};
-    if (!data) return result;
-    for (const channelId of Object.keys(data.programmes)) {
-      const list = data.programmes[channelId];
-      // XMLTV doesn't guarantee <programme> elements appear in chronological order
-      // (and the server doesn't sort them), so "next in the array" isn't necessarily
-      // "next in time" until sorted here — the capping loop below assumes it is.
-      const withTimes: ProgrammeWithTimes[] = list.map(prog => ({
-        prog,
-        startMs: parseXmltvTime(prog.start).getTime(),
-        endMs: parseXmltvTime(prog.stop).getTime(),
-      })).sort((a, b) => a.startMs - b.startMs);
-      // Cap each program's end time to the next program's start time, to
-      // prevent visual overlap.
-      for (let i = 0; i < withTimes.length; i++) {
-        const next = withTimes[i + 1];
-        if (next && withTimes[i].endMs > next.startMs) {
-          withTimes[i] = { ...withTimes[i], endMs: next.startMs };
-        }
+  const withTimes = (list: EpgProgramme[]): ProgrammeWithTimes[] => {
+    // XMLTV doesn't guarantee <programme> elements appear in chronological order
+    // (and the server doesn't sort them), so "next in the array" isn't necessarily
+    // "next in time" until sorted here — the capping loop below assumes it is.
+    const result: ProgrammeWithTimes[] = list.map(prog => ({
+      prog,
+      startMs: parseXmltvTime(prog.start).getTime(),
+      endMs: parseXmltvTime(prog.stop).getTime(),
+    })).sort((a, b) => a.startMs - b.startMs);
+    // Cap each program's end time to the next program's start time, to
+    // prevent visual overlap.
+    for (let i = 0; i < result.length; i++) {
+      const next = result[i + 1];
+      if (next && result[i].endMs > next.startMs) {
+        result[i] = { ...result[i], endMs: next.startMs };
       }
-      result[channelId] = withTimes;
     }
     return result;
-  }, [data]);
+  };
 
   const startSidebarResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -294,6 +303,36 @@ export default function EpgViewer({ sourceId, onAssignChannel, sourceName, onRef
   const startIndex = Math.max(0, Math.floor((scrollTop - HEADER_HEIGHT) / ROW_HEIGHT) - ROW_OVERSCAN);
   const endIndex = Math.min(filteredChannels.length, Math.ceil((scrollTop + containerHeight - HEADER_HEIGHT) / ROW_HEIGHT) + ROW_OVERSCAN);
   const visibleChannels = filteredChannels.slice(startIndex, endIndex);
+
+  // Load the programmes of the rows on screen that haven't been loaded yet. The short wait
+  // means that scrolling quickly through a long guide asks once, for where the scrolling
+  // stopped, not for every row that flew past. Until the answer is in, a row's timeline is
+  // simply empty.
+  const loadFrom = useDebouncedValue(startIndex, 120);
+  const loadTo = useDebouncedValue(endIndex, 120);
+  useEffect(() => {
+    if (!sourceId || !data) return;
+    const wanted = filteredChannels.slice(loadFrom, loadTo).map(c => c.id).filter(id => !requestedChannelsRef.current.has(id));
+    if (wanted.length === 0) return;
+    for (const id of wanted) requestedChannelsRef.current.add(id);
+    const guideLoad = guideLoadRef.current;
+    api.getEpgNow(sourceId, wanted)
+      .then(res => {
+        if (guideLoad !== guideLoadRef.current) return;
+        setProgrammesByChannel(loaded => {
+          const next = { ...loaded };
+          for (const id of wanted) next[id] = withTimes(res.programmes[id] || []);
+          return next;
+        });
+      })
+      .catch(err => {
+        console.error(err);
+        if (guideLoad !== guideLoadRef.current) return;
+        // Forget that they were asked for, so scrolling to them again tries again.
+        for (const id of wanted) requestedChannelsRef.current.delete(id);
+        notifyError(err, 'Failed to load EPG data.');
+      });
+  }, [sourceId, data, filteredChannels, loadFrom, loadTo]);
 
   // Time markers
   const markers = [];

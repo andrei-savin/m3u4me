@@ -20,7 +20,7 @@ The maintainer is a graphic designer, not a developer. The code is AI-generated,
 
 All backend code lives in `server.ts`: no router modules, no ORM, no shared code with `src/`. Top-to-bottom layout:
 
-1. Type declarations, then `readDb()`/`writeDb()`.
+1. Type declarations, then the storage code ("Where the data lives": `readDb()`/`writeDb()`, the pool and changelog files).
 2. EPG fetch/parse, then channel-pool fetch/parse/diff, then channel sync (stable pool ids, `syncLinkedChannels()`).
 3. Auth helpers, then the boot migration `migrateShortIds()`.
 4. M3U/XML escaping helpers and `serveM3U()`.
@@ -40,34 +40,50 @@ All backend code lives in `server.ts`: no router modules, no ORM, no shared code
 - `vite` is imported at the top of the file, so it's a runtime dependency even in production. That's why the Dockerfile and install script use `npm ci`, not `--omit=dev`.
 - `data/` and `dist/` resolve relative to `process.cwd()`. The systemd unit makes everything except `data/` read-only, so never write files anywhere else.
 
-**Persistence:**
-- `data/db.json` (gitignored, auto-created) holds everything. `readDb()`/`writeDb()` synchronously read or rewrite the *whole file* on each request. There are no transactions and no concurrent-writer safety, which is acceptable only because the app is single-user.
-- `writeDb()` is crash-safe. It writes `data/db.json.tmp` with `flush: true` (fsync), then renames it over `db.json`, so a crash, restart, full disk or power cut leaves the previous complete file. Never write `db.json` directly.
-- `readDb()` returns an empty database only when `db.json` doesn't exist.
-  - Any other read error throws, so nothing gets saved over data that's merely unreadable.
-  - Invalid JSON is renamed, untouched, to `db.json.corrupt-<UTC timestamp>` (`setAsideDamagedDb()`), logged, and the app continues empty.
-- `readDb()` backfills missing top-level arrays. When adding a field to an existing record type, make it optional or nullable and tolerate its absence on old records (see `lastDownloadedAt`). Only use a boot migration like `migrateShortIds()` when a value must be backfilled.
+**Persistence (in memory, saved as split files):**
+- The whole database lives in memory. `readDb()` loads it from disk on the first call only (`loadDbFromDisk()`), then returns **the same object** to every caller. It used to re-read one big `db.json` on every request, which made each channel edit take seconds on large setups (10 quick edits: 16 s → 0.3 s in a 1 GB / 2-CPU container with 84,000 source channels).
+- On disk the data is split by how often it changes, all inside `data/` (gitignored):
+  - `data/db.json`: playlists, channels, source and guide settings, sync log, app settings. Small, indented. `writeDb(db)` saves it on every change.
+  - `data/pool/<source id>.json`: one source's channels, compact. Saved by `savePoolEntries(sourceId)` only when that source is refreshed, uploaded or deleted (`deletePoolEntries`).
+  - `data/pool-changelog.json`: the source update log, compact. Saved by `saveChangeLogs()` only when a refresh adds to it or a source is deleted.
+- In memory, source channels live in `channelPoolCache` (a `Map` by source id; it is the store, not a mirror) and the update log in `channelPoolChangeLogs`. Neither is on the `Database` object. `allPoolEntries()` flattens the map for the few cross-source lookups.
+- **Rules that follow from the shared object:**
+  - A route must validate the request *before* changing anything: a change made before an early `return` would stay in memory unsaved.
+  - A read-only route must never reorder a stored list in place. Sort a copy (`[...list].sort()`, or after a `.filter()`).
+  - Files in `data/` are only read at start. Editing them by hand needs the app stopped.
+- `saveJsonFile()` is the one crash-safe save, used for all three kinds of file. It writes `<file>.tmp` with `flush: true` (fsync), then renames it over the file, so a crash, restart, full disk or power cut leaves the previous complete file. Never write these files directly.
+- Loading (`loadDbFromDisk()`):
+  - No `db.json` gives an empty database. Any other read error throws, and nothing is kept in memory, so the next request tries again and nothing gets saved over data that's merely unreadable.
+  - Invalid JSON is renamed, untouched, to `db.json.corrupt-<UTC timestamp>` (`setAsideDamagedDb()`), logged, and the app continues empty. A damaged pool or changelog file is set aside the same way (`readSavedList()`) and counts as empty; sources just download again.
+  - **One-time split:** a `db.json` that still has `channelPoolEntries` / `channelPoolChangeLogs` inside (3.0.0 and older, or copied in by hand) is kept as `db.json.before-split-<UTC stamp>` (a hard link, or a copy where links don't work) and then stored through `storeFullDatabase()`.
+- `storeFullDatabase(full)` takes a database in the old one-file shape, empties `data/pool/`, writes the pool files and changelog first and `db.json` last, and makes it the database in memory. The boot split and restore both use it.
+- `withDefaults()` (run when loading) backfills missing top-level arrays. When adding a field to an existing record type, make it optional or nullable and tolerate its absence on old records (see `lastDownloadedAt`). Only use a boot migration like `migrateShortIds()` when a value must be backfilled.
 - `settings.onboardingDone` decides whether the first-run setup shows.
   - `emptyDb()` sets it to an explicit `false`.
-  - `readDb()` fills it in for databases from before onboarding existed, as "has any playlist or source", so upgrading users never see the setup. It's deliberately not in `DEFAULT_SETTINGS`, which would hide its absence.
+  - `withDefaults()` fills it in for databases from before onboarding existed, as "has any playlist or source", so upgrading users never see the setup. It's deliberately not in `DEFAULT_SETTINGS`, which would hide its absence.
   - `POST /api/playlists` and `/import` set it to `true` in the same write: making any playlist finishes the setup. `PUT /api/settings` ignores it.
-- **Backup = the whole database.** `GET /api/backup` sends `readDb()` as a JSON attachment. `auth.json` is never included.
+- **Backup = the whole database in the old one-file shape.** `GET /api/backup` sends `fullDatabasePieces()` (db.json + every source's channels + the update log, written out in small pieces so a huge database never becomes one giant string) as a JSON attachment, so backups from any version restore on any version. `auth.json` is never included.
 - **Restore** (`POST /api/backup/restore`):
   - It takes the raw file as `application/octet-stream`, with a route-level `express.raw` limit of 200 MB. The app-wide `express.json` stops at 50 MB, and real databases with big sources are larger.
   - It needs `playlists` and `channels` arrays, and any other known list that's present must be an array.
-  - It first copies the current `db.json` to `data/db.json.before-restore-<UTC stamp>` (gitignored).
+  - It first saves a full backup of the current data to `data/db.json.before-restore-<UTC stamp>` (gitignored).
   - It sets `onboardingDone` to "backup has playlists, or setup was already done", so a restore never sends anyone back to the setup.
-  - Then it runs `migrateShortIds()`, clears both caches and calls `loadAndRefreshAllSources()`.
+  - Then it stores the backup with `storeFullDatabase()`, runs `migrateShortIds()`, clears the EPG cache and calls `loadAndRefreshAllSources()`. If storing fails midway, `memoryDb` is reset so the next request reloads what's on disk.
 - The dev server uses the real `data/db.json`, so any testing in the browser mutates real data.
 - Validation is minimal. Most `POST`/`PUT` handlers spread `req.body` straight into the stored record, and the frontend is trusted to send correct shapes.
 
 **Background refresh (EPG sources and channel-pool sources):**
-- At boot, every EPG source and every non-file pool source is refreshed (`loadAndRefreshAllSources()`, which a backup restore also runs). The refresh is fire-and-forget, so it doesn't block `listen`.
+- At boot, saved guides are loaded from disk (`loadSavedGuides()`), EPG sources that are due (`epgSourcesDue()`) are refreshed, and every non-file pool source is refreshed (`loadAndRefreshAllSources()`, which a backup restore also runs, after emptying `data/epg/`). The refresh is fire-and-forget, so it doesn't block `listen`.
 - A source deleted or replaced by a restore while its fetch was in flight keeps nothing: `refreshEpgSource`, `refreshChannelPoolSource` and `detectChannelPoolChanges` check that it still exists before caching or saving.
-- A 5-minute `setInterval` refreshes any source that has never been fetched, whose last attempt errored (`lastFetchError`), or whose `refreshIntervalHours` has elapsed. Defaults are 12h for EPG and 24h for pool. Failed sources are therefore retried every tick.
+- A 5-minute `setInterval` refreshes any source that has never been fetched (for a guide: or has nothing saved on disk), whose last attempt errored (`lastFetchError`), or whose `refreshIntervalHours` has elapsed. Defaults are 12h for EPG and 24h for pool. Failed sources are therefore retried every tick.
 - Refreshes run **sequentially** (`refresh*SourcesSequentially`), not in parallel. This is deliberate: parallel large fetches made healthy sources fail at boot.
-- EPG data is cached **in memory only** (`epgCache`), never persisted. After a restart it's empty until each source re-fetches. `channelCount` in `db.json` is the fallback used by `/api/stats`.
-- Channel-pool entries **are** persisted (`channelPoolEntries`) and mirrored in `channelPoolCache`. Each refresh diffs old vs new entries by URL + occurrence index and appends an added/removed/renamed changelog entry. Changelog entries older than 90 days are pruned.
+- **Guides are read piece by piece and their programmes live on disk** (`data/epg/`, gitignored), never in memory. Before, one 300 MB guide froze the app for 7–10 s and took about 4 GB; a 1 GB server crashed on a 100 MB guide, then again at every start.
+  - `downloadGuide()` reads the download as a stream (unzipping gzip on the fly), cuts the text after each complete `</channel>`/`</programme>`, parses each cut with the same `xmlParser` and field mapping as always, and appends programmes as JSON lines to `data/epg/<source id>.<UTC stamp>.programmes`. It yields to other requests every few chunks, gives up after 60 s without data (`EPG_STALL_TIMEOUT_MS`), and treats an unfinished element at the end as a cut-off download (failure, old guide kept). A file with no guide elements (a web page) ends as an empty guide, as before.
+  - `data/epg/<source id>.json` is the guide's summary: channel list, the programmes file's name, and per channel the byte runs (`start, length, …`) of its programmes in that file. Saving it (`saveJsonFile`) is what makes a new download current; only then is the previous programmes file removed. `loadSavedGuides()` removes leftovers at start.
+  - In memory, `epgGuides` (by source id) holds only the channel list and the runs. `readChannelProgrammes(guide, channelIds)` reads the wanted channels' lines from disk. Nothing that touches programmes may loop over a whole guide.
+  - `refreshEpgSource()` runs one download per guide at a time (`epgRefreshesRunning`); a second caller waits for the running one.
+  - `channelCount` in `db.json` is the fallback used by `/api/stats` while a guide isn't downloaded yet.
+- Channel-pool entries **are** persisted (one file per source, see Persistence) and live in `channelPoolCache`. A refresh saves only that source's file plus the small `db.json`. Each refresh diffs old vs new entries by URL + occurrence index and appends an added/removed/renamed changelog entry. Changelog entries older than 90 days are pruned.
 - Pool source fetches go through `fetchWithRetry()`: a 502/503/504 is retried up to 5 attempts in total, with growing pauses (3s, 6s, 9s, 12s). Some providers run several servers behind one address and randomly fail requests this way. EPG fetches don't retry.
 - Pool sources can carry a `userAgent` (absent/empty = Node's default `node`), sent by `fetchWithRetry()` and by `validate-url` (which falls back to a VLC string). The dialog's presets live in `src/utils/userAgents.ts`. The source stores the string, not a preset name.
 - Xtream panels return HTTP 200 with an error object for bad logins. `readXtreamList()` treats a non-array response as a failure (naming a rejected login when `user_info.auth` is 0), so a login hiccup doesn't wipe the cached entries. Likewise a playlist link that parses to zero channels (a web page, an empty answer) is a failure, not an empty source.
@@ -98,7 +114,7 @@ A playlist channel can carry a `link` to one channel pool entry and then follow 
 ### Routes
 
 Public routes (outside `/api`, never auth-gated, because IPTV players can't send a bearer token):
-- `GET /:shortId` returns the playlist as `#EXTM3U` text. `GET /:shortId/epg` returns an XMLTV document filtered to that playlist's visible channels' `tvgId`s.
+- `GET /:shortId` returns the playlist as `#EXTM3U` text. `GET /:shortId/epg` returns an XMLTV document filtered to that playlist's visible channels' `tvgId`s. It's sent in pieces (`sendPiece()`, shared with the backup download), reading a few channels' programmes from disk at a time.
 - `GET /api/playlists/:exportId.m3u` is the legacy long export URL, kept for old links. It sits under `/api`, so it *is* gated when a password is set.
 
 `/api` groups:
@@ -108,7 +124,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 | Auth | `/auth/status`, `/auth/login` and `/auth/recover` (these three are public), plus `/auth/set-password`, `/auth/remove-password`, `/auth/logout` |
 | Playlists | `/playlists` CRUD, `/playlists/import`, and `/playlists/reorder` (POST `{ ids }`: the order playlists are listed in) |
 | Channels (under `/playlists/:id/channels`) | single PUT/DELETE, `bulk` (add, returns new ids), `bulk-update` (same changes → many ids), `bulk-update-many` (per-id changes), `bulk-replace` (find/replace), `bulk-delete`, `reorder` |
-| EPG | `/epg-sources` CRUD, `/:id/refresh`, `/:id/channels`, `/:id/now` (programmes from −3h to +6h), `/epg/tvg-ids?q=` (autocomplete), `/epg/resolve-tvg-ids` |
+| EPG | `/epg-sources` CRUD, `/:id/refresh`, `/:id/channels`, `/:id/now` (POST `{ channelIds }`, at most 200: those channels' programmes from −3h to +6h), `/epg/tvg-ids?q=` (autocomplete), `/epg/resolve-tvg-ids` |
 | Channel pool | `/channel-pool/sources` CRUD, `/upload`, `/:id/refresh`, `/:id/channels?q=&category=&sort=name\|original`, `/:id/categories`, `/validate-url`, `/changelog?page=` |
 | Channel sync | `/settings` GET/PUT (default sync fields). Under `/playlists/:id/channels`: `:channelId/link` POST (link, with `useSourceValues`)/PUT (fields)/DELETE, `:channelId/link/candidates?q=`, `:channelId/link/apply` and `/dismiss` (one pending field), `bulk-link-settings`, `bulk-unlink`. Plus `/playlists/:id/sync-log?page=` and `/sync-log/read` |
 | Backup | `/backup` GET (the whole db as a download), `/backup/restore` POST (raw file body, replaces the db, see Persistence) |
@@ -157,6 +173,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
 **Data fetching (no query library):**
 - `src/apiClient.ts` exports one `api` object with every REST call, plus fetch-on-mount hooks: `usePlaylists`, `useChannels`, `useEpgSources`, `useChannelPoolSources`, `useStats`.
 - There's no cache or invalidation. After any mutation, call the matching `triggerRefresh()` / `triggerEpgRefresh()` / `triggerChannelPoolRefresh()`. Each one dispatches `refresh` on a plain `EventTarget`, and subscribed hooks refetch. Forgetting the trigger leaves the UI silently stale. `useStats` listens to all three buses. The source hooks also listen to `dbEvents`.
+- **One channel's own fields are the exception:** `api.updateChannel()` answers with the saved channel, and `applySavedChannel(channel)` swaps it into every loaded `useChannels` list (`channel-saved` event) and refetches only playlists and stats (`counts-changed`). PlaylistEditor's single-field save and hide toggle use it, so quick edits don't re-download the playlist, sources and guides. Anything that adds, removes, moves or bulk-changes channels still uses `triggerRefresh()`.
 - `authFetch` throws on any non-2xx response, using the server's `{ error }` message. The exception is `/api/auth/*` calls, whose callers inspect `ok`/`status` to show inline form errors.
 - `useChannels` returns a stable `EMPTY_CHANNELS` array while a fetch is in flight. Returning a fresh `[]` there once caused an infinite render loop, so keep hook return values referentially stable.
 
@@ -223,7 +240,7 @@ Public routes (outside `/api`, never auth-gated, because IPTV players can't send
   - `ChannelPoolUpdateLog.tsx` is a collapsible changelog strip on the right of the pane.
   - `AddChannelPoolSourceDialog.tsx` adds or edits sources (Xtream, URL, or file upload).
 - **EPG**
-  - `EpgViewer.tsx` is a hand-virtualized timeline grid under a title header (Dashboard passes `sourceName`, plus `onRefresh`/`onEdit` for its `SourceActions`). The header shows above the loading, failed and empty states too; the empty state shows the guide's `lastFetchError` and Edit / Download again buttons. What's on now is a `secondary-container` block with a progress fill; past programmes are quieter. It uses a single scroll container with sticky header and channel column, rAF-coalesced scroll handling, and programme times parsed once per fetch.
+  - `EpgViewer.tsx` is a hand-virtualized timeline grid under a title header (Dashboard passes `sourceName`, plus `onRefresh`/`onEdit` for its `SourceActions`). The header shows above the loading, failed and empty states too; the empty state shows the guide's `lastFetchError` and Edit / Download again buttons. What's on now is a `secondary-container` block with a progress fill; past programmes are quieter. It uses a single scroll container with sticky header and channel column, and rAF-coalesced scroll handling. It loads the channel list (`api.getEpgChannels`) and then the programmes of the rows on screen only (`api.getEpgNow(sourceId, channelIds)`, 120 ms after scrolling settles), keeping them in `programmesByChannel` with their times parsed on arrival; a row whose programmes haven't arrived yet shows an empty timeline.
   - `EpgProgramDialog.tsx` shows programme details.
   - `AddEpgSourceDialog.tsx` adds or edits sources.
   - `AssignTvgIdDialog.tsx` is the reverse of bulk assign: pick one EPG channel, then assign it to channels from any playlist. It's opened from Dashboard via EpgViewer's `onAssignChannel`.

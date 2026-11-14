@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { usePlaylists, useChannels, useChannelPoolSources, Channel, SyncFieldToggles, api, triggerRefresh, triggerChannelPoolRefresh } from '../apiClient';
+import { usePlaylists, useChannels, useChannelPoolSources, Channel, SyncFieldToggles, api, triggerRefresh, applySavedChannel, triggerChannelPoolRefresh } from '../apiClient';
 import { useStore, notifyError, notifyInfo } from '../store';
 
 import Checkbox from './Checkbox';
@@ -813,12 +813,9 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
   const handleChannelSave = async (id: string, changes: Record<string, unknown>) => {
     markSaving(id);
     try {
-      await api.updateChannel(playlistId, id, changes);
-      // Wait for this component's own channels to actually refetch — not just fire the
-      // event and move on — so the saving indicator stays up until the row has the new
-      // value to show, rather than clearing early onto stale data.
-      await refetchChannels();
-      triggerRefresh();
+      // The server answers with the saved channel, which goes straight into the list, so the
+      // row shows the new value as soon as the save is done and nothing is downloaded again.
+      applySavedChannel(await api.updateChannel(playlistId, id, changes));
     } finally { clearSaving(id); }
   };
 
@@ -842,9 +839,7 @@ export default function PlaylistEditor({ playlistId, phoneMenuSlot }: { playlist
   const handleToggleHide = async (id: string, current: boolean) => {
     markSaving(id);
     try {
-      await api.updateChannel(playlistId, id, { isHidden: !current });
-      await refetchChannels();
-      triggerRefresh();
+      applySavedChannel(await api.updateChannel(playlistId, id, { isHidden: !current }));
     } catch (e) { console.error(e); notifyError(e, 'Failed to update channel.'); }
     finally { clearSaving(id); }
   };

@@ -77,6 +77,17 @@ pm2 restart ecosystem.config.cjs --update-env
 > [!NOTE]
 > Restarting m3u4me signs you out if you've set a password. Just sign in again.
 
+## Updating from 3.0.0 or older
+
+Version 3.1.0 and newer are much faster, because they keep their data in several smaller files instead of one big `db.json`. The first time one of them starts, it splits your data up by itself. Nothing is lost and there's nothing for you to do.
+
+The old file is kept in the [data folder](install.md#where-your-data-lives) as `db.json.before-split-` followed by the date and time. Once you're happy with the new version, you can delete it.
+
+TV guides are now saved on the server too, in the data folder's `epg` folder, so they no longer have to download again at every start. They download once more right after this update. A guide takes about as much disk space as the guide file itself.
+
+> [!NOTE]
+> Going back to 3.0.0 or older? Stop m3u4me, rename that `db.json.before-split-…` file back to `db.json`, then start the older version. Anything you changed after updating isn't in that file.
+
 ---
 
 [← Features](features.md) | 🏠 [Help center](README.md) | [Next: Backup & moving to a new server →](backup.md)

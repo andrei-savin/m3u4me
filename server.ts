@@ -4,7 +4,8 @@ import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
-import { gunzipSync } from "zlib";
+import { createGunzip } from "zlib";
+import { Readable, pipeline } from "stream";
 import { XMLParser } from "fast-xml-parser";
 const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) {
@@ -12,10 +13,6 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const DB_FILE = path.join(DATA_DIR, "db.json");
-// writeDb() saves into this file first, then swaps it in place of db.json (see writeDb).
-// It has to sit in data/: the systemd unit only allows writes there, and the swap only
-// works within one folder/disk.
-const DB_TMP_FILE = path.join(DATA_DIR, "db.json.tmp");
 
 // Define types matching frontend
 interface Playlist {
@@ -217,28 +214,200 @@ const DEFAULT_SETTINGS: Omit<AppSettings, 'onboardingDone'> = {
   defaultSyncFields: { url: true, name: true, logo: true, tvgId: true },
 };
 
+// What db.json holds, and what readDb() returns. Each source's channels and the source update
+// log are kept apart from it (see "Where the data lives" below).
 interface Database {
   playlists: Playlist[];
   channels: Channel[];
   epgSources: EpgSource[];
   channelPoolSources: ChannelPoolSource[];
-  channelPoolEntries: ChannelPoolEntry[];
-  channelPoolChangeLogs: ChannelPoolChangeLog[];
   syncLogs: SyncLogEntry[];
   settings: AppSettings;
 }
 
 function emptyDb(): Database {
-  return { playlists: [], channels: [], epgSources: [], channelPoolSources: [], channelPoolEntries: [], channelPoolChangeLogs: [], syncLogs: [], settings: { ...DEFAULT_SETTINGS, onboardingDone: false } };
+  return { playlists: [], channels: [], epgSources: [], channelPoolSources: [], syncLogs: [], settings: { ...DEFAULT_SETTINGS, onboardingDone: false } };
 }
 
-// Initial DB
-if (!fs.existsSync(DB_FILE)) {
-  writeDb(emptyDb());
+// ── Where the data lives ─────────────────────────────────────────────────
+// Everything is kept in memory while the app runs, and loaded from disk only once, at start.
+// The app used to read and rewrite one big db.json on every request. With a few large sources
+// that file reached tens of MB, so renaming a single channel meant reading it seven times and
+// saving it once: seconds of work, and enough memory to push a small server into swap.
+//
+// On disk the data is split by how often it changes, so a small change saves a small file:
+// - data/db.json                playlists, channels, sources' settings, sync log, app settings.
+//                               Small. Saved on every change.
+// - data/pool/<source id>.json  one source's channels. Saved only when that source is
+//                               refreshed, uploaded or deleted.
+// - data/pool-changelog.json    the source update log. Saved only when a refresh adds to it.
+//
+// Because readDb() now hands every caller the *same* object (it used to hand out a fresh copy):
+// - a route must check the request first and only then change anything, since a change made
+//   before an early `return` would stay in memory without being saved;
+// - a route that only reads must not reorder a stored list in place (sort a copy instead).
+// Files in data/ are only read at start, so stop the app before replacing them by hand.
+const POOL_DIR = path.join(DATA_DIR, "pool");
+const CHANGELOG_FILE = path.join(DATA_DIR, "pool-changelog.json");
+
+let memoryDb: Database | null = null;
+// Every source's channels, by source id. This is where they live while the app runs.
+const channelPoolCache = new Map<string, ChannelPoolEntry[]>();
+let channelPoolChangeLogs: ChannelPoolChangeLog[] = [];
+
+// Date and time in UTC for the names of safety copies. No ":" in it: that isn't allowed in
+// file names on Windows or some NAS shares.
+function fileStamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-// Simple DB sync functions (fine for local single-user apps)
+// Saves in two steps so a file is never half-written: the data goes into <file>.tmp first,
+// and only once that has fully succeeded is it renamed over the real file. A rename is
+// all-or-nothing. So if the app crashes or is restarted, the disk fills up, or the power goes
+// out mid-save, the file is still the previous complete version, and at worst the last change
+// is lost. A failed save leaves a stray .tmp behind; the next save simply overwrites it.
+// The .tmp has to sit next to the file: the systemd unit only allows writes in data/, and the
+// rename only works within one folder/disk.
+// `flush: true` makes sure the .tmp is physically on the disk before the rename. Without
+// it, on some filesystems a power cut just after a save can still leave an empty file,
+// because the rename can reach the disk before the data does. It costs some time per save
+// on slow disks such as SD cards; keeping the data is worth more.
+// `indented` keeps db.json readable in a text editor. The big files skip it, which halves
+// the work of saving them.
+function saveJsonFile(file: string, value: unknown, indented: boolean) {
+  const tmpFile = `${file}.tmp`;
+  fs.writeFileSync(tmpFile, indented ? JSON.stringify(value, null, 2) : JSON.stringify(value), { flush: true });
+  fs.renameSync(tmpFile, file);
+}
+
+// Source ids are made by the app (uuids), but a restored backup could carry anything, so the
+// id is encoded: it can then never point outside data/pool/.
+function poolFileOf(sourceId: string): string {
+  return path.join(POOL_DIR, `${encodeURIComponent(sourceId)}.json`);
+}
+
+// Saves one source's channels as they are in memory right now.
+function savePoolEntries(sourceId: string) {
+  fs.mkdirSync(POOL_DIR, { recursive: true });
+  saveJsonFile(poolFileOf(sourceId), channelPoolCache.get(sourceId) || [], false);
+}
+
+function deletePoolEntries(sourceId: string) {
+  channelPoolCache.delete(sourceId);
+  fs.rmSync(poolFileOf(sourceId), { force: true });
+}
+
+function saveChangeLogs() {
+  saveJsonFile(CHANGELOG_FILE, channelPoolChangeLogs, false);
+}
+
+// The channels of every source in one list, for the few places that look across sources.
+function allPoolEntries(): ChannelPoolEntry[] {
+  return Array.from(channelPoolCache.values()).flat();
+}
+
+// The whole database as JSON text, in the one-file shape db.json had before it was split.
+// Backups still use this shape, so backups made by any version can be restored by any version.
+// The text is handed out in pieces (db.json first, then the sources' channels 5,000 at a time,
+// then the update log) instead of as one piece: with a few hundred thousand source channels
+// the whole text is hundreds of MB, and building it in one go ran a 1 GB server out of memory.
+function* fullDatabasePieces(): Generator<string> {
+  const core = JSON.stringify(readDb(), null, 2);
+  // db.json's text without its closing "}", so the two big lists can be added inside it.
+  yield core.slice(0, core.lastIndexOf('}')).trimEnd();
+  yield ',\n  "channelPoolEntries": [';
+  let first = true;
+  for (const entries of channelPoolCache.values()) {
+    for (let i = 0; i < entries.length; i += 5000) {
+      const list = JSON.stringify(entries.slice(i, i + 5000)); // "[{…},{…}]"
+      yield (first ? '\n' : ',\n') + list.slice(1, -1);       // the same without the [ ]
+      first = false;
+    }
+  }
+  yield '\n  ],\n  "channelPoolChangeLogs": ';
+  yield JSON.stringify(channelPoolChangeLogs);
+  yield '\n}\n';
+}
+
+// Saves a full backup next to db.json, piece by piece, with the same tmp-file-then-rename
+// steps as saveJsonFile().
+function saveFullDatabaseCopy(file: string) {
+  const tmpFile = `${file}.tmp`;
+  const handle = fs.openSync(tmpFile, 'w');
+  try {
+    for (const piece of fullDatabasePieces()) fs.writeSync(handle, piece);
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+  fs.renameSync(tmpFile, file);
+}
+
+// Reads one of the big list files. A missing file is an empty list (a source that hasn't been
+// downloaded yet). A damaged one is moved aside like a damaged db.json (see setAsideDamagedDb):
+// the source's channels simply download again on the next refresh.
+function readSavedList<T>(file: string): T[] {
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf-8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new Error(`Can't read ${file} (${(e as Error).message}). Nothing was changed. Check the file's permissions and that the disk is healthy.`);
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+  } catch { /* handled below, together with "valid JSON but not a list" */ }
+  const backupFile = `${file}.corrupt-${fileStamp()}`;
+  fs.renameSync(file, backupFile);
+  console.error(`${file} is damaged and couldn't be loaded. It was moved, unchanged, to ${backupFile}. Sources download their channels again on their next refresh.`);
+  return [];
+}
+
+// A file read from disk gives every channel its own copy of its source id and category name,
+// although thousands of channels share the same few. This makes them share one copy again,
+// which saves about 100 bytes a channel (100 MB for a million channels).
+function shareRepeatedText(entries: ChannelPoolEntry[], sourceId: string): ChannelPoolEntry[] {
+  const categories = new Map<string, string>();
+  for (const entry of entries) {
+    entry.sourceId = sourceId;
+    if (!categories.has(entry.category)) categories.set(entry.category, entry.category);
+    entry.category = categories.get(entry.category)!;
+  }
+  return entries;
+}
+
+// Fills in whatever a database from an older version doesn't have yet.
+function withDefaults(parsed: any): Database {
+  if (!parsed.epgSources) parsed.epgSources = [];
+  if (!parsed.channelPoolSources) parsed.channelPoolSources = [];
+  if (!parsed.syncLogs) parsed.syncLogs = [];
+  parsed.settings = {
+    ...DEFAULT_SETTINGS,
+    ...(parsed.settings || {}),
+    defaultSyncFields: { ...DEFAULT_SETTINGS.defaultSyncFields, ...(parsed.settings?.defaultSyncFields || {}) },
+    // A database from before onboarding existed counts as set up once it has anything in it,
+    // so people updating m3u4me never get the welcome screens. New installs start with an
+    // explicit false (emptyDb), so this guess only applies to those older databases.
+    onboardingDone: parsed.settings?.onboardingDone ?? (
+      (parsed.playlists?.length || 0) > 0 || parsed.channelPoolSources.length > 0 || parsed.epgSources.length > 0
+    ),
+  };
+  return parsed;
+}
+
+// Returns the database. The first call loads it from disk; every later call returns the same
+// object straight from memory, which is what makes requests fast. If loading fails, nothing is
+// kept, so the next call tries again.
 function readDb(): Database {
+  if (!memoryDb) memoryDb = loadDbFromDisk();
+  return memoryDb;
+}
+
+function loadDbFromDisk(): Database {
+  channelPoolCache.clear();
+  channelPoolChangeLogs = [];
+
   let text: string;
   try {
     text = fs.readFileSync(DB_FILE, "utf-8");
@@ -257,39 +426,84 @@ function readDb(): Database {
   } catch {
     return setAsideDamagedDb();
   }
-  if (!parsed.epgSources) parsed.epgSources = [];
-  if (!parsed.channelPoolSources) parsed.channelPoolSources = [];
-  if (!parsed.channelPoolEntries) parsed.channelPoolEntries = [];
-  if (!parsed.channelPoolChangeLogs) parsed.channelPoolChangeLogs = [];
-  if (!parsed.syncLogs) parsed.syncLogs = [];
-  parsed.settings = {
-    ...DEFAULT_SETTINGS,
-    ...(parsed.settings || {}),
-    defaultSyncFields: { ...DEFAULT_SETTINGS.defaultSyncFields, ...(parsed.settings?.defaultSyncFields || {}) },
-    // A database from before onboarding existed counts as set up once it has anything in it,
-    // so people updating m3u4me never get the welcome screens. New installs start with an
-    // explicit false (emptyDb), so this guess only applies to those older databases.
-    onboardingDone: parsed.settings?.onboardingDone ?? (
-      (parsed.playlists?.length || 0) > 0 || parsed.channelPoolSources.length > 0 || parsed.epgSources.length > 0
-    ),
-  };
-  return parsed;
+
+  // A db.json from before the split (m3u4me 3.0.0 and older), or one copied in by hand, still
+  // has the sources' channels and the update log inside it. Split it now, once.
+  if (parsed.channelPoolEntries || parsed.channelPoolChangeLogs) {
+    keepCopyOfOldDb();
+    try {
+      return storeFullDatabase(parsed);
+    } catch (e) {
+      throw new Error(`Can't finish updating the data folder for this version of m3u4me (${(e as Error).message}). Your data is untouched in ${DB_FILE}. Check that m3u4me can write to its data folder and that the disk isn't full, then start it again.`);
+    }
+  }
+
+  const db = withDefaults(parsed);
+  for (const source of db.channelPoolSources) {
+    channelPoolCache.set(source.id, shareRepeatedText(readSavedList<ChannelPoolEntry>(poolFileOf(source.id)), source.id));
+  }
+  channelPoolChangeLogs = readSavedList<ChannelPoolChangeLog>(CHANGELOG_FILE);
+  return db;
+}
+
+// Before an old one-file db.json is split, it's kept as db.json.before-split-<date and time>,
+// so going back to an older m3u4me stays possible (put it back as db.json). A hard link is
+// tried first: it's a second name for the same file, so it takes no time and no disk space,
+// and it keeps the old content when db.json is replaced. Disks that can't do that (some
+// network shares) get a normal copy. If neither works the split still goes ahead: it never
+// removes anything, the same data just ends up in several files.
+function keepCopyOfOldDb() {
+  const copyFile = `${DB_FILE}.before-split-${fileStamp()}`;
+  try {
+    fs.linkSync(DB_FILE, copyFile);
+  } catch {
+    try {
+      fs.copyFileSync(DB_FILE, copyFile);
+    } catch (e) {
+      console.error(`Couldn't keep a copy of the old ${DB_FILE} (${(e as Error).message}). Carrying on without one.`);
+    }
+  }
+}
+
+// Takes a whole database in the one-file shape (an old db.json, or a backup), saves it as the
+// split files and makes it the database in memory. The big files are written first and db.json
+// last, so until the very last step an old db.json on disk is still complete.
+function storeFullDatabase(full: any): Database {
+  const entries: ChannelPoolEntry[] = Array.isArray(full.channelPoolEntries) ? full.channelPoolEntries : [];
+  const changeLogs: ChannelPoolChangeLog[] = Array.isArray(full.channelPoolChangeLogs) ? full.channelPoolChangeLogs : [];
+  delete full.channelPoolEntries;
+  delete full.channelPoolChangeLogs;
+  const db = withDefaults(full);
+
+  // Channels of a source that no longer exists are left out.
+  const bySource = new Map<string, ChannelPoolEntry[]>(db.channelPoolSources.map(s => [s.id, []]));
+  for (const entry of entries) bySource.get(entry.sourceId)?.push(entry);
+
+  // Whatever was in data/pool/ belonged to the database being replaced.
+  fs.rmSync(POOL_DIR, { recursive: true, force: true });
+  channelPoolCache.clear();
+  for (const [sourceId, list] of bySource.entries()) {
+    channelPoolCache.set(sourceId, shareRepeatedText(list, sourceId));
+    savePoolEntries(sourceId);
+  }
+  channelPoolChangeLogs = changeLogs;
+  saveChangeLogs();
+  writeDb(db);
+  return db;
 }
 
 // db.json exists but isn't valid JSON, most likely because it was cut off by a power cut or
-// a full disk while an older version of the app was saving it (writeDb() below can't do
+// a full disk while an older version of the app was saving it (saveJsonFile() above can't do
 // that any more). Two simpler options were rejected:
 // - Starting empty, as the app used to, means the next save overwrites the real data for good.
 // - Refusing to start leaves a restart loop under systemd/Docker and a page that won't load,
 //   which a non-developer can't diagnose either.
 // So the damaged file is moved aside untouched, to db.json.corrupt-<date and time>, where it
 // can be repaired, and the app carries on with an empty database. Moving it (rather than
-// copying it) means this happens once, not again on every request. If the move itself fails,
+// copying it) means this happens once, not again at every start. If the move itself fails,
 // the error stops the read and nothing gets written.
 function setAsideDamagedDb(): Database {
-  // The date and time are in UTC. No ":" in the name: it isn't allowed in file names on
-  // Windows or some NAS shares.
-  const backupFile = `${DB_FILE}.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  const backupFile = `${DB_FILE}.corrupt-${fileStamp()}`;
   fs.renameSync(DB_FILE, backupFile);
   console.error(
     `${DB_FILE} is damaged (not valid JSON) and couldn't be loaded. ` +
@@ -300,19 +514,16 @@ function setAsideDamagedDb(): Database {
   return emptyDb();
 }
 
-// Saves in two steps so db.json is never half-written: the whole database goes into
-// db.json.tmp first, and only once that has fully succeeded is it renamed over db.json. A
-// rename is all-or-nothing. So if the app crashes or is restarted, the disk fills up, or the
-// power goes out mid-save, db.json is still the previous complete version, and at worst
-// the last change is lost. The old in-place write could leave db.json cut off halfway. A
-// failed save leaves a stray db.json.tmp behind; the next save simply overwrites it.
-// `flush: true` makes sure db.json.tmp is physically on the disk before the rename. Without
-// it, on some filesystems a power cut just after a save can still leave an empty db.json,
-// because the rename can reach the disk before the data does. It costs some time per save
-// on slow disks such as SD cards; keeping the data is worth more.
+// Saves db.json (see saveJsonFile for how) and makes `data` the database in memory. Routes
+// pass back the object readDb() gave them; a restore passes a new one.
 function writeDb(data: Database) {
-  fs.writeFileSync(DB_TMP_FILE, JSON.stringify(data, null, 2), { flush: true });
-  fs.renameSync(DB_TMP_FILE, DB_FILE);
+  memoryDb = data;
+  saveJsonFile(DB_FILE, data, true);
+}
+
+// Initial DB
+if (!fs.existsSync(DB_FILE)) {
+  writeDb(emptyDb());
 }
 
 // ── EPG Cache and Parser ─────────────────────────────────────────────────
@@ -335,12 +546,112 @@ interface ParsedEpgProgramme {
   rating: string | null;
 }
 
-const epgCache = new Map<string, { channels: ParsedEpgChannel[]; programmes: ParsedEpgProgramme[]; fetchedAt: number }>();
+// ── Where TV guides are kept ──
+// A guide can be huge (hundreds of MB, millions of programmes), so only its channel list is
+// kept in memory. The programmes are on disk, in data/epg/:
+// - <source id>.<date and time>.programmes  one programme per line, in the order the guide
+//                                           listed them
+// - <source id>.json                        the channel list, the name of that programmes file,
+//                                           and where each channel's programmes are in it
+// Guides used to live in memory only, programmes included: a big guide took gigabytes, and
+// every restart started with all guides empty until they had downloaded again.
+const EPG_DIR = path.join(DATA_DIR, "epg");
+
+interface EpgGuide {
+  channels: ParsedEpgChannel[];
+  // The programmes file's name inside data/epg/. Every download writes a new file, and the
+  // old one is only removed once the new guide is saved, so the two never mix.
+  file: string;
+  // Where each channel's programmes are in that file, as pairs of numbers: start, length,
+  // start, length… (in bytes). Guides nearly always list a channel's programmes together, so
+  // most channels have a single pair.
+  runs: Map<string, number[]>;
+}
+
+// Every downloaded guide, by source id.
+const epgGuides = new Map<string, EpgGuide>();
+
+function epgSummaryFile(sourceId: string): string {
+  return path.join(EPG_DIR, `${encodeURIComponent(sourceId)}.json`);
+}
+
+// Reads the programmes of some of a guide's channels from disk. A channel the guide doesn't
+// have gets no entry. If the file has just been replaced by a newer download (possible while
+// a long answer is being sent in pieces), the result is simply empty.
+function readChannelProgrammes(guide: EpgGuide, channelIds: string[]): Map<string, ParsedEpgProgramme[]> {
+  const result = new Map<string, ParsedEpgProgramme[]>();
+  let handle: number;
+  try {
+    handle = fs.openSync(path.join(EPG_DIR, guide.file), "r");
+  } catch {
+    return result;
+  }
+  try {
+    for (const channelId of channelIds) {
+      const runs = guide.runs.get(channelId);
+      if (!runs) continue;
+      const programmes: ParsedEpgProgramme[] = [];
+      for (let i = 0; i < runs.length; i += 2) {
+        const buffer = Buffer.alloc(runs[i + 1]);
+        fs.readSync(handle, buffer, 0, runs[i + 1], runs[i]);
+        for (const line of buffer.toString("utf-8").split("\n")) {
+          if (!line) continue;
+          try { programmes.push(JSON.parse(line)); } catch { /* a damaged line is skipped */ }
+        }
+      }
+      result.set(channelId, programmes);
+    }
+  } finally {
+    fs.closeSync(handle);
+  }
+  return result;
+}
+
+// Loads the saved guides at start, so they're there straight away instead of after a new
+// download, and tidies data/epg/: files that no saved guide points to (a download that was
+// interrupted, a guide whose source is gone) are removed.
+function loadSavedGuides() {
+  epgGuides.clear();
+  if (!fs.existsSync(EPG_DIR)) return;
+  const keep = new Set<string>();
+  for (const source of readDb().epgSources) {
+    const summaryFile = epgSummaryFile(source.id);
+    try {
+      const saved = JSON.parse(fs.readFileSync(summaryFile, "utf-8"));
+      if (!Array.isArray(saved.channels) || !Array.isArray(saved.runs) || typeof saved.file !== "string") continue;
+      // path.basename: the name is only ever looked up inside data/epg/.
+      const file = path.basename(saved.file);
+      if (!fs.existsSync(path.join(EPG_DIR, file))) continue;
+      epgGuides.set(source.id, { channels: saved.channels, file, runs: new Map(saved.runs) });
+      keep.add(path.basename(summaryFile));
+      keep.add(file);
+    } catch {
+      // No saved guide, or an unreadable one: it counts as not downloaded yet and is fetched
+      // again (see epgSourcesDue).
+    }
+  }
+  for (const name of fs.readdirSync(EPG_DIR)) {
+    if (!keep.has(name)) fs.rmSync(path.join(EPG_DIR, name), { force: true });
+  }
+}
+
+// Forgets one guide and removes its files.
+function deleteSavedGuide(sourceId: string) {
+  const guide = epgGuides.get(sourceId);
+  epgGuides.delete(sourceId);
+  if (guide) fs.rmSync(path.join(EPG_DIR, guide.file), { force: true });
+  fs.rmSync(epgSummaryFile(sourceId), { force: true });
+}
 
 // Lowercases text and strips accents, for search matching: NFD splits Ș, Ț, Ă, Â, Î into the
 // base letter plus a combining mark, which the regex drops, so "stiri" finds "Știri".
 // Mirrors src/utils/foldText.ts (the frontend shares no code with this file).
+// Text made only of plain English letters, digits and symbols has no accents to strip. That's
+// almost every stream link and most names, and skipping the accent work for them makes a
+// search across tens of thousands of channels several times faster. The result is the same.
+const PLAIN_TEXT = /^[\x00-\x7f]*$/;
 function foldText(text: string): string {
+  if (PLAIN_TEXT.test(text)) return text.toLowerCase();
   return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 }
 
@@ -373,7 +684,23 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
   }
 }
 
-async function fetchAndParseEpg(source: EpgSource): Promise<{ channels: ParsedEpgChannel[]; programmes: ParsedEpgProgramme[] }> {
+// A download that sends nothing for this long is given up on. (EPG_FETCH_TIMEOUT_MS above only
+// covers the wait for the server's first answer.)
+const EPG_STALL_TIMEOUT_MS = 60_000;
+// The most text that may pile up without a complete <channel> or <programme> in it. Real ones
+// are a few hundred bytes; this only stops a file that isn't a guide from filling the memory.
+const EPG_MAX_ELEMENT_LENGTH = 16_000_000;
+
+// Downloads a guide and saves its programmes to a new file in data/epg/. Returns the guide
+// (channel list, file name, where each channel's programmes are); the caller makes it current.
+//
+// The download is read as it arrives, never as a whole. The app used to fetch the entire
+// file, turn it into one piece of text and read it in one go, with every programme kept in
+// memory afterwards. A 300 MB guide then froze the app for 7 to 10 seconds and took about
+// 4 GB, and on a 1 GB server a 100 MB guide stopped the app altogether. Now each small part
+// that arrives is read and written out straight away, and other requests get their turn in
+// between, so a guide of any size needs little memory and never freezes the app.
+async function downloadGuide(source: EpgSource): Promise<EpgGuide> {
   let fetchUrl = source.url;
   if (source.type === 'xtream' && source.xtreamCredentials) {
     const baseUrl = source.url.replace(/\/$/, '');
@@ -382,16 +709,7 @@ async function fetchAndParseEpg(source: EpgSource): Promise<{ channels: ParsedEp
 
   const res = await fetchWithTimeout(fetchUrl, EPG_FETCH_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Failed to fetch EPG: ${res.statusText}`);
-  const buf = await res.arrayBuffer();
-  let xmlData = Buffer.from(buf);
-  
-  if (xmlData.length > 2 && xmlData[0] === 0x1F && xmlData[1] === 0x8B) {
-    xmlData = gunzipSync(xmlData);
-  }
-  
-  const parsed = xmlParser.parse(xmlData.toString('utf-8'));
-  const tv = parsed.tv || {};
-  
+
   const getText = (val: any) => typeof val === 'object' && val !== null ? val['#text'] || '' : val;
 
   // Some providers put a programme's description in <sub-title> instead of <desc>. Fold the
@@ -405,43 +723,171 @@ async function fetchAndParseEpg(source: EpgSource): Promise<{ channels: ParsedEp
     return desc || subTitle || null;
   };
 
-  const channels: ParsedEpgChannel[] = (tv.channel || []).map((c: any) => ({
-    id: c['@_id'] || '',
-    displayName: (c['display-name'] && c['display-name'][0] ? getText(c['display-name'][0]) : '') || '',
-    icon: (c.icon && c.icon[0] ? c.icon[0]['@_src'] : null) || null,
-  }));
+  const channels: ParsedEpgChannel[] = [];
+  const runs = new Map<string, number[]>();
+  fs.mkdirSync(EPG_DIR, { recursive: true });
+  const file = `${encodeURIComponent(source.id)}.${fileStamp()}.programmes`;
+  const filePath = path.join(EPG_DIR, file);
+  const handle = fs.openSync(filePath, 'w');
+  let position = 0; // how many bytes have been written to the programmes file so far
 
-  const programmes: ParsedEpgProgramme[] = (tv.programme || []).map((p: any) => ({
-    channel: p['@_channel'] || '',
-    start: p['@_start'] || '',
-    stop: p['@_stop'] || '',
-    title: getText(p.title) || '',
-    desc: mergeSubTitleIntoDesc(getText(p['sub-title']), getText(p.desc)),
-    category: p.category && p.category.length > 0 ? getText(p.category[0]) : null,
-    date: p.date ? String(p.date) : null,
-    episodeNum: p['episode-num'] ? getText(p['episode-num']) : null,
-    icon: (p.icon && p.icon[0] ? p.icon[0]['@_src'] : null) || null,
-    rating: p.rating && p.rating.value ? String(p.rating.value) : null,
-  }));
-  
-  return { channels, programmes };
+  // Reads some complete <channel> and <programme> elements (with the same XML reader and the
+  // same fields as always) and writes the programmes to the file, one per line.
+  const readElements = (xml: string) => {
+    const tv = xmlParser.parse(`<tv>${xml}</tv>`).tv || {};
+    for (const c of tv.channel || []) {
+      channels.push({
+        id: c['@_id'] || '',
+        displayName: (c['display-name'] && c['display-name'][0] ? getText(c['display-name'][0]) : '') || '',
+        icon: (c.icon && c.icon[0] ? c.icon[0]['@_src'] : null) || null,
+      });
+    }
+    let lines = '';
+    for (const p of tv.programme || []) {
+      const programme: ParsedEpgProgramme = {
+        channel: p['@_channel'] || '',
+        start: p['@_start'] || '',
+        stop: p['@_stop'] || '',
+        title: getText(p.title) || '',
+        desc: mergeSubTitleIntoDesc(getText(p['sub-title']), getText(p.desc)),
+        category: p.category && p.category.length > 0 ? getText(p.category[0]) : null,
+        date: p.date ? String(p.date) : null,
+        episodeNum: p['episode-num'] ? getText(p['episode-num']) : null,
+        icon: (p.icon && p.icon[0] ? p.icon[0]['@_src'] : null) || null,
+        rating: p.rating && p.rating.value ? String(p.rating.value) : null,
+      };
+      const line = JSON.stringify(programme) + '\n';
+      const length = Buffer.byteLength(line);
+      // Remember where this programme is. If it directly follows the channel's previous one,
+      // that run just gets longer; otherwise a new run starts.
+      const channelRuns = runs.get(programme.channel);
+      if (!channelRuns) runs.set(programme.channel, [position, length]);
+      else if (channelRuns[channelRuns.length - 2] + channelRuns[channelRuns.length - 1] === position) channelRuns[channelRuns.length - 1] += length;
+      else channelRuns.push(position, length);
+      position += length;
+      lines += line;
+    }
+    if (lines) fs.writeSync(handle, lines);
+  };
+
+  try {
+    if (!res.body) throw new Error('The server sent an empty answer.');
+    const download = Readable.fromWeb(res.body as any);
+    // Look at the first bytes to see whether the guide is gzip-compressed (many are), then put
+    // them back. A compressed guide is unpacked as it arrives.
+    const firstBytes: Buffer | null = await new Promise((resolve, reject) => {
+      download.once('error', reject);
+      download.once('readable', () => resolve(download.read()));
+    });
+    if (firstBytes) download.unshift(firstBytes);
+    const isGzip = !!firstBytes && firstBytes.length > 2 && firstBytes[0] === 0x1F && firstBytes[1] === 0x8B;
+    // pipeline() (rather than .pipe()) passes a failed download on to the unpacker, so the
+    // loop below ends with that error instead of waiting forever.
+    const input: Readable = isGzip ? pipeline(download, createGunzip(), () => {}) as unknown as Readable : download;
+
+    let stallTimer = setTimeout(() => {}, 0);
+    const restartStallTimer = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => input.destroy(new Error(`The download stopped sending data for ${EPG_STALL_TIMEOUT_MS / 1000}s`)), EPG_STALL_TIMEOUT_MS);
+    };
+
+    // `rest` holds the text that has arrived but doesn't end on a complete element yet.
+    // Whenever it contains complete <channel> or <programme> elements, everything up to the
+    // end of the last one is cut off and read. (A description that itself contained the text
+    // "</programme>" would be cut in the wrong place. No real guide does that.)
+    const decoder = new TextDecoder('utf-8');
+    let rest = '';
+    let started = false; // true once the first <channel> or <programme> has been seen
+    let chunkCount = 0;
+    try {
+      restartStallTimer();
+      for await (const chunk of input) {
+        restartStallTimer();
+        rest += decoder.decode(chunk as Buffer, { stream: true });
+        if (!started) {
+          // Skip what comes before the first element (the <?xml…?> line and the <tv> tag).
+          const firstChannel = rest.indexOf('<channel');
+          const firstProgramme = rest.indexOf('<programme');
+          const first = firstChannel === -1 ? firstProgramme : firstProgramme === -1 ? firstChannel : Math.min(firstChannel, firstProgramme);
+          if (first === -1) {
+            // Nothing yet. Keep only the last few characters, in case a tag was split between
+            // two parts. A file that isn't a guide (a web page…) is thrown away as it arrives
+            // this way, and ends up as an empty guide, as it always has.
+            rest = rest.slice(-20);
+            continue;
+          }
+          rest = rest.slice(first);
+          started = true;
+        }
+        const lastChannelEnd = rest.lastIndexOf('</channel>');
+        const lastProgrammeEnd = rest.lastIndexOf('</programme>');
+        const end = Math.max(
+          lastChannelEnd === -1 ? 0 : lastChannelEnd + '</channel>'.length,
+          lastProgrammeEnd === -1 ? 0 : lastProgrammeEnd + '</programme>'.length,
+        );
+        if (end > 0) {
+          readElements(rest.slice(0, end));
+          rest = rest.slice(end);
+        } else if (rest.length > EPG_MAX_ELEMENT_LENGTH) {
+          throw new Error("This doesn't look like a TV guide (XMLTV) file. Check the guide's link.");
+        }
+        // Let other requests have their turn, so the app keeps answering during a long guide.
+        if (++chunkCount % 4 === 0) await new Promise(resolve => setImmediate(resolve));
+      }
+    } finally {
+      clearTimeout(stallTimer);
+    }
+    // A channel or programme that started but never finished means the download was cut off.
+    // Keeping half a guide would replace a complete one, so it counts as failed.
+    if (rest.includes('<programme') || rest.includes('<channel')) {
+      throw new Error('The download was cut off before the end of the guide.');
+    }
+    fs.fsyncSync(handle);
+  } catch (err) {
+    fs.closeSync(handle);
+    fs.rmSync(filePath, { force: true });
+    throw err;
+  }
+  fs.closeSync(handle);
+  return { channels, file, runs };
 }
 
-async function refreshEpgSource(sourceId: string) {
+// Downloads one guide. If that guide is already being downloaded (the Refresh button pressed
+// while the timer's refresh is running, say), no second download starts: the caller just
+// waits for the running one.
+const epgRefreshesRunning = new Map<string, Promise<void>>();
+function refreshEpgSource(sourceId: string): Promise<void> {
+  const running = epgRefreshesRunning.get(sourceId);
+  if (running) return running;
+  const refresh = downloadAndSaveGuide(sourceId).finally(() => epgRefreshesRunning.delete(sourceId));
+  epgRefreshesRunning.set(sourceId, refresh);
+  return refresh;
+}
+
+async function downloadAndSaveGuide(sourceId: string) {
   const db = readDb();
   const source = db.epgSources.find(s => s.id === sourceId);
   if (!source) return;
   try {
-    const data = await fetchAndParseEpg(source);
+    const guide = await downloadGuide(source);
 
     const updatedDb = readDb();
     const idx = updatedDb.epgSources.findIndex(s => s.id === sourceId);
     // The source was deleted, or replaced by restoring a backup, during the fetch. Its guide
-    // data mustn't be kept: the /:shortId/epg feed reads every cached source.
-    if (idx === -1) return;
-    epgCache.set(sourceId, { ...data, fetchedAt: Date.now() });
+    // data mustn't be kept: the /:shortId/epg feed reads every saved guide.
+    if (idx === -1) {
+      fs.rmSync(path.join(EPG_DIR, guide.file), { force: true });
+      return;
+    }
+    // Saving the summary is what makes the new guide the current one: it names the new
+    // programmes file. Only then is the previous file removed. If the app stops in between,
+    // the leftover file is tidied away at the next start (loadSavedGuides).
+    const previous = epgGuides.get(sourceId);
+    saveJsonFile(epgSummaryFile(sourceId), { channels: guide.channels, file: guide.file, runs: [...guide.runs] }, false);
+    epgGuides.set(sourceId, guide);
+    if (previous) fs.rmSync(path.join(EPG_DIR, previous.file), { force: true });
     updatedDb.epgSources[idx].lastFetched = Date.now();
-    updatedDb.epgSources[idx].channelCount = data.channels.length;
+    updatedDb.epgSources[idx].channelCount = guide.channels.length;
     updatedDb.epgSources[idx].lastFetchError = null;
     writeDb(updatedDb);
   } catch (err) {
@@ -456,6 +902,18 @@ async function refreshEpgSource(sourceId: string) {
   }
 }
 
+// The guides that should be downloaded now: never downloaded (or nothing saved on disk, as
+// right after updating from a version that kept guides in memory), failed last time, or older
+// than their refresh interval. A failed guide is therefore retried on every check until it
+// works, instead of sitting empty until its interval comes round.
+function epgSourcesDue(): string[] {
+  const now = Date.now();
+  return readDb().epgSources.filter(source => {
+    const intervalMs = (source.refreshIntervalHours || 12) * 60 * 60 * 1000;
+    return !source.lastFetched || !epgGuides.has(source.id) || source.lastFetchError || (now - source.lastFetched) > intervalMs;
+  }).map(source => source.id);
+}
+
 // Refreshes EPG sources one at a time instead of all at once, so a batch of
 // sources (e.g. every source refreshing together at server boot) doesn't
 // pile concurrent large-file fetches onto the same moment — which is what
@@ -467,8 +925,8 @@ async function refreshEpgSourcesSequentially(sourceIds: string[]) {
   }
 }
 
-// ── Channel Pool Cache and Functions ─────────────────────────────────────
-const channelPoolCache = new Map<string, ChannelPoolEntry[]>();
+// ── Channel Pool Functions ───────────────────────────────────────────────
+// (The channels themselves live in channelPoolCache, declared with the storage code above.)
 
 // Some providers run several servers behind one address. When one of those servers is down, the
 // front server answers instantly with 502/503/504, while the very next identical request may work
@@ -585,13 +1043,18 @@ async function fetchXtreamChannels(source: ChannelPoolSource): Promise<ChannelPo
 
   const streamsData = await readXtreamList(await fetchWithRetry(`${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams`, source.userAgent));
 
+  // The stream link is put together with join() on purpose. Gluing the pieces with `${…}`
+  // makes Node keep every piece separately in memory until the text is first read, which for
+  // a big provider costs more than the rest of the channel put together (about 220 bytes a
+  // channel, measured: 220 MB for a million channels). join() makes one plain piece of text.
+  const streamUrlStart = `${baseUrl}/${encodeURIComponent(username)}/${encodeURIComponent(password)}/`;
   const entries: ChannelPoolEntry[] = [];
   for (const s of streamsData) {
     entries.push({
       id: uuidv4(),
       sourceId: source.id,
       name: s.name || 'Unknown',
-      url: `${baseUrl}/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${s.stream_id}.ts`,
+      url: [streamUrlStart, s.stream_id, '.ts'].join(''),
       logo: s.stream_icon || null,
       category: catMap.get(String(s.category_id)) || 'General',
       tvgId: s.epg_channel_id || null,
@@ -1054,7 +1517,7 @@ function withoutSyncState(body: any): Record<string, unknown> {
 /** Diffs old vs. new entries and logs the changes. Returns whether anything actually changed. */
 function detectChannelPoolChanges(sourceId: string, newEntries: ChannelPoolEntry[]): boolean {
   const db = readDb();
-  const oldEntries = db.channelPoolEntries.filter(e => e.sourceId === sourceId);
+  const oldEntries = channelPoolCache.get(sourceId) || [];
   const source = db.channelPoolSources.find(s => s.id === sourceId);
   // The source was deleted, or replaced by restoring a backup, while its channels were being
   // fetched. Saving them now would leave channels that belong to no source.
@@ -1103,14 +1566,18 @@ function detectChannelPoolChanges(sourceId: string, newEntries: ChannelPoolEntry
         removed,
         renamed,
       };
-      db.channelPoolChangeLogs.push(log);
+      channelPoolChangeLogs.push(log);
 
       const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
-      db.channelPoolChangeLogs = db.channelPoolChangeLogs.filter(l => l.timestamp > ninetyDaysAgo);
+      channelPoolChangeLogs = channelPoolChangeLogs.filter(l => l.timestamp > ninetyDaysAgo);
+      saveChangeLogs();
     }
   }
 
-  db.channelPoolEntries = db.channelPoolEntries.filter(e => e.sourceId !== sourceId).concat(newEntries);
+  // Only this source's own file is saved, plus the small db.json for any linked channels that
+  // sync changed. The other sources' channels aren't touched.
+  channelPoolCache.set(sourceId, newEntries);
+  savePoolEntries(sourceId);
   syncLinkedChannels(db, source, newEntries, holdBackLosses);
   writeDb(db);
   return hasChanges;
@@ -1137,7 +1604,6 @@ async function refreshChannelPoolSource(sourceId: string): Promise<boolean> {
     // Gone during the fetch (deleted, or replaced by a restored backup), same as in
     // detectChannelPoolChanges: keep nothing for it.
     if (idx === -1) return false;
-    channelPoolCache.set(sourceId, newEntries);
     updatedDb.channelPoolSources[idx].lastFetched = Date.now();
     updatedDb.channelPoolSources[idx].channelCount = newEntries.length;
     updatedDb.channelPoolSources[idx].lastFetchError = null;
@@ -1169,20 +1635,19 @@ async function refreshChannelPoolSourcesSequentially(sourceIds: string[]) {
   }
 }
 
-// Fills the in-memory caches from scratch: uploaded-file sources never refresh, so their saved
-// channels go straight into the cache, and every other source is fetched again. Run at boot and
-// after a backup is restored. The fetches go one source at a time (see the two functions above)
+// Loads the saved guides and downloads the ones that are due, and downloads every source again
+// (uploaded-file sources never refresh; their saved channels are already in memory, like every
+// other source's). Run at boot and after a backup is restored. The fetches go one source at a time (see the two functions above)
 // and aren't awaited, so neither the server's start nor the restore request waits for them.
 function loadAndRefreshAllSources() {
   const db = readDb();
-  refreshEpgSourcesSequentially(db.epgSources.map(s => s.id));
+  // Guides are kept on disk, so only the ones that are due get downloaded (after a restore,
+  // which empties data/epg/, that's all of them).
+  loadSavedGuides();
+  refreshEpgSourcesSequentially(epgSourcesDue());
   const channelPoolSourceIdsToRefresh: string[] = [];
   for (const source of db.channelPoolSources) {
-    if (source.type !== 'playlist-file') {
-      channelPoolSourceIdsToRefresh.push(source.id);
-    } else {
-      channelPoolCache.set(source.id, db.channelPoolEntries.filter(e => e.sourceId === source.id));
-    }
+    if (source.type !== 'playlist-file') channelPoolSourceIdsToRefresh.push(source.id);
   }
   refreshChannelPoolSourcesSequentially(channelPoolSourceIdsToRefresh);
 }
@@ -1340,6 +1805,17 @@ function migrateShortIds() {
 }
 migrateShortIds();
 
+// Sends one piece of a long answer (a backup, a guide for a TV app). When the other side
+// can't keep up, it waits before sending more, so the unsent part doesn't pile up in memory.
+// Answers false once the other side has gone away, so the caller can stop.
+async function sendPiece(res: express.Response, piece: string): Promise<boolean> {
+  if (res.destroyed) return false;
+  if (piece && !res.write(piece)) {
+    await new Promise(resolve => { res.once('drain', resolve); res.once('close', resolve); });
+  }
+  return !res.destroyed;
+}
+
 // M3U/EXTINF has no formal attribute-escaping spec, so quotes inside a value would
 // otherwise prematurely close the attribute and corrupt the line for any parser.
 function escapeM3uAttr(value: string): string {
@@ -1433,14 +1909,7 @@ async function startServer() {
   setInterval(() => {
     const currentDb = readDb();
     const now = Date.now();
-    // A source whose last attempt failed is retried on every tick (regardless
-    // of its refresh interval) until it succeeds, instead of silently sitting
-    // empty until the interval next comes due.
-    const dueEpgSourceIds = currentDb.epgSources.filter(source => {
-      const intervalMs = (source.refreshIntervalHours || 12) * 60 * 60 * 1000;
-      return !source.lastFetched || source.lastFetchError || (now - source.lastFetched) > intervalMs;
-    }).map(source => source.id);
-    refreshEpgSourcesSequentially(dueEpgSourceIds);
+    refreshEpgSourcesSequentially(epgSourcesDue());
     // A source whose last attempt failed is retried on every tick (same as EPG sources
     // above), instead of silently sitting on stale/empty data until the interval next
     // comes due — which for the default 24h channel-pool interval could otherwise mean
@@ -1647,36 +2116,42 @@ async function startServer() {
     const db = readDb();
     db.epgSources = db.epgSources.filter(s => s.id !== req.params.id);
     writeDb(db);
-    epgCache.delete(req.params.id);
+    deleteSavedGuide(req.params.id);
     res.json({ success: true });
   });
 
   app.post("/api/epg-sources/:id/refresh", async (req, res) => {
     await refreshEpgSource(req.params.id);
-    const cache = epgCache.get(req.params.id);
-    res.json({ success: true, channelCount: cache?.channels.length || 0 });
+    const guide = epgGuides.get(req.params.id);
+    res.json({ success: true, channelCount: guide?.channels.length || 0 });
   });
 
   app.get("/api/epg-sources/:id/channels", (req, res) => {
     const source = readDb().epgSources.find(s => s.id === req.params.id);
     if (!source) return res.status(404).json({ error: "Not found" });
-    const cache = epgCache.get(req.params.id);
-    if (!cache) return res.json([]);
-    const channels = cache.channels.map(c => ({ ...c, sourceId: source.id, sourceName: source.name }));
+    const guide = epgGuides.get(req.params.id);
+    if (!guide) return res.json([]);
+    const channels = guide.channels.map(c => ({ ...c, sourceId: source.id, sourceName: source.name }));
     channels.sort((a, b) => a.displayName.localeCompare(b.displayName));
     res.json(channels);
   });
 
   app.get("/api/epg-sources/:id/programs/:channelId", (req, res) => {
-    const cache = epgCache.get(req.params.id);
-    if (!cache) return res.json([]);
-    const progs = cache.programmes.filter(p => p.channel === req.params.channelId);
-    res.json(progs);
+    const guide = epgGuides.get(req.params.id);
+    if (!guide) return res.json([]);
+    res.json(readChannelProgrammes(guide, [req.params.channelId]).get(req.params.channelId) || []);
   });
 
-  app.get("/api/epg-sources/:id/now", (req, res) => {
-    const cache = epgCache.get(req.params.id);
-    if (!cache) return res.json({ channels: [], programmes: {} });
+  // What's on around now (3 hours back to 6 hours ahead) for the channels the guide view has
+  // on screen: body { channelIds }, at most 200 per request. The view asks again as it's
+  // scrolled. It used to get every channel's programmes at once, which for a big guide was
+  // over 100 MB. A POST only because a list of ids doesn't fit in an address.
+  app.post("/api/epg-sources/:id/now", (req, res) => {
+    const guide = epgGuides.get(req.params.id);
+    const channelIds: string[] = Array.isArray(req.body?.channelIds)
+      ? req.body.channelIds.filter((id: unknown) => typeof id === 'string').slice(0, 200)
+      : [];
+    if (!guide) return res.json({ programmes: {} });
     
     const now = new Date();
     const startWindow = new Date(now.getTime() - 3 * 3600 * 1000);
@@ -1695,7 +2170,7 @@ async function startServer() {
     }
 
     const progsMap: Record<string, ParsedEpgProgramme[]> = {};
-    for (const p of cache.programmes) {
+    for (const p of [...readChannelProgrammes(guide, channelIds).values()].flat()) {
       if (!p.start || !p.stop) continue;
       try {
         const pStart = parseXmltvDate(p.start);
@@ -1707,7 +2182,7 @@ async function startServer() {
       } catch (e) {}
     }
     
-    res.json({ channels: cache.channels, programmes: progsMap });
+    res.json({ programmes: progsMap });
   });
 
   app.get("/api/epg/tvg-ids", (req, res) => {
@@ -1718,7 +2193,7 @@ async function startServer() {
     const results = [];
     const dbSources = readDb().epgSources;
 
-    for (const [sourceId, cache] of epgCache.entries()) {
+    for (const [sourceId, cache] of epgGuides.entries()) {
       const source = dbSources.find(s => s.id === sourceId);
       if (!source) continue;
 
@@ -1743,7 +2218,7 @@ async function startServer() {
     // Build a lookup set for fast matching
     const idsSet = new Set(ids.filter(Boolean));
     
-    for (const [sourceId, cache] of epgCache.entries()) {
+    for (const [sourceId, cache] of epgGuides.entries()) {
       const source = dbSources.find(s => s.id === sourceId);
       if (!source) continue;
       
@@ -1874,10 +2349,12 @@ async function startServer() {
       }
     }
     db.channelPoolSources = db.channelPoolSources.filter(s => s.id !== req.params.id);
-    db.channelPoolEntries = db.channelPoolEntries.filter(e => e.sourceId !== req.params.id);
-    db.channelPoolChangeLogs = db.channelPoolChangeLogs.filter(l => l.sourceId !== req.params.id);
     writeDb(db);
-    channelPoolCache.delete(req.params.id);
+    deletePoolEntries(req.params.id);
+    if (channelPoolChangeLogs.some(l => l.sourceId === req.params.id)) {
+      channelPoolChangeLogs = channelPoolChangeLogs.filter(l => l.sourceId !== req.params.id);
+      saveChangeLogs();
+    }
     res.json({ success: true, unlinkedCount });
   });
 
@@ -1896,7 +2373,7 @@ async function startServer() {
     const source = db.channelPoolSources.find(s => s.id === req.params.id);
     if (!source) return res.status(404).json({ error: "Not found" });
     
-    let entries = channelPoolCache.get(req.params.id) || db.channelPoolEntries.filter(e => e.sourceId === req.params.id);
+    let entries = channelPoolCache.get(req.params.id) || [];
     
     // Accent-insensitive, so "T"/"S" also find "Ț"/"Ș".
     const q = foldText(String(req.query.q || '').trim());
@@ -1927,8 +2404,7 @@ async function startServer() {
   });
 
   app.get("/api/channel-pool/sources/:id/categories", (req, res) => {
-    const db = readDb();
-    const entries = channelPoolCache.get(req.params.id) || db.channelPoolEntries.filter(e => e.sourceId === req.params.id);
+    const entries = channelPoolCache.get(req.params.id) || [];
     
     const categories = new Set(entries.map(e => e.category));
     const sorted = Array.from(categories).sort((a, b) => a.localeCompare(b));
@@ -1936,11 +2412,11 @@ async function startServer() {
   });
 
   app.get("/api/channel-pool/changelog", (req, res) => {
-    const db = readDb();
     const page = Math.max(1, parseInt(String(req.query.page), 10) || 1);
     const perPage = 20;
     
-    const logs = db.channelPoolChangeLogs.sort((a, b) => b.timestamp - a.timestamp);
+    // A copy is sorted: the stored list is shared by every request, so it's left in its own order.
+    const logs = [...channelPoolChangeLogs].sort((a, b) => b.timestamp - a.timestamp);
     const total = logs.length;
     const paginatedLogs = logs.slice((page - 1) * perPage, page * perPage);
     
@@ -1971,8 +2447,6 @@ async function startServer() {
       updatedAt: Date.now(),
     };
     
-    db.channelPoolSources.push(newSource);
-    
     let entries: ChannelPoolEntry[] = [];
     if (content.trim().startsWith('<?xml') && content.includes('<playlist')) {
       entries = parseXspfToChannelPoolEntries(content, newSource.id);
@@ -1981,10 +2455,11 @@ async function startServer() {
     }
     
     newSource.channelCount = entries.length;
-    db.channelPoolEntries.push(...entries);
-    writeDb(db);
-    
+    // Added only now, after the file was read without trouble (see "Where the data lives").
+    db.channelPoolSources.push(newSource);
     channelPoolCache.set(newSource.id, entries);
+    savePoolEntries(newSource.id);
+    writeDb(db);
     
     res.json(newSource);
   });
@@ -2005,7 +2480,7 @@ async function startServer() {
     const db = readDb();
 
     const epgChannelCount = db.epgSources.reduce((sum, source) => {
-      const cached = epgCache.get(source.id);
+      const cached = epgGuides.get(source.id);
       return sum + (cached ? cached.channels.length : source.channelCount || 0);
     }, 0);
 
@@ -2014,7 +2489,7 @@ async function startServer() {
       return latest === null || p.lastDownloadedAt > latest ? p.lastDownloadedAt : latest;
     }, null);
 
-    const latestChannelPoolAdditions = db.channelPoolChangeLogs
+    const latestChannelPoolAdditions = channelPoolChangeLogs
       .filter(log => log.added.length > 0)
       .sort((a, b) => b.timestamp - a.timestamp)[0] || null;
 
@@ -2035,7 +2510,7 @@ async function startServer() {
       playlistCount: db.playlists.length,
       playlistChannelCount: db.channels.length,
       channelPoolSourceCount: db.channelPoolSources.length,
-      channelPoolChannelCount: db.channelPoolEntries.length,
+      channelPoolChannelCount: Array.from(channelPoolCache.values()).reduce((sum, entries) => sum + entries.length, 0),
       epgSourceCount: db.epgSources.length,
       epgChannelCount,
       lastPlaylistDownload,
@@ -2273,7 +2748,7 @@ async function startServer() {
     // never refreshes) is dropped and the channel is added unlinked.
     const poolEntriesById = new Map<string, ChannelPoolEntry>();
     if (channels.some((c: any) => c.link)) {
-      for (const e of db.channelPoolEntries) poolEntriesById.set(e.id, e);
+      for (const e of allPoolEntries()) poolEntriesById.set(e.id, e);
     }
     const resolveLink = (input: any): ChannelLink | undefined => {
       if (!input) return undefined;
@@ -2495,13 +2970,18 @@ async function startServer() {
 
   // ── Backup & restore ─────────────────────────────────────────────────
   // A backup is the whole database (playlists, channels, sources with their saved channels, logs
-  // and settings) in one JSON file, so it's the same thing as a copy of db.json. The password
+  // and settings) in one JSON file: db.json, the data/pool/ files and the update log together,
+  // in the shape db.json had when it was the only file (see fullDatabase). The password
   // (auth.json) is never part of it. Both routes sit behind the password like the rest of /api.
-  app.get("/api/backup", (_req, res) => {
+  app.get("/api/backup", async (_req, res) => {
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="m3u4me-backup-${date}.json"`);
-    res.send(JSON.stringify(readDb(), null, 2));
+    // Sent piece by piece (see fullDatabasePieces and sendPiece).
+    for (const piece of fullDatabasePieces()) {
+      if (!await sendPiece(res, piece)) return;
+    }
+    res.end();
   });
 
   // Replaces the whole database with a backup, or with a db.json copied from another m3u4me.
@@ -2526,26 +3006,28 @@ async function startServer() {
 
     const current = readDb();
     try {
-      // Keep the data being replaced, in case the wrong file was picked. Same kind of name as
-      // the copy setAsideDamagedDb() makes, next to db.json in the data folder.
-      if (fs.existsSync(DB_FILE)) {
-        fs.copyFileSync(DB_FILE, `${DB_FILE}.before-restore-${new Date().toISOString().replace(/[:.]/g, "-")}`);
-      }
+      // Keep the data being replaced, in case the wrong file was picked: a complete backup of
+      // it (the same as a downloaded one), next to db.json in the data folder.
+      saveFullDatabaseCopy(`${DB_FILE}.before-restore-${fileStamp()}`);
       // A restore never sends anyone back to the setup screens. During setup, a backup without
       // any playlist leaves setup unfinished, so it carries on to "name your first playlist".
       const settings = backup.settings && typeof backup.settings === 'object' ? backup.settings : {};
       backup.settings = { ...settings, onboardingDone: backup.playlists.length > 0 || current.settings.onboardingDone };
-      writeDb(backup);
+      storeFullDatabase(backup);
       // Backups from before short playlist links existed need their numbers filled in.
       migrateShortIds();
     } catch (e) {
       console.error(e);
+      // Whatever got as far as the disk is what counts now, so forget the half-replaced copy in
+      // memory; the next request loads the files again.
+      memoryDb = null;
       return res.status(500).json({ error: "Couldn't restore the backup. Check that m3u4me can write to its data folder, then try again." });
     }
 
-    // The caches still hold the replaced sources' channels and guide data.
-    epgCache.clear();
-    channelPoolCache.clear();
+    // The saved guides belong to the replaced database (guides aren't part of a backup), so
+    // they're removed and download again. (The sources' channels were replaced together with
+    // the database.)
+    fs.rmSync(EPG_DIR, { recursive: true, force: true });
     loadAndRefreshAllSources();
 
     const restored = readDb();
@@ -2568,7 +3050,7 @@ async function startServer() {
 
     const LIMIT = 50;
     const sources = new Map(db.channelPoolSources.filter(s => s.type !== 'playlist-file').map(s => [s.id, s]));
-    const eligible = db.channelPoolEntries.filter(e => sources.has(e.sourceId));
+    const eligible = allPoolEntries().filter(e => sources.has(e.sourceId));
     const withSource = (e: ChannelPoolEntry, match: 'url' | 'name' | 'search') => ({ ...e, sourceName: sources.get(e.sourceId)!.name, match });
 
     // Accent-insensitive, like the Sources search.
@@ -2623,7 +3105,7 @@ async function startServer() {
     const db = readDb();
     const channel = findPlaylistChannel(db, req.params.playlistId, req.params.channelId);
     if (!channel) return res.status(404).json({ error: "That channel no longer exists. Reload the page and try again." });
-    const entry = db.channelPoolEntries.find(e => e.id === req.body.poolEntryId);
+    const entry = allPoolEntries().find(e => e.id === req.body.poolEntryId);
     if (!entry) return res.status(404).json({ error: "That source channel can't be found anymore, probably because its source just refreshed. Search for it again." });
     const source = db.channelPoolSources.find(s => s.id === entry.sourceId);
     if (!source || source.type === 'playlist-file') {
@@ -2838,7 +3320,7 @@ async function startServer() {
         isHidden: c.isHidden,
       }));
 
-    const channelPoolResults = db.channelPoolEntries
+    const channelPoolResults = allPoolEntries()
       .filter(e => matches(e.name, e.url, e.tvgId))
       .slice(0, 50)
       .map(e => ({
@@ -2853,11 +3335,10 @@ async function startServer() {
         logo: e.logo,
       }));
 
-    // EPG channels only ever live in the in-memory cache (never persisted), so this
-    // walks it the same way /api/epg/tvg-ids does — including its trick of returning
+    // Walks every guide's channel list the same way /api/epg/tvg-ids does — including its trick of returning
     // as soon as the cap is hit instead of scanning every remaining source.
     const epgResults: any[] = [];
-    for (const [sourceId, cache] of epgCache.entries()) {
+    for (const [sourceId, cache] of epgGuides.entries()) {
       const source = db.epgSources.find(s => s.id === sourceId);
       if (!source) continue;
       for (const ch of cache.channels) {
@@ -2889,20 +3370,26 @@ async function startServer() {
   });
 
   // EPG XMLTV Server
-  app.get(/^\/(\d+)\/epg$/, (req, res) => {
+  app.get(/^\/(\d+)\/epg$/, async (req, res) => {
     const shortId = parseInt(req.params[0], 10);
     const db = readDb();
     const playlist = db.playlists.find(p => p.shortId === shortId);
     if (!playlist) return res.status(404).send("Playlist not found");
 
     const channels = db.channels.filter(c => c.playlistId === playlist.id && !c.isHidden && c.tvgId);
-    const tvgIds = new Set(channels.map(c => c.tvgId));
+    const tvgIds = new Set(channels.map(c => c.tvgId as string));
 
     res.setHeader("Content-Type", "application/xml");
-    let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<tv generator-info-name="m3u4me">\n`;
-    
-    for (const cache of epgCache.values()) {
-      for (const c of cache.channels) {
+    // Sent in pieces (see sendPiece), a few channels' programmes at a time read from disk, so
+    // even a playlist with thousands of channels and a week of programmes never has to be
+    // built up in memory first.
+    if (!await sendPiece(res, `<?xml version="1.0" encoding="UTF-8"?>\n<tv generator-info-name="m3u4me">\n`)) return;
+
+    // A copy of the list, because a guide can be replaced by a fresh download while this
+    // answer is still being sent.
+    for (const guide of [...epgGuides.values()]) {
+      let xml = '';
+      for (const c of guide.channels) {
         if (tvgIds.has(c.id)) {
           xml += `  <channel id="${escapeXmlAttr(c.id)}">\n`;
           xml += `    <display-name><![CDATA[${escapeCData(c.displayName)}]]></display-name>\n`;
@@ -2910,19 +3397,25 @@ async function startServer() {
           xml += `  </channel>\n`;
         }
       }
-      for (const p of cache.programmes) {
-        if (tvgIds.has(p.channel)) {
-          xml += `  <programme start="${escapeXmlAttr(p.start)}" stop="${escapeXmlAttr(p.stop)}" channel="${escapeXmlAttr(p.channel)}">\n`;
-          xml += `    <title><![CDATA[${escapeCData(p.title)}]]></title>\n`;
-          if (p.desc) xml += `    <desc><![CDATA[${escapeCData(p.desc)}]]></desc>\n`;
-          if (p.category) xml += `    <category><![CDATA[${escapeCData(p.category)}]]></category>\n`;
-          if (p.icon) xml += `    <icon src="${escapeXmlAttr(p.icon)}"/>\n`;
-          xml += `  </programme>\n`;
+      if (!await sendPiece(res, xml)) return;
+
+      const wanted = [...tvgIds].filter(id => guide.runs.has(id));
+      for (let i = 0; i < wanted.length; i += 25) {
+        xml = '';
+        for (const programmes of readChannelProgrammes(guide, wanted.slice(i, i + 25)).values()) {
+          for (const p of programmes) {
+            xml += `  <programme start="${escapeXmlAttr(p.start)}" stop="${escapeXmlAttr(p.stop)}" channel="${escapeXmlAttr(p.channel)}">\n`;
+            xml += `    <title><![CDATA[${escapeCData(p.title)}]]></title>\n`;
+            if (p.desc) xml += `    <desc><![CDATA[${escapeCData(p.desc)}]]></desc>\n`;
+            if (p.category) xml += `    <category><![CDATA[${escapeCData(p.category)}]]></category>\n`;
+            if (p.icon) xml += `    <icon src="${escapeXmlAttr(p.icon)}"/>\n`;
+            xml += `  </programme>\n`;
+          }
         }
+        if (!await sendPiece(res, xml)) return;
       }
     }
-    xml += `</tv>`;
-    res.send(xml);
+    res.end(`</tv>`);
   });
 
   // Short numeric URL: /1  /2  /3 …

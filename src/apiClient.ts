@@ -270,6 +270,15 @@ export interface RestoreResult {
 // Custom event target for triggering refetches across components
 export const dbEvents = new EventTarget();
 export const triggerRefresh = () => dbEvents.dispatchEvent(new Event('refresh'));
+// For a change to one channel's own fields (name, link, logo, TV guide id, hidden). The server
+// answers such a save with the saved channel, so instead of downloading the whole playlist
+// again (and the sources and guides, which can't have changed), every loaded channel list just
+// swaps that one channel in, and only the small playlist list and Home's numbers are fetched
+// again, for their counts and badges. Typing quickly through many channels stays instant.
+export const applySavedChannel = (channel: Channel) => {
+  dbEvents.dispatchEvent(new CustomEvent('channel-saved', { detail: channel }));
+  dbEvents.dispatchEvent(new Event('counts-changed'));
+};
 export const epgEvents = new EventTarget();
 export const triggerEpgRefresh = () => epgEvents.dispatchEvent(new Event('refresh'));
 export const channelPoolEvents = new EventTarget();
@@ -285,7 +294,8 @@ export const api = {
   reorderPlaylists: (ids: string[]) => authFetch('/api/playlists/reorder', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids}) }),
   deletePlaylist: (playlistId: string) => authFetch(`/api/playlists/${playlistId}`, { method: 'DELETE' }),
   getChannels: (playlistId: string) => authFetch(`/api/playlists/${playlistId}/channels`).then(r => r.json()),
-  updateChannel: (playlistId: string, channelId: string, updates: any) => authFetch(`/api/playlists/${playlistId}/channels/${channelId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(updates) }),
+  // Answers with the channel as saved, for applySavedChannel().
+  updateChannel: (playlistId: string, channelId: string, updates: any) => authFetch(`/api/playlists/${playlistId}/channels/${channelId}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(updates) }).then(r => r.json()) as Promise<Channel>,
   deleteChannel: (playlistId: string, channelId: string) => authFetch(`/api/playlists/${playlistId}/channels/${channelId}`, { method: 'DELETE' }),
   bulkAddChannels: (playlistId: string, channels: any[]) => authFetch(`/api/playlists/${playlistId}/channels/bulk`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({channels}) }),
   bulkUpdateChannels: (playlistId: string, ids: string[], updates: any) => authFetch(`/api/playlists/${playlistId}/channels/bulk-update`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids, updates}) }),
@@ -323,8 +333,10 @@ export const api = {
     authFetch(`/api/epg/tvg-ids?q=${encodeURIComponent(query)}`).then(r => r.json()) as Promise<EpgChannel[]>,
   resolveTvgIds: (ids: string[]) =>
     authFetch('/api/epg/resolve-tvg-ids', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ids }) }).then(r => r.json()) as Promise<Record<string, { displayName: string; sourceName: string }>>,
-  getEpgNow: (sourceId: string) =>
-    authFetch(`/api/epg-sources/${sourceId}/now`).then(r => r.json()) as Promise<{ channels: EpgChannel[]; programmes: Record<string, EpgProgramme[]> }>,
+  // What's on around now for the given guide channels (at most 200 per call). The guide view
+  // asks for the rows on screen only; a big guide has far too many programmes to send at once.
+  getEpgNow: (sourceId: string, channelIds: string[]) =>
+    authFetch(`/api/epg-sources/${sourceId}/now`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ channelIds }) }).then(r => r.json()) as Promise<{ programmes: Record<string, EpgProgramme[]> }>,
 
   // Channel Pool Sources
   getChannelPoolSources: () => authFetch('/api/channel-pool/sources').then(r => r.json()) as Promise<ChannelPoolSource[]>,
@@ -415,7 +427,11 @@ export function usePlaylists() {
   useEffect(() => {
     fetchPl();
     dbEvents.addEventListener('refresh', fetchPl);
-    return () => dbEvents.removeEventListener('refresh', fetchPl);
+    dbEvents.addEventListener('counts-changed', fetchPl);
+    return () => {
+      dbEvents.removeEventListener('refresh', fetchPl);
+      dbEvents.removeEventListener('counts-changed', fetchPl);
+    };
   }, [fetchPl]);
 
   return { playlists, loading, error, refetch: fetchPl };
@@ -461,8 +477,17 @@ export function useChannels(playlistId: string | null) {
 
   useEffect(() => {
     fetchCh();
+    // One saved channel (see applySavedChannel): swap it into the list already here.
+    const swapIn = (event: Event) => {
+      const saved = (event as CustomEvent).detail as Channel;
+      setChannels(list => list.some(c => c.id === saved.id) ? list.map(c => c.id === saved.id ? saved : c) : list);
+    };
     dbEvents.addEventListener('refresh', fetchCh);
-    return () => dbEvents.removeEventListener('refresh', fetchCh);
+    dbEvents.addEventListener('channel-saved', swapIn);
+    return () => {
+      dbEvents.removeEventListener('refresh', fetchCh);
+      dbEvents.removeEventListener('channel-saved', swapIn);
+    };
   }, [fetchCh]);
 
   // Return empty channels synchronously when the fetched data is for a different playlist,
@@ -558,10 +583,12 @@ export function useStats() {
   useEffect(() => {
     fetchStats();
     dbEvents.addEventListener('refresh', fetchStats);
+    dbEvents.addEventListener('counts-changed', fetchStats);
     epgEvents.addEventListener('refresh', fetchStats);
     channelPoolEvents.addEventListener('refresh', fetchStats);
     return () => {
       dbEvents.removeEventListener('refresh', fetchStats);
+      dbEvents.removeEventListener('counts-changed', fetchStats);
       epgEvents.removeEventListener('refresh', fetchStats);
       channelPoolEvents.removeEventListener('refresh', fetchStats);
     };

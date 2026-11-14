@@ -11,7 +11,7 @@ This page lists common problems and how to fix them. Find yours in the list belo
 - [The TV guide is empty in my TV app](#the-tv-guide-is-empty-in-my-tv-app)
 - [A source says the download failed](#a-source-says-the-download-failed)
 - [A channel shows "Source lost"](#a-channel-shows-source-lost)
-- [The TV guide is empty after a restart](#the-tv-guide-is-empty-after-a-restart)
+- [The TV guide is empty in m3u4me](#the-tv-guide-is-empty-in-m3u4me)
 - [I forgot my password](#i-forgot-my-password)
 - [m3u4me says it can't read its password file](#m3u4me-says-it-cant-read-its-password-file)
 - [I keep getting signed out](#i-keep-getting-signed-out)
@@ -80,9 +80,9 @@ The channel is [synced](features.md#channel-sync) with a source, and that source
 > [!NOTE]
 > If a refresh suddenly loses a large part of a source's channels, m3u4me doesn't mark anything as lost. It waits for the next refreshes to see whether the provider was just having a bad moment. You'll see this in the playlist's **Sync log**.
 
-## The TV guide is empty after a restart
+## The TV guide is empty in m3u4me
 
-m3u4me downloads your TV guides again every time it starts. Big guides take a few minutes. Wait a little, or open the guide in the **EPG** tab and press the refresh button next to its name (on a phone, **Refresh guide** under **⋮**).
+m3u4me keeps your TV guides saved, so they're there as soon as it starts. A guide is only empty until its first download has finished: right after you add it, after restoring a backup, or the first time you start version 3.1.0 or newer. Big guides take a few minutes. Wait a little, or open the guide in the **EPG** tab and press the refresh button next to its name (on a phone, **Refresh guide** under **⋮**).
 
 ## I forgot my password
 
@@ -106,6 +106,8 @@ If it keeps failing, [open an issue](https://github.com/andrei-savin/m3u4me/issu
 ## Where are my files?
 
 Everything is in m3u4me's `data` folder. See [Where your data lives](install.md#where-your-data-lives). To keep a copy, use **Settings → Backup** instead. See [Backup & moving to a new server](backup.md).
+
+m3u4me only reads these files when it starts. If you ever need to replace one by hand, stop m3u4me first and start it again afterwards, or your change will be overwritten.
 
 ## None of this helped
 
