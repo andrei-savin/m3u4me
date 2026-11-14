@@ -1056,7 +1056,7 @@ async function fetchXtreamChannels(source: ChannelPoolSource): Promise<ChannelPo
       name: s.name || 'Unknown',
       url: [streamUrlStart, s.stream_id, '.ts'].join(''),
       logo: s.stream_icon || null,
-      category: catMap.get(String(s.category_id)) || 'General',
+      category: cleanCategoryName(catMap.get(String(s.category_id))),
       tvgId: s.epg_channel_id || null,
     });
   }
@@ -1093,7 +1093,7 @@ function parseM3uToChannelPoolEntries(content: string, sourceId: string): Channe
       currentEntry = {
         tvgId: attr('tvg-id'),
         logo: attr('tvg-logo'),
-        category: attr('group-title') || 'General',
+        category: cleanCategoryName(attr('group-title')),
         name: name || 'Unknown',
         httpReferrer: attr('http-referrer'),
         httpUserAgent: attr('http-user-agent'),
@@ -1141,7 +1141,7 @@ function parseXspfToChannelPoolEntries(content: string, sourceId: string): Chann
       name: t.title || 'Unknown',
       url: t.location || '',
       logo: t.image || null,
-      category: cat,
+      category: cleanCategoryName(cat),
       tvgId: null,
     };
   }).filter((e: any) => e.url);
@@ -1514,6 +1514,49 @@ function withoutSyncState(body: any): Record<string, unknown> {
   return rest;
 }
 
+// A category name without spaces around it, or "General" when there's no name.
+// Every category that comes into the app goes through this. A playlist file once had
+// group-title="Pro TV București " (a space before the closing quote): the channels kept the
+// space, the playlist's saved category list didn't, so the category showed twice (once
+// empty) and every later category change failed with "already exists".
+function cleanCategoryName(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number') return 'General';
+  return String(value).trim() || 'General';
+}
+
+// What a generic channel edit may change: no sync state (see above), and a category name
+// that's cleaned the same way as everywhere else.
+function channelChangesFrom(body: any): Record<string, unknown> {
+  const changes = withoutSyncState(body);
+  if (typeof changes.category === 'string') changes.category = cleanCategoryName(changes.category);
+  return changes;
+}
+
+// Removes spaces around category names saved before cleanCategoryName() existed: on every
+// channel, and in every playlist's category list (where two names that become the same are
+// merged, the first one keeping its place). Runs at start and after a backup is restored.
+function repairCategoryNames() {
+  const db = readDb();
+  let changed = false;
+  for (const channel of db.channels) {
+    if (typeof channel.category === 'string' && channel.category !== channel.category.trim()) {
+      channel.category = cleanCategoryName(channel.category);
+      changed = true;
+    }
+  }
+  for (const playlist of db.playlists) {
+    if (!Array.isArray(playlist.categories)) continue;
+    const cleaned = Array.from(new Set(playlist.categories.map(cleanCategoryName)));
+    const same = cleaned.length === playlist.categories.length
+      && cleaned.every((name, i) => name === playlist.categories[i]);
+    if (!same) {
+      playlist.categories = cleaned;
+      changed = true;
+    }
+  }
+  if (changed) writeDb(db);
+}
+
 /** Diffs old vs. new entries and logs the changes. Returns whether anything actually changed. */
 function detectChannelPoolChanges(sourceId: string, newEntries: ChannelPoolEntry[]): boolean {
   const db = readDb();
@@ -1804,6 +1847,7 @@ function migrateShortIds() {
   if (changed) writeDb(db);
 }
 migrateShortIds();
+repairCategoryNames();
 
 // Sends one piece of a long answer (a backup, a guide for a TV app). When the other side
 // can't keep up, it waits before sending more, so the unsent part doesn't pile up in memory.
@@ -2381,7 +2425,8 @@ async function startServer() {
     const sort = String(req.query.sort || 'name');
 
     if (cat) {
-      entries = entries.filter(e => e.category === cat);
+      // trim(): sources saved before category names were cleaned can still have spaces around them.
+      entries = entries.filter(e => e.category.trim() === cat);
     }
     if (q) {
       entries = entries.filter(e => foldText(e.name).includes(q) || foldText(e.url).includes(q));
@@ -2634,7 +2679,7 @@ async function startServer() {
 
     const db = readDb();
     const nextShortId = Math.max(0, ...db.playlists.map(p => p.shortId || 0)) + 1;
-    const categories = Array.from(new Set(entries.map(e => e.category || "General")));
+    const categories = Array.from(new Set(entries.map(e => cleanCategoryName(e.category))));
     const newPlaylist: Playlist = {
       id: uuidv4(),
       name: String(name).trim(),
@@ -2654,7 +2699,7 @@ async function startServer() {
       url: e.url || "",
       logo: e.logo || null,
       tvgId: e.tvgId || null,
-      category: e.category || "General",
+      category: cleanCategoryName(e.category),
       ...pickStreamHeaders(e),
       order: i + 1,
       isHidden: false,
@@ -2769,7 +2814,7 @@ async function startServer() {
 
     const newChannels: Channel[] = channels.map((c: any, i: number) => {
       // Find category and add it to playlist if missing
-      const cat = c.category || "General";
+      const cat = cleanCategoryName(c.category);
       const link = resolveLink(c.link);
       return {
         id: uuidv4(),
@@ -2820,7 +2865,7 @@ async function startServer() {
     const { channelId } = req.params;
     const idx = db.channels.findIndex(c => c.id === channelId);
     if (idx !== -1) {
-      const changes = withoutSyncState(req.body);
+      const changes = channelChangesFrom(req.body);
       db.channels[idx] = { ...db.channels[idx], ...changes, updatedAt: Date.now() };
       afterManualChannelEdit(db.channels[idx], changes);
       writeDb(db);
@@ -2842,7 +2887,7 @@ async function startServer() {
     const db = readDb();
     const { playlistId } = req.params;
     const { ids } = req.body;
-    const updates: Record<string, any> = withoutSyncState(req.body.updates);
+    const updates: Record<string, any> = channelChangesFrom(req.body.updates);
     db.channels = db.channels.map(c => {
       if (c.playlistId === playlistId && ids.includes(c.id)) {
         const updated = { ...c, ...updates, updatedAt: Date.now() };
@@ -2869,7 +2914,7 @@ async function startServer() {
     const { playlistId } = req.params;
     const { updates } = req.body; // updates: Array<{ id: string, changes: any }>
 
-    const updateMap = new Map<string, any>(updates.map((u: any) => [u.id, withoutSyncState(u.changes)]));
+    const updateMap = new Map<string, any>(updates.map((u: any) => [u.id, channelChangesFrom(u.changes)]));
 
     db.channels = db.channels.map(c => {
       if (c.playlistId === playlistId && updateMap.has(c.id)) {
@@ -2907,7 +2952,8 @@ async function startServer() {
       if (ids && Array.isArray(ids) && !ids.includes(c.id)) return c;
       const current = (c as any)[targetField];
       if (typeof current !== "string" || !current.includes(search)) return c;
-      const updated = current.replaceAll(search, replace ?? "");
+      let updated = current.replaceAll(search, replace ?? "");
+      if (targetField === "category") updated = cleanCategoryName(updated);
       if (updated === current) return c;
       modified++;
       const changed = { ...c, [targetField]: updated, updatedAt: Date.now() };
@@ -3016,6 +3062,7 @@ async function startServer() {
       storeFullDatabase(backup);
       // Backups from before short playlist links existed need their numbers filled in.
       migrateShortIds();
+      repairCategoryNames();
     } catch (e) {
       console.error(e);
       // Whatever got as far as the disk is what counts now, so forget the half-replaced copy in
